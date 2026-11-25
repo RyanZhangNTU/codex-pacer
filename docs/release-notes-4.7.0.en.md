@@ -1,4 +1,4 @@
-**Claude can now ask Codex for help.** Turn on **Claude calls Codex** in **Settings → Collaboration** (Beta), then just ask Claude, for example "have Codex review this change". Pacer starts Codex with your settings, and each run shows under the Claude task that started it, with its progress, speed and model; hover over a running one to stop it. While Codex works, a green light runs around the task's ring in the collapsed bar. When Claude's turn ends, Pacer clears the runs from Codex's history, so it keeps only your own chats. The first time you open Collaboration, a short guide shows how it works, and **Help → Collaboration** shows it again.
+**Claude can now ask Codex for help.** Turn on **Claude calls Codex** in **Settings → Collaboration** (Beta), then just ask Claude, for example "have Codex review this change". Pacer starts Codex with your settings, shows its progress under the Claude task, and cleans up when the turn ends.
 
 Stability improvements and bug fixes.
 
