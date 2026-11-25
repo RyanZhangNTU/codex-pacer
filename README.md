@@ -9,11 +9,9 @@
 </picture>
 </p>
 
-<h3>A progress bar for your AI coding agents.</h3>
+<h3>The perfect companion for AI coding.</h3>
 
-See how far every task has got, when it needs you and how much quota is left, at a glance.
-
-Free and open source, for Mac and Windows.
+No more staring at “Thinking…” or switching windows to see how far it's got. Pacer keeps an eye on every task for you, so you stay focused and get more done.
 
 <p>
 <picture>
