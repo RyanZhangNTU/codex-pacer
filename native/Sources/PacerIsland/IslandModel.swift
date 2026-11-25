@@ -1587,7 +1587,8 @@ final class IslandModel: ObservableObject {
     @Published private(set) var sshMonitoring: SSHHostMonitoring
     @Published private(set) var discoveredCodexTargets: [RemoteActivityTarget] = []
     @Published private(set) var discoveredClaudeTargets: [RemoteActivityTarget] = []
-    private var codexRemoteTargets: [RemoteActivityTarget] { monitorsSSH ? sshMonitoring.monitored(discoveredCodexTargets) : [] }
+    /// Read when needed, as before, so a replaced host home is bound before an open can acknowledge it.
+    private var codexRemoteTargets: [RemoteActivityTarget] { monitorsSSH ? sshMonitoring.monitored(RemoteActivityTarget.configured(home: home)) : [] }
     @Published private(set) var claudeRemoteTargets: [RemoteActivityTarget] = []
     @Published private(set) var configuringClaudeHosts: Set<String> = []
     @Published private(set) var claudeRemoteSetupStatus: [String: ClaudeHookInstaller.Status] = [:]
@@ -1938,8 +1939,9 @@ final class IslandModel: ObservableObject {
     var rate: Double? { overview.displayedRate }
     var rateIsFresh: Bool { overview.rateIsFresh }
     private func permitsSSHHost(_ id: String?) -> Bool {
+        // The global switch stops the sources; this only drops hosts switched off one by one.
         guard let id, ConnectionSource.isSSHSourceID(id) else { return true }
-        return monitorsSSH && !sshMonitoring.offIDs.contains(id)
+        return !sshMonitoring.offIDs.contains(id)
     }
 
     func setSSHHost(_ id: String, monitored: Bool) {
