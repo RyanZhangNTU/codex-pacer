@@ -2,23 +2,25 @@
 
 <div align="center">
 
-<img src="native/Resources/Pacer.png" width="120" alt="Codex Pacer 应用图标">
-
-<h1>Codex Pacer</h1>
+<p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme-title-dark.png">
+  <img src="docs/assets/readme-title-light.png" width="451" alt="Codex Pacer">
+</picture>
+</p>
 
 <h3>AI 写代码，终于有进度条了。</h3>
 
-每个任务做到多少、什么时候需要你、额度还剩多少，<br>
-抬头看一眼就知道，不用打断手头的事。支持 Mac 和 Windows。
+每个任务做到多少、什么时候需要你、额度还剩多少，抬头看一眼就知道。
 
-<br>
+免费开源，支持 Mac 和 Windows。
 
-<img src="native/Sources/PacerCore/Resources/provider-codex.png" width="22" align="middle" alt="">&nbsp;<b>Codex</b>
-&emsp;<img src="native/Sources/PacerCore/Resources/provider-claude.png" width="22" align="middle" alt="">&nbsp;<b>Claude Code</b>
-&emsp;<img src="native/Sources/PacerCore/Resources/provider-deepseek.png" width="22" align="middle" alt="">&nbsp;<b>DeepSeek Harness</b>
-&emsp;<img src="native/Sources/PacerCore/Resources/provider-workbuddy.png" width="22" align="middle" alt="">&nbsp;<b>WorkBuddy</b>
-
-<br>
+<p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme-agents-dark.zh-CN.png">
+  <img src="docs/assets/readme-agents-light.zh-CN.png" width="810" alt="支持 Codex、Claude Code、DeepSeek Harness 和 WorkBuddy，更多工具即将支持">
+</picture>
+</p>
 
 <a href="https://github.com/RyanZhangNTU/codex-pacer/releases/latest"><img src="docs/assets/download-mac.zh-CN.png" height="56" alt="免费下载 macOS 版"></a>
 &nbsp;
@@ -32,14 +34,12 @@
 
 [功能](#features) · [支持的工具](#supported-agents) · [安装](#install) · [使用指南](docs/guide.zh-CN.md) · [交流群](#community) · [English](README.md)
 
-<br>
-
-<img src="docs/assets/demo.zh-CN.webp" width="100%" alt="Codex Pacer（演示数据）：几个工具的任务各自报告进度，显示为圆环；需要审批时变成琥珀色；折叠栏显示平均进度">
+<p><img src="docs/assets/readme-hero.zh-CN.png" width="100%" alt="Codex Pacer（演示数据）：三个来自不同工具的任务，图标外各有一圈进度圆环，旁边是速度和模型"></p>
 
 </div>
 
 > [!TIP]
-> **4.7 新功能：Claude 调用 Codex（Beta）。** 让 Claude Code 请 Codex 审一下改动或接手一个任务，Codex 的进度就显示在 Claude 任务下面。[看看怎么用](#claude-调用-codex)
+> **4.7 新功能：Claude 调用 Codex（Beta）。** 让 Claude Code 请 Codex 审一下改动或接手一个任务，Codex 的进度就显示在 Claude 任务下面。[看看怎么用](#collab)
 
 ## 为什么用 Pacer
 
@@ -73,10 +73,10 @@ Codex、Claude Code、DeepSeek Harness 和 WorkBuddy 会报告你的请求完成
 <thead>
 <tr>
 <th></th>
-<th><img src="native/Sources/PacerCore/Resources/provider-codex.png" width="20" align="middle" alt="">&nbsp;Codex</th>
-<th><img src="native/Sources/PacerCore/Resources/provider-claude.png" width="20" align="middle" alt="">&nbsp;Claude Code</th>
-<th><img src="native/Sources/PacerCore/Resources/provider-deepseek.png" width="20" align="middle" alt="">&nbsp;DeepSeek Harness</th>
-<th><img src="native/Sources/PacerCore/Resources/provider-workbuddy.png" width="20" align="middle" alt="">&nbsp;WorkBuddy</th>
+<th><img src="native/Sources/PacerCore/Resources/provider-codex.png" width="32" alt=""><br>Codex</th>
+<th><img src="native/Sources/PacerCore/Resources/provider-claude.png" width="32" alt=""><br>Claude&nbsp;Code</th>
+<th><img src="native/Sources/PacerCore/Resources/provider-deepseek.png" width="32" alt=""><br>DeepSeek&nbsp;Harness</th>
+<th><img src="native/Sources/PacerCore/Resources/provider-workbuddy.png" width="32" alt=""><br>WorkBuddy</th>
 </tr>
 </thead>
 <tbody>
@@ -92,6 +92,8 @@ Codex、Claude Code、DeepSeek Harness 和 WorkBuddy 会报告你的请求完成
 </table>
 
 <sub>¹ Windows 上。</sub>
+
+**更多工具正在适配中。** 想先用上哪一个？[告诉我们](https://github.com/RyanZhangNTU/codex-pacer/issues/new?template=feature_request.yml)。
 
 <details>
 <summary><b>各家第一次怎么设置</b></summary>
@@ -115,9 +117,11 @@ Codex 和 Claude 一个圆环同时看 5 小时和每周额度，刻度告诉你
 
 <img src="docs/assets/readme-quota.zh-CN.png" width="100%" alt="Codex 和 Claude 的额度：各自的 5 小时和每周额度、配速和重置时的预测">
 
-## Claude 调用 Codex <img src="https://img.shields.io/badge/Beta-8250df?style=flat-square" align="middle" alt="Beta">
+<a id="collab"></a>
 
-在“设置 → 协作”里打开“Claude 调用 Codex”，然后直接跟 Claude 说，比如“让 Codex 审一下这次改动”。每次 Codex 运行都显示在发起它的 Claude 任务下面，有自己的进度、速度和模型；悬停在正在运行的那一行上可以停止它。
+## Claude 调用 Codex（Beta）
+
+在“设置 → 协作”里打开“Claude 调用 Codex”，然后直接跟 Claude 说，比如“让 Codex 审一下这次改动”。每次 Codex 运行都显示在发起它的 Claude 任务下面，有自己的进度、速度和模型，悬停就能停止。
 
 <img src="docs/assets/readme-collab.zh-CN.png" width="100%" alt="一个 Claude 任务下面挂着两次 Codex 运行，各自有进度圆环、速度和模型">
 
@@ -135,22 +139,20 @@ Codex 和 Claude 一个圆环同时看 5 小时和每周额度，刻度告诉你
 <tr>
 <td width="50%" valign="top">
 
-<img src="docs/assets/logo-apple.png" height="16" align="middle" alt="">&nbsp;**Mac**
+<a href="https://github.com/RyanZhangNTU/codex-pacer/releases/latest"><img src="docs/assets/download-mac.zh-CN.png" height="48" alt="免费下载 macOS 版"></a>
 
-1. 从[最新版本](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)下载 DMG。
-2. 打开后把 **Codex Pacer** 拖入“应用程序”。
+打开 DMG，把 **Codex Pacer** 拖入“应用程序”。
 
-macOS 14 及以上，Apple 芯片或 Intel。已通过 Apple 公证。
+<sub>macOS 14 及以上，Apple 芯片或 Intel。已通过 Apple 公证。</sub>
 
 </td>
 <td width="50%" valign="top">
 
-<img src="docs/assets/logo-windows.png" height="16" align="middle" alt="">&nbsp;**Windows**
+<a href="https://github.com/RyanZhangNTU/codex-pacer/releases/latest"><img src="docs/assets/download-windows.zh-CN.png" height="48" alt="免费下载 Windows 版"></a>
 
-1. 下载 `x64` 安装包，ARM 电脑下载 `arm64`。
-2. 运行即可，无需管理员权限。
+运行 `x64` 安装包，ARM 电脑用 `arm64`。无需管理员权限。
 
-Windows 10 2004 及以上，x64 或 ARM64。
+<sub>Windows 10 2004 及以上，x64 或 ARM64。</sub>
 
 </td>
 </tr>

@@ -2,23 +2,25 @@
 
 <div align="center">
 
-<img src="native/Resources/Pacer.png" width="120" alt="Codex Pacer app icon">
-
-<h1>Codex Pacer</h1>
+<p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme-title-dark.png">
+  <img src="docs/assets/readme-title-light.png" width="451" alt="Codex Pacer">
+</picture>
+</p>
 
 <h3>A progress bar for your AI coding agents.</h3>
 
-See how far every task has got, when it needs you and how much quota is left,<br>
-without leaving what you're doing. On Mac and Windows.
+See how far every task has got, when it needs you and how much quota is left, at a glance.
 
-<br>
+Free and open source, for Mac and Windows.
 
-<img src="native/Sources/PacerCore/Resources/provider-codex.png" width="22" align="middle" alt="">&nbsp;<b>Codex</b>
-&emsp;<img src="native/Sources/PacerCore/Resources/provider-claude.png" width="22" align="middle" alt="">&nbsp;<b>Claude Code</b>
-&emsp;<img src="native/Sources/PacerCore/Resources/provider-deepseek.png" width="22" align="middle" alt="">&nbsp;<b>DeepSeek Harness</b>
-&emsp;<img src="native/Sources/PacerCore/Resources/provider-workbuddy.png" width="22" align="middle" alt="">&nbsp;<b>WorkBuddy</b>
-
-<br>
+<p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme-agents-dark.png">
+  <img src="docs/assets/readme-agents-light.png" width="805" alt="Works with Codex, Claude Code, DeepSeek Harness and WorkBuddy, with more agents coming">
+</picture>
+</p>
 
 <a href="https://github.com/RyanZhangNTU/codex-pacer/releases/latest"><img src="docs/assets/download-mac.png" height="56" alt="Download for macOS"></a>
 &nbsp;
@@ -32,14 +34,12 @@ without leaving what you're doing. On Mac and Windows.
 
 [Features](#features) · [Supported agents](#supported-agents) · [Install](#install) · [User Guide](docs/guide.md) · [Community](#community) · [简体中文](README.zh-CN.md)
 
-<br>
-
-<img src="docs/assets/demo.webp" width="100%" alt="Codex Pacer with sample data: tasks from several agents report their progress as rings, a task turns amber when it needs approval, and the collapsed bar shows the average progress">
+<p><img src="docs/assets/readme-hero.png" width="100%" alt="Codex Pacer with sample data: three tasks from different agents, each with a progress ring around its icon, its speed and its model"></p>
 
 </div>
 
 > [!TIP]
-> **New in 4.7: Claude calls Codex (Beta).** Ask Claude Code to have Codex review a change or take on a task, and follow Codex's progress right under Claude's task. [See how it works](#claude-calls-codex).
+> **New in 4.7: Claude calls Codex (Beta).** Ask Claude Code to have Codex review a change or take on a task, and follow Codex's progress right under Claude's task. [See how it works](#collab).
 
 ## Why Pacer
 
@@ -73,10 +73,10 @@ Tasks on this computer, on your SSH hosts, in WSL and in Claude's cloud Projects
 <thead>
 <tr>
 <th></th>
-<th><img src="native/Sources/PacerCore/Resources/provider-codex.png" width="20" align="middle" alt="">&nbsp;Codex</th>
-<th><img src="native/Sources/PacerCore/Resources/provider-claude.png" width="20" align="middle" alt="">&nbsp;Claude Code</th>
-<th><img src="native/Sources/PacerCore/Resources/provider-deepseek.png" width="20" align="middle" alt="">&nbsp;DeepSeek Harness</th>
-<th><img src="native/Sources/PacerCore/Resources/provider-workbuddy.png" width="20" align="middle" alt="">&nbsp;WorkBuddy</th>
+<th><img src="native/Sources/PacerCore/Resources/provider-codex.png" width="32" alt=""><br>Codex</th>
+<th><img src="native/Sources/PacerCore/Resources/provider-claude.png" width="32" alt=""><br>Claude&nbsp;Code</th>
+<th><img src="native/Sources/PacerCore/Resources/provider-deepseek.png" width="32" alt=""><br>DeepSeek&nbsp;Harness</th>
+<th><img src="native/Sources/PacerCore/Resources/provider-workbuddy.png" width="32" alt=""><br>WorkBuddy</th>
 </tr>
 </thead>
 <tbody>
@@ -92,6 +92,8 @@ Tasks on this computer, on your SSH hosts, in WSL and in Claude's cloud Projects
 </table>
 
 <sub>¹ On Windows.</sub>
+
+**More agents are on the way.** Want one sooner? [Tell us](https://github.com/RyanZhangNTU/codex-pacer/issues/new?template=feature_request.yml).
 
 <details>
 <summary><b>First-time setup for each agent</b></summary>
@@ -115,7 +117,9 @@ Codex and Claude show their 5-hour and weekly quota on one ring, with a tick for
 
 <img src="docs/assets/readme-quota.png" width="100%" alt="Codex and Claude quota, each with its 5-hour and weekly windows, pace and a forecast for the reset">
 
-## Claude calls Codex <img src="https://img.shields.io/badge/Beta-8250df?style=flat-square" align="middle" alt="Beta">
+<a id="collab"></a>
+
+## Claude calls Codex (Beta)
 
 Turn on **Claude calls Codex** in **Settings → Collaboration**, then just ask Claude, for example "have Codex review this change". Each Codex run shows under the Claude task that started it, with its own progress, speed and model. Hover over a running one to stop it.
 
@@ -135,22 +139,20 @@ Keep it at the top center of the screen, or drag it anywhere and let it snap to 
 <tr>
 <td width="50%" valign="top">
 
-<img src="docs/assets/logo-apple.png" height="16" align="middle" alt="">&nbsp;**Mac**
+<a href="https://github.com/RyanZhangNTU/codex-pacer/releases/latest"><img src="docs/assets/download-mac.png" height="48" alt="Download for macOS"></a>
 
-1. Download the DMG from the [latest release](https://github.com/RyanZhangNTU/codex-pacer/releases/latest).
-2. Open it and drag **Codex Pacer** into **Applications**.
+Open the DMG and drag **Codex Pacer** into **Applications**.
 
-macOS 14 or later, Apple silicon or Intel. Notarized by Apple.
+<sub>macOS 14 or later, Apple silicon or Intel. Notarized by Apple.</sub>
 
 </td>
 <td width="50%" valign="top">
 
-<img src="docs/assets/logo-windows.png" height="16" align="middle" alt="">&nbsp;**Windows**
+<a href="https://github.com/RyanZhangNTU/codex-pacer/releases/latest"><img src="docs/assets/download-windows.png" height="48" alt="Download for Windows"></a>
 
-1. Download the `x64` installer, or `arm64` on an ARM PC.
-2. Run it. No administrator rights needed.
+Run the `x64` installer, or `arm64` on an ARM PC. No administrator rights needed.
 
-Windows 10 version 2004 or later, x64 or ARM64.
+<sub>Windows 10 version 2004 or later, x64 or ARM64.</sub>
 
 </td>
 </tr>
