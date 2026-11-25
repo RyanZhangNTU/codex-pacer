@@ -49,17 +49,19 @@ internal static class PreferencesChecks
             // The expanded panel's blocks and choices, also as the Mac's data; damage reads as unset.
             const string panelLayout = "{\"blocks\":[\"claude\",\"tasks\"],\"version\":1}";
             string panelOptions = PanelChoices.With(PanelChoices.With(null, "rowFields", new[] { "rate", "model" }), "pageSize", 5);
-            Check(store.Save(original with { ExpandedPanelLayout = panelLayout, ExpandedPanelOptions = panelOptions, LastSettingsPane = "expandedPanel" }), "The panel's layout and choices must save");
+            Check(store.Save(original with { ExpandedPanelLayout = panelLayout, ExpandedPanelOptions = panelOptions, IslandExpandMode = "click", LastSettingsPane = "expandedPanel" }), "The panel's layout and choices must save");
             var panel = store.Load().Value; saved = File.ReadAllText(file);
             Check(panel.ExpandedPanelLayout == panelLayout && panel.ExpandedPanelOptions == panelOptions && panel.LastSettingsPane == "expandedPanel"
+                && panel.IslandExpandMode == "click" && saved.Contains("\"islandExpandMode\": \"click\"")
                 && saved.Contains("\"expandedPanelLayout\": \"" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(panelLayout)) + "\"")
                 && saved.Contains("\"expandedPanelOptions\": \"") && System.Text.Json.Nodes.JsonNode.Parse(panelOptions)!["rowFields"]!.AsArray().Count == 2,
                 "The panel's layout and choices are stored as the Mac's data and survive relaunch");
             var damagedPanel = System.Text.Json.Nodes.JsonNode.Parse(saved)!.AsObject(); damagedPanel["expandedPanelLayout"] = "not base64!"; damagedPanel["expandedPanelOptions"] = Convert.ToBase64String(new byte[] { 0xff, 0xfe });
+            damagedPanel["islandExpandMode"] = "future";
             File.WriteAllText(file, damagedPanel.ToJsonString());
             var panelRecovered = store.Load();
             Check(!panelRecovered.Unavailable && panelRecovered.Value.ExpandedPanelLayout == null && panelRecovered.Value.ExpandedPanelOptions == null
-                && panelRecovered.Value.CompactLayout == original.CompactLayout && panelRecovered.Value.LastSettingsPane == "expandedPanel",
+                && panelRecovered.Value.IslandExpandMode == "hover" && panelRecovered.Value.CompactLayout == original.CompactLayout && panelRecovered.Value.LastSettingsPane == "expandedPanel",
                 "A damaged panel layout or choice reads as automatic and default without touching other settings");
             const string damagedField = "{\"version\":1,\"multiRing\":\"segments\",\"paceTick\":\"yes\",\"warningStyle\":\"dot\",\"ringLayout\":\"future\",\"later\":[1,2]}";
             var readBack = CompactChoices.Parse(damagedField);
@@ -197,6 +199,7 @@ internal static class PreferencesChecks
             Check(!store.Save(original with { RetentionMinutes = -1 }), "Invalid retention cannot replace saved settings");
             Check(!store.Save(original with { DisplayMode = "unknown" }), "An invalid display mode cannot replace saved settings");
             Check(!store.Save(original with { ExpandedQuotaStyle = "unknown" }), "An invalid quota style cannot replace saved settings");
+            Check(!store.Save(original with { IslandExpandMode = "unknown" }), "An invalid expand mode cannot replace saved settings");
             Check(!store.Save(original with { CompactLayout = new string('x', 8193) }) && !store.Save(original with { QuotaRingOuter = "Foreign Ring!" })
                 && !store.Save(original with { CompactSingleTask = "foreign" }) && !store.Save(original with { CompactMetric = "foreign" })
                 && !store.Save(original with { CodexQuotaWindow = "bad\nvalue" }), "Invalid compact choices cannot replace saved settings");

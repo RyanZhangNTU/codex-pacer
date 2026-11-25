@@ -38,6 +38,7 @@ internal sealed record DesktopPreferences
     public string? IslandDisplayPlaces { get; init; }
     public bool ShowInFullscreen { get; init; }
     public string IslandAppearance { get; init; } = "liquidGlass";
+    public string IslandExpandMode { get; init; } = "hover";
     public string ExpandedQuotaStyle { get; init; } = "split";
     public string? CompactLayout { get; init; }
     // Core's CompactComponentOptions as JSON; null keeps every default.
@@ -216,6 +217,7 @@ internal sealed record DesktopPreferences
         && ValidWindow(DisplayID) && ValidWindow(DisplayName)
         && (DisplaySelection != "specified" || DisplayID is not ("" or "0") || DisplayName.Length > 0)
         && Appearances.Contains(IslandAppearance)
+        && IslandExpandMode is "hover" or "click"
         && ExpandedQuotaStyle is "split" or "classic"
         && DelegationTriggers.Contains(CodexDelegationTrigger) && ValidDelegationModel(CodexDelegationModel) && DelegationEfforts.Contains(CodexDelegationEffort)
         && DelegationRecords.Contains(CodexDelegationRecords) && DelegationRecordsHours.Contains(CodexDelegationRecordsHours)

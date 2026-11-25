@@ -49,6 +49,8 @@ public partial class IslandWindow : Window
     private readonly NativeLayout geometry;
     private readonly Func<(MotionBounds Screen, MotionBounds WorkArea)>? screenGeometry;
     private bool pinned, expanded, rendering, presentationStopped;
+    // Only a panel opened by a bar click dismisses on loss of activation. Reveal keeps its existing pin.
+    private bool pinnedByBarClick;
     private bool updateInputSuspended;
     internal void SetUpdateInputSuspended(bool value)
     {
@@ -142,6 +144,11 @@ public partial class IslandWindow : Window
         ShellProjection.Changed += OnShellProjectionChanged;
         Loaded += (_, _) => OnShellProjectionChanged("");
         Closing += OnClosing;
+        Deactivated += (_, _) =>
+        {
+            if (pinnedByBarClick && !presentationStopped && move == null && !MoreButton.ContextMenu.IsOpen)
+            { SetPinned(false); SetExpanded(false); }
+        };
         Closed += (_, _) => StopPresentation();
         IsVisibleChanged += (_, _) =>
         {
@@ -306,7 +313,9 @@ public partial class IslandWindow : Window
             compactPreferences.Position != preferences.Position || compactPreferences.DisplayMode != preferences.DisplayMode;
         if (screenChanged || placementChanged) CancelMove();
         bool memoryTurnedOn = preferences.IslandPositionPerDisplay && !compactPreferences.IslandPositionPerDisplay;
+        bool expandModeChanged = compactPreferences.IslandExpandMode != preferences.IslandExpandMode;
         compactPreferences = preferences;
+        if (expandModeChanged) { pinnedByBarClick = false; UpdateMainAction(); }
         RememberDisplayPlace(preferences);
         // Light Liquid Glass turns the whole island light before its surface changes.
         bool toneChanged = PacerPalette.ApplyTone(preferences.IslandAppearance == "liquidGlassLight");
@@ -388,18 +397,34 @@ public partial class IslandWindow : Window
         if (opened) DismissForSettings();
         else ShowNavigationError(ui.Text("windows.app.open_failed"));
     }
-    private void OnMouseEnter(object sender, MouseEventArgs e) { if (move != null) return; RecordInteraction("hover-in"); collapse.Stop(); SetExpanded(true); }
+    private void OnMouseEnter(object sender, MouseEventArgs e)
+    {
+        if (move != null) return;
+        RecordInteraction("hover-in"); collapse.Stop();
+        if (compactPreferences.IslandExpandMode == "hover") SetExpanded(true);
+    }
     private void OnMouseLeave(object sender, MouseEventArgs e) { if (move != null) return; RecordInteraction("hover-out"); if (!pinned && !MoreButton.ContextMenu.IsOpen) collapse.Start(); }
     private void OnPin(object sender, RoutedEventArgs e) => SetPinned(!pinned);
-    private void SetPinned(bool value)
+    private void BarClicked()
+    {
+        if (compactPreferences.IslandExpandMode == "click")
+        {
+            bool open = !expanded;
+            SetPinned(open, byBarClick: true); SetExpanded(open);
+            if (open && pinned) { Activate(); (Header.IsVisible ? HeaderAction : StripAction).Focus(); }
+        }
+        else { SetPinned(!pinned); SetExpanded(true); }
+    }
+    private void SetPinned(bool value, bool byBarClick = false)
     {
         value = value && !updateInputSuspended;
         pinned = value;
+        pinnedByBarClick = value && byBarClick;
         PinButton.Background = value ? PacerPalette.Hover : Brushes.Transparent;
         PinButton.Foreground = value ? PacerPalette.Primary : PacerPalette.Secondary;
         ((IconGlyph)PinButton.Content).Symbol = value ? "pin.fill" : "pin";
         SetButtonName(PinButton, ui.Text(value ? "common.unpin" : "common.pin"));
-        UpdateMainAction();
+        if (compactPreferences.IslandExpandMode == "hover") UpdateMainAction();
     }
     private async void OnMarkRead(object sender, RoutedEventArgs e) { if (latest != null) await Send("markAllRead", new { snapshotSequence = latest.Sequence }); }
     private async void OnRefresh(object sender, RoutedEventArgs e) => await Send("refresh", new { discover = true });
@@ -458,6 +483,7 @@ public partial class IslandWindow : Window
         if (value == expanded) return;
         if (!value) Keyboard.ClearFocus();
         expanded = value;
+        if (compactPreferences.IslandExpandMode == "click") UpdateMainAction();
         // A collapsed island skipped the panel's snapshots; it is built once, before it is measured.
         // Rows kept from a hidden panel resume their loops once they show.
         if (value) { RefreshDirtyPanel(); RefreshRowMotion(); }

@@ -65,4 +65,21 @@ final class MainWindowPreferenceTests: XCTestCase {
         defaults.set("removed", forKey: DockIconPreference.defaultsKey)
         XCTAssertEqual(DockIconPreference.load(from: defaults), .whileOpen)
     }
+
+    @MainActor
+    func testIslandExpandModeSurvivesReopeningAndFallsBackToHover() {
+        let (defaults, name) = defaults()
+        defer { removeTestDefaults(name) }
+        func reopen() -> IslandModel { IslandModel(demo: true, demoArguments: nil, defaults: defaults) }
+        let model = reopen()
+        XCTAssertEqual(model.expandMode, .hover)
+        for mode in [IslandExpandMode.click, .hover] {
+            model.expandMode = mode
+            XCTAssertEqual(defaults.string(forKey: "islandExpandMode"), mode.rawValue)
+            XCTAssertEqual(reopen().expandMode, mode)
+        }
+        defaults.set("future", forKey: "islandExpandMode")
+        XCTAssertEqual(reopen().expandMode, .hover)
+        XCTAssertEqual(defaults.string(forKey: "islandExpandMode"), "future")
+    }
 }

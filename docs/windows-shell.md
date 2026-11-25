@@ -148,7 +148,7 @@ Preferences live in `%LOCALAPPDATA%\CodexPacer\preferences-v1.json`; keep the fi
 | Place per display | `islandPositionPerDisplay`, `islandDisplayPlaces` | on, none saved |
 | Surface | `islandAppearance`, `expandedQuotaStyle` | `liquidGlass`, `split` |
 | Collapsed bar | `compactIslandLayout`, `compactComponentOptions`, `compactBarSize`, `compactSingleTask`, `compactMetric` | Core's defaults, `standard`, `stage`, `remaining` |
-| Expanded panel | `expandedPanelLayout`, `expandedPanelOptions` | automatic layout, Core's defaults |
+| Expanded panel | `expandedPanelLayout`, `expandedPanelOptions`, `islandExpandMode` (`hover` or `click`) | automatic layout, Core's defaults, `hover` |
 | Quota windows and rings | `quotaWindowID`, `claudeQuotaWindowID`, `quotaRingOuter`, `quotaRingInner` | `auto`, automatic rings |
 | DeepSeek | `deepseekPanelStyle`, `deepseekMode`, `deepseekBalanceSource`, `deepseekDailyBudget`, `deepseekWeeklyBudget`, `deepseekRingPeriod`, `deepseekSpeedSource`, `deepseekShowsTurnCost`, `deepseekLowBalanceLine`, `deepseekSpikeLimit` | `detailed`, `balance`, `automatic`, no amounts, `day`, `local`, turn cost on |
 | Task progress rings | `codexProgressRing`, `claudeProgressRing`, `deepseekProgressRing` | on |

@@ -12,6 +12,11 @@ extension QuotaWindowSelection {
 
 typealias FiveHourQuotaAlert = CompactWarningPresentation.FiveHourAlert
 
+enum IslandExpandMode: String, CaseIterable {
+    case hover, click
+    static let defaultsKey = "islandExpandMode"
+}
+
 @MainActor
 struct ClaudeQuotaReadDependencies {
     var passive: @MainActor (ClaudeQuotaClient) async -> QuotaSnapshot? = { await $0.readStatusLineOnly() }
@@ -1264,6 +1269,9 @@ final class IslandModel: ObservableObject {
     }
     @Published var expanded = false
     @Published var pinned = false
+    @Published var expandMode: IslandExpandMode {
+        didSet { defaults.set(expandMode.rawValue, forKey: IslandExpandMode.defaultsKey) }
+    }
     /// The reference time for each pass. Setting it alone does not redraw: changed
     /// values publish themselves; the clock and expiry wake-ups call `redrawClock()`.
     var now = Date()
@@ -1356,9 +1364,17 @@ final class IslandModel: ObservableObject {
         IslandScreenMemory.rememberCurrent(for: currentDisplay.key, name: currentDisplay.name, defaults: defaults)
     }
     /// The mouse-up that ends a drag must not also pin the island or open a task.
-    func barClicked(_ action: () -> Void) {
+    func barClicked(_ component: CompactIslandLayout.Component? = nil) {
         guard !islandMoving, Date().timeIntervalSince(moveEndedAt) > 0.3 else { return }
-        action()
+        if expandMode == .click {
+            guard !interactionSuspended else { return }
+            if expanded { close() }
+            else { pinned = true; setExpanded(true); onFocusRequested?() }
+        } else if component == .activity || component == .status {
+            openCompletionOrPin()
+        } else {
+            togglePin()
+        }
     }
     @Published var notchWidth: CGFloat = 0
     /// Physical geometry of the screen hosting Pacer, retained even in Floating mode.
@@ -1955,6 +1971,7 @@ final class IslandModel: ObservableObject {
          deepseekMonitor: DeepSeekActivityMonitor = DeepSeekActivityMonitor(),
          durableMonitor: MacDurableMonitor = MacDurableMonitor()) {
         self.defaults = defaults
+        expandMode = defaults.string(forKey: IslandExpandMode.defaultsKey).flatMap(IslandExpandMode.init(rawValue:)) ?? .hover
         self.durableMonitor = durableMonitor
         self.compactLayout = .load(from: defaults)
         self.savedPanelLayout = .load(from: defaults)
@@ -2081,7 +2098,9 @@ final class IslandModel: ObservableObject {
     func hover(_ entered: Bool) {
         guard !interactionSuspended, !islandMoving else { return }
         closeWork?.cancel()
-        if entered { setExpanded(true) }
+        if entered {
+            if expandMode == .hover { setExpanded(true) }
+        }
         else if !pinned {
             let work = DispatchWorkItem { [weak self] in self?.setExpanded(false) }
             closeWork = work

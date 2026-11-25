@@ -62,7 +62,7 @@ public partial class IslandWindow
             host.Click += (_, _) =>
             {
                 if (presentationStopped || !host.IsVisible || !host.IsEnabled || host.Opacity < 0.05) return;
-                SetPinned(!pinned); SetExpanded(true);
+                BarClicked();
             };
             return host;
         }

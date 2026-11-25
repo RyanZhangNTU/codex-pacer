@@ -65,7 +65,7 @@ struct CompactIslandHeader: View {
             DispatchQueue.main.async { model.updateMeasuredCompactWidth(width) }
         }
         .contentShape(Rectangle())
-        .background(Color.clear.contentShape(Rectangle()).onTapGesture { model.barClicked { model.togglePin() } })
+        .background(Color.clear.contentShape(Rectangle()).onTapGesture { model.barClicked() })
         .contextMenu {
             Button(L10n.text("common.settings")) { model.onSettings?() }
             Button(L10n.text("common.quit")) { model.onQuit?() }
@@ -119,7 +119,7 @@ struct CompactIslandStrip: View {
                 DispatchQueue.main.async { model.updateMeasuredStripHeight(height) }
             }
             .contentShape(Rectangle())
-            .background(Color.clear.contentShape(Rectangle()).onTapGesture { model.barClicked { model.togglePin() } })
+            .background(Color.clear.contentShape(Rectangle()).onTapGesture { model.barClicked() })
             .contextMenu {
                 Button(L10n.text("common.settings")) { model.onSettings?() }
                 Button(L10n.text("common.quit")) { model.onQuit?() }
@@ -163,6 +163,8 @@ struct CompactIslandComponent: View {
     let vertical: Bool
     @Environment(\.islandLayoutProbe) private var layoutProbe
     private let item: CompactBarPresentation.Component
+    /// Read when the bar draws, so a change of expand mode redraws the hint.
+    private let clickToExpand: Bool
     private var output: CompactBarPresentation.Output { snapshot.output }
     private var metrics: CompactBarMetrics { snapshot.metrics }
     private var choices: CompactComponentOptions { snapshot.choices }
@@ -173,6 +175,7 @@ struct CompactIslandComponent: View {
         self.snapshot = snapshot
         self.vertical = vertical
         item = snapshot.output.component(component)
+        clickToExpand = model.expandMode == .click
     }
 
     private var scale: CGFloat { CGFloat(metrics.scale) }
@@ -216,7 +219,7 @@ struct CompactIslandComponent: View {
         }
     }
     var body: some View {
-        Button(action: action) {
+        Button { model.barClicked(component) } label: {
             Group { if vertical { stripContent } else { content } }
                 .padding(.vertical, vertical ? 2 : 4).frame(maxWidth: vertical ? .infinity : nil).contentShape(Rectangle())
         }
@@ -387,19 +390,11 @@ struct CompactIslandComponent: View {
     private var help: String {
         switch component {
         case .activity, .status:
-            return L10n.text(snapshot.hasPendingAttention ? "activity.header_open" : "activity.header_pin",
+            return L10n.text(clickToExpand ? "activity.header_toggle" : snapshot.hasPendingAttention ? "activity.header_open" : "activity.header_pin",
                 component == .activity ? item.help : snapshot.context.headerStatusText(language: L10n.language))
         case .priceClock: return ""
         case .quotaGauge: return output.gaugeClock ? "" : item.help
         default: return item.help
-        }
-    }
-    private func action() {
-        model.barClicked {
-            switch component {
-            case .activity, .status: model.openCompletionOrPin()
-            default: model.togglePin()
-            }
         }
     }
 }

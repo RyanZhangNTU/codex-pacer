@@ -58,6 +58,18 @@ internal static class IslandMoveChecks
                     IslandEdge.Left => bounds.Left - work.Left, _ => work.Right - bounds.Right
                 };
                 Check(Math.Abs(gap) <= 2, "The visible bar meets the selected work-area edge: " + edge + ", gap=" + gap);
+                if (edge == IslandEdge.Left)
+                {
+                    window.ApplyPreferences(session.Current with { IslandExpandMode = "click" });
+                    window.CollapseForAutomation(); await window.WaitForPresentationAsync();
+                    Move(midX, midY);
+                    await Press();
+                    Check(!window.IsExpandedForAutomation, "Entering and pressing the side strip waits for a click");
+                    Up(); await PresentationWait.UntilAsync(() => window.IsExpandedForAutomation, "Clicking the side strip opens the panel");
+                    await Press(); Up();
+                    await PresentationWait.UntilAsync(() => !window.IsExpandedForAutomation, "Clicking the open side strip collapses it");
+                    window.ApplyPreferences(session.Current);
+                }
             }
             Move(midX, midY);
             window.CollapseForAutomation(); await window.WaitForPresentationAsync();

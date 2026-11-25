@@ -95,7 +95,7 @@ public partial class IslandWindow
         }
         EndMove(gesture);
         var point = e.GetPosition(gesture.Capture);
-        if (new Rect(gesture.Capture.RenderSize).Contains(point)) { SetPinned(!pinned); SetExpanded(true); }
+        if (new Rect(gesture.Capture.RenderSize).Contains(point)) BarClicked();
         else if (!pinned) collapse.Start();
     }
 

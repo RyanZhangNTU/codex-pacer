@@ -50,6 +50,22 @@ internal static class ExpandedPanelChecks
             Check(Descendants(Find<Button>(window, "panel.editor.tasks")).OfType<TextBlock>().Any(text => text.Text == AutomationProperties.GetName(Find<Button>(window, "panel.block.tasks"))),
                 "An outline block draws its name, not its content's type");
             window.CapturePreview(Path.Combine(output, "settings-panel-" + name + "-automatic.png"));
+            var hover = Find<RadioButton>(window, "panel.option.expand.hover");
+            var click = Find<RadioButton>(window, "panel.option.expand.click");
+            Check(hover.IsChecked == true && Equals(hover.Content, ui.Text("main.panel.expand.hover")) && Equals(click.Content, ui.Text("main.panel.expand.click")),
+                "The panel offers both expand modes and starts on hover");
+            Select(click);
+            await Until(() => session.Current.IslandExpandMode == "click" && click.IsEnabled);
+            Check(session.Current.ExpandedPanelLayout == null && !Find<Button>(window, "panel.restore").IsVisible,
+                "Changing how the bar opens keeps the automatic block layout and has nothing to restore");
+            island.CollapseForAutomation(); await island.WaitForPresentationAsync();
+            Invoke((Button)island.FindName("HeaderAction"));
+            await Until(() => island.IsExpandedForAutomation && island.IsActive);
+            window.Activate();
+            await Until(() => !island.IsExpandedForAutomation, "Returning to Settings dismisses the click-opened panel");
+            Select(hover);
+            await Until(() => session.Current.IslandExpandMode == "hover" && hover.IsChecked == true);
+            island.Reveal(); await island.WaitForPresentationAsync();
 
             // Moving Codex above the tasks splits it from the other quotas and hands it the buttons.
             int before = configurations;
