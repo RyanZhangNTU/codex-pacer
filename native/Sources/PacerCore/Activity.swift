@@ -48,6 +48,22 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private(set) var hostLaunchAt: Date?
     public private(set) var rolloutURL: URL?
     public var isIgnoredCodexSession: Bool { codexOrigin?.ignored == true }
+    /// Set by `ActivityApplicationState` on a Codex thread a Codex for Claude
+    /// run started: it belongs to that Claude task.
+    public var codexDelegation: CodexDelegationLink? {
+        didSet {
+            // Not only a thread still running: one Codex never started a turn in,
+            // or whose state is unknown, takes the ledger's ending too, not a moon.
+            guard let link = codexDelegation, link.status.finished, [.running, .waitingForInput, .unknown].contains(phase) else { return }
+            // A resume can start before the ledger cache receives its new running entry.
+            if let end = link.ended, let start = turnStartedAt, start > end { return }
+            phase = link.status == .ok ? .completed : .interrupted
+            turnFailed = link.status == .failed
+            phaseChangedAt = link.ended ?? link.started
+        }
+    }
+    /// A Codex for Claude executor thread or one of its sub-threads, linked or not.
+    public var isCodexDelegation: Bool { codexDelegation != nil || codexOrigin?.delegated == true }
     /// Set on tasks that run in a Claude cloud Project.
     public private(set) var claudeCloud: ClaudeCloudContext?
     /// The same place on claude.ai, for when Claude Desktop cannot open it.
@@ -101,7 +117,17 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     // A reported null is different from a source that never reported effort.
     private var reasoningEffortReported = false
     private var reasoningEffortReportedAt: Date?
-    public private(set) var isInternalReview = false
+    /// Codex's own reviewers: approval auto-reviews, and the sub-thread a
+    /// `/review` works in. A Codex for Claude review run works in such a
+    /// sub-thread too; there it is the run itself, so it is not one.
+    public var isInternalReview: Bool { autoReviewThread || (reviewSubthread && codexOrigin?.delegated != true) }
+    private var autoReviewThread = false
+    private var reviewSubthread = false
+    /// The sub-thread a Codex for Claude review run works in.
+    public var isCodexReviewRun: Bool { reviewSubthread && codexOrigin?.delegated == true }
+    /// A task's own thread fills its ring, and so does a review run's sub-thread,
+    /// which is the run's line. Other sub-threads' estimates stay their own.
+    private var reportsOwnProgress: Bool { parentThreadID == nil || isCodexReviewRun }
     private var autoReviewedTurnID: String?
     /// Whether the current turn's context names Codex as its default reviewer.
     public var codexReviewsApprovals: Bool { turnID != nil && turnID == autoReviewedTurnID }
@@ -304,8 +330,15 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         }
         return sample.reportedAt > previous.reportedAt || (sample.reportedAt == previous.reportedAt && exact && !lastMeasuredExact)
     }
+    /// A turn holding for background work writes nothing until the work wakes
+    /// it: its own speed is 0, whatever its last reply measured.
+    private func backgroundWaitRate(at now: Date) -> OutputEstimate? {
+        guard let wait = currentBackgroundWait else { return nil }
+        return OutputEstimate(value: 0, reportedAt: min(wait.since, now), isFresh: true)
+    }
     /// Display continuity is independent of the new turn's accounting baseline.
     public func displayedOutputEstimate(at now: Date) -> OutputEstimate? {
+        if let idle = backgroundWaitRate(at: now) { return idle }
         // A cloud run reports no usage, only the reply it is writing, and an earlier turn's speed would read as live.
         let measured = claudeCloud != nil && phase == .running ? cloudReplyRate : lastMeasuredRate
         guard let sample = measured, now >= sample.reportedAt else { return nil }
@@ -313,7 +346,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         return OutputEstimate(value: sample.value, reportedAt: sample.reportedAt, isFresh: fresh)
     }
     public func displayedRateIsEstimated(at now: Date) -> Bool {
-        (claudeCloud != nil && phase == .running) ||
+        if currentBackgroundWait != nil { return false }
+        return (claudeCloud != nil && phase == .running) ||
         !lastMeasuredExact || projectedRate || lastMeasuredTurnID != turnID || stage == .tool ||
             performanceMeter.hasPendingOutput || displayedOutputEstimate(at: now)?.isFresh != true
     }
@@ -551,6 +585,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         }
     }
 
+    var unconfirmedDisplayDeadline: Date? { lastObserved?.addingTimeInterval(15 * 60) }
     public func observedPhase(at now: Date = Date()) -> ActivityPhase {
         if [.completed, .interrupted].contains(phase) { return phase }
         guard lastObserved != nil else { return .unknown }
@@ -563,6 +598,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     }
     public func outputEstimate(at now: Date) -> OutputEstimate? {
         guard phase == .running else { return nil }
+        if let idle = backgroundWaitRate(at: now) { return idle }
         if claudeCloud != nil { return displayedOutputEstimate(at: now) }
         let legacy = phaseAwareRate ? generationRate.estimate(at: now) : outputRate.estimate(at: now)
         if legacy?.value == 0 { return legacy }
@@ -654,7 +690,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     }
 
     private mutating func acceptCodexProgress(_ raw: Any?, turn: String, at date: Date) {
-        guard acceptsLogAttention, parentThreadID == nil, turnID == turn, phase != .unknown,
+        guard acceptsLogAttention, reportsOwnProgress, turnID == turn, phase != .unknown,
               date >= (turnStartedAt ?? .distantPast),
               codexHeldEnding.map({ date <= $0 }) ?? true,
               ![.completed, .interrupted].contains(phase) || date <= (phaseChangedAt ?? date),
@@ -674,7 +710,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         let item = outer == "event_msg" && kind == "item_completed" ? payload["item"] as? [String: Any] : nil
         let reportItem = item.map(CodexProgressEvidence.isReportItem) == true
         guard call || output || reportItem || ["pacer_progress", "pacer_progress_call", "pacer_progress_result"].contains(kind ?? "") else { return false }
-        guard acceptsLogAttention, parentThreadID == nil, let turnID, phase != .unknown,
+        guard acceptsLogAttention, reportsOwnProgress, let turnID, phase != .unknown,
               let text = timestamp as? String, let stamp = Self.parseDate(text), stamp >= (turnStartedAt ?? .distantPast) else { return true }
         let explicitTurn = payload["turn_id"] ?? (payload["internal_chat_message_metadata_passthrough"] as? [String: Any])?["turn_id"]
         if let explicitTurn, CodexProgressEvidence.identifier(explicitTurn) != turnID { return true }
@@ -719,8 +755,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             let subagent = rawSubagent as? [String: Any]
             let role = (subagent?["other"] as? String)?.lowercased()
             let threadSource = (payload["thread_source"] as? String)?.lowercased()
-            isInternalReview = isInternalReview || rawSubagent as? String == "review" || subagent?["review"] != nil ||
-                ["guardian", "auto_review", "autoreview"].contains(role ?? "") ||
+            reviewSubthread = reviewSubthread || rawSubagent as? String == "review" || subagent?["review"] != nil
+            autoReviewThread = autoReviewThread || ["guardian", "auto_review", "autoreview"].contains(role ?? "") ||
                 ["guardian_review", "auto_review", "autoreview"].contains(threadSource ?? "")
             if let cwd = payload["cwd"] as? String { project = URL(fileURLWithPath: cwd).lastPathComponent }
             return
@@ -742,7 +778,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
                 beginCodexTurn(contextTurn, root: payload["root_turn_id"], at: date)
             }
             updateModel(in: payload, effort: "effort", at: date)
-            if modelName?.lowercased().hasPrefix("codex-auto-review") == true { isInternalReview = true }
+            if modelName?.lowercased().hasPrefix("codex-auto-review") == true { autoReviewThread = true }
             switch payload["approvals_reviewer"] as? String {
             case "auto_review", "guardian_subagent": autoReviewedTurnID = turnID
             default: autoReviewedTurnID = nil
@@ -813,7 +849,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             beginCodexTurn(eventTurn, root: payload["root_turn_id"] ?? (payload["turn_attribution"] as? [String: Any])?["root_turn_id"], at: date)
             if let context = payload["_model_context"] as? [String: Any] {
                 updateModel(in: context, effort: "effort", at: date)
-                if modelName?.lowercased().hasPrefix("codex-auto-review") == true { isInternalReview = true }
+                if modelName?.lowercased().hasPrefix("codex-auto-review") == true { autoReviewThread = true }
             }
             logTurnStart = date
             if retainedLatency == nil, let ms = payload["first_output_latency_ms"] as? Double,
@@ -1101,7 +1137,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             let source = (event["source"] as? String ?? "").lowercased().replacingOccurrences(of: "_", with: "")
             if provider == .codex {
                 let model = configured ? event["model"] as? String : modelName
-                isInternalReview = isInternalReview || ["guardianreview", "autoreview", "subagentreview"].contains(source) ||
+                reviewSubthread = reviewSubthread || source == "subagentreview"
+                autoReviewThread = autoReviewThread || ["guardianreview", "autoreview"].contains(source) ||
                     model?.lowercased().hasPrefix("codex-auto-review") == true
             }
             return
@@ -1155,7 +1192,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
               let eventTurn = event["turnId"] as? String, !eventTurn.isEmpty else { return }
         guard !retiredTurns.contains(eventTurn) else { return }
         if method == "turn/completed" {
-            guard turnID == eventTurn || (turnID == nil && liveStatusOnly), [.running, .waitingForInput].contains(phase) else { return }
+            let confirmedAfterQuiet = provider == .claude && phase == .unknown && turnID == eventTurn && event["confirmedAfterQuiet"] as? Bool == true
+            guard turnID == eventTurn || (turnID == nil && liveStatusOnly),
+                  [.running, .waitingForInput].contains(phase) || confirmedAfterQuiet else { return }
             let status = event["status"] as? String
             isHistoricalCompletion = false
             identifyTurn(eventTurn); liveStatusOnly = false

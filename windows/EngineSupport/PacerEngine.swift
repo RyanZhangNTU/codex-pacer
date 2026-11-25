@@ -240,6 +240,15 @@ actor EngineRuntime {
     private var panelSettings = EngineExpandedPanelSettings()
     /// Claude's self-reported progress ring; off until the desktop turns it on.
     private var claudeProgressRing = false
+    /// Codex for Claude; off until the desktop turns it on.
+    private var codexDelegationSettings = EngineCodexDelegationSettings()
+    private var codexDelegationHome: URL?
+    private var codexDelegationLedger: (at: Date, links: [String: CodexDelegationLink])?
+    private var codexDelegationRuns: [ClaudeCodexDelegation.Run] = []
+    /// The quota left last written for the runner's quota floor.
+    private var codexDelegationQuotaWritten: (left: Double?, at: Date?)?
+    private var codexDelegationStatusCache: (at: Date, value: EngineCodexDelegationStatus)?
+    private var codexDelegationCheck = CodexDelegationCheck()
     private var codexProgressRing = false
     private var deepseekProgressRing = false
     private var disabledHarnessProgress: Set<AgentProvider> = []
@@ -331,6 +340,7 @@ actor EngineRuntime {
     private var lastInstallationDetection = Date.distantPast
     private let detectInstallation: @Sendable () async -> ProviderInstallationDetection
     private var codexHome: URL
+    private var usesCustomCodexHome = false
     private let defaultCodexHome: URL
     private var codexExecutable = ""
     private var claudeHome: URL
@@ -338,7 +348,16 @@ actor EngineRuntime {
     private var deepseekHome: URL
     private let defaultDeepseekHome: URL
     private let sourceSettings: CodexSourceSettingsServices
-    private var codexReader = LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) })
+    private var codexReader = EngineRuntime.makeCodexReader()
+    /// Every Codex reader asks Windows which processes still hold a quiet turn's rollout for writing.
+    static func makeCodexReader() -> LocalActivityReader {
+        #if os(Windows)
+        LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) },
+            writerProbe: { file, home in WindowsProcessOwnership.hasWriter(of: file, within: home) })
+        #else
+        LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) })
+        #endif
+    }
     private var navigation = ActivityNavigationRegistry()
     private var notificationNavigation = ActivityNavigationRegistry()
     private var notificationActivities: [SessionActivity] = []
@@ -626,7 +645,7 @@ actor EngineRuntime {
                 failure(id: command.id, code: "staleActivityOpen"); return true
             }
             guard let operation = navigationState.begin(activity: entry.activity, target: entry.target, version: lifecycle.version(entry.target.provider),
-                activities: activities, inbox: inbox, active: active, scope: entry.cloudContext) else {
+                activities: activities, inbox: inbox, active: active, scope: entry.cloudContext, requests: requests) else {
                 failure(id: command.id, code: "navigationInProgress"); return true
             }
             navigationOpens[context] = operation
@@ -712,7 +731,7 @@ actor EngineRuntime {
             }
             var values = activities, retained = inbox
             guard let result = navigationState.complete(operation, outcome: .openedConversation, version: lifecycle.version(entry.target.provider), active: active,
-                activities: &values, inbox: &retained, scope: entry.cloudContext, now: navigationClock()), result.accepted else {
+                activities: &values, inbox: &retained, scope: entry.cloudContext, now: navigationClock(), requests: requests), result.accepted else {
                 failure(id: command.id, code: "staleActivityOpen"); return true
             }
             inbox = retained; activities = values
@@ -1054,6 +1073,20 @@ actor EngineRuntime {
             if command.method == "markAllRead" { activityState.markAllRead(at: now()) }
             else if let id = command.params?.activityID { activityState.markRead(activityID: id, at: now()) }
             publish(notices: [])
+        case "checkCodexDelegation":
+            checkCodexDelegation(); publish(notices: [])
+        case "clearDelegationHistory":
+            // Pacer keeps no Codex for Claude history any more; older hosts may still ask.
+            publish(notices: [])
+        case "reinstallDelegationSkill":
+            codexDelegationStatusCache = nil; scheduleClaudeHooks(force: true)
+        case "stopDelegation":
+            // The runner stops Codex and tells Claude the user stopped it in Pacer. A review run's row is
+            // its review sub-thread, which the ledger names only once the run ends.
+            guard let id = command.params?.activityID, let link = activityState.codexDelegation(forActivityID: id), link.status == .running,
+                  ClaudeCodexDelegation.requestStop(directory: link.directory) else {
+                failure(id: command.id, code: "notRunning"); return true
+            }
         case "demoStage":
             guard demo, let value = command.params?.demoStage, let next = DemoTaskStage(rawValue: value) else {
                 failure(id: command.id, code: "demoOnly"); return true
@@ -1165,7 +1198,9 @@ actor EngineRuntime {
         let wslProvidersChanged = selectedProviders.map { $0.intersection(WindowsWSLProfile.providers) != enabled.intersection(WindowsWSLProfile.providers) } ?? false
         projectionReady = false
         activityDisplayTask = nil; activityDisplayDeadline = nil
-        if let codex { codexHome = codex }
+        if let codex, let override = parameters.codexHome {
+            codexHome = codex; usesCustomCodexHome = !override.isEmpty
+        }
         if let claude { claudeHome = claude }
         if let organization = parameters.claudeOrganization {
             if organization.lowercased() != claudeOrganization {
@@ -1178,6 +1213,7 @@ actor EngineRuntime {
         if let deepseek { deepseekHome = deepseek }
         if let executable = parameters.codexExecutable { codexExecutable = executable }
         if let value = parameters.claudeProgressRing { claudeProgressRing = value }
+        if let value = parameters.codexDelegation, value != codexDelegationSettings { codexDelegationSettings = value; codexDelegationStatusCache = nil }
         if let value = parameters.codexProgressRing { codexProgressRing = value }
         if let value = parameters.deepseekProgressRing { deepseekProgressRing = value }
         if let selectedProgress { disabledHarnessProgress = selectedProgress }
@@ -1220,7 +1256,7 @@ actor EngineRuntime {
         if let value = parameters.reminderSettings { reminderSettings = value }
         if let value = parameters.expandedPanel { panelSettings = value }
         if let minutes = parameters.retentionMinutes { retention = minutes == 0 ? .infinity : Double(minutes) * 60 }
-        if changesCodex { codexReader = LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) }) }
+        if changesCodex { codexReader = Self.makeCodexReader() }
         if changesClaude { resetClaudeLocalSource() }
         if changesDeepSeek {
             harnessActivities.remove(.deepseek); deepseekUsage = DeepSeekLocalUsage()
@@ -1236,6 +1272,7 @@ actor EngineRuntime {
             codexRemoteTargets = []; claudeRemoteTargets = []; claudeRemoteStatuses = [:]
         }
         applyClaudeProgressSwitch()
+        applyCodexDelegationSwitch()
         // The Dot switch installs or removes the Durable progress plugin.
         scheduleCodexProgressSetup(force: durableChanged)
         scheduleCodexHooks()
@@ -1566,6 +1603,8 @@ actor EngineRuntime {
         // Setup creates Pacer's hook folder, which the switch file needs, and
         // confirms that this engine manages that home.
         applyClaudeProgressSwitch(setupConfirmed: report.state == .ready)
+        applyCodexDelegationSwitch(setupConfirmed: report.state == .ready)
+        codexDelegationStatusCache = nil
         publish(notices: [])
     }
     /// Installs Pacer's Codex hooks while the Codex module is on and removes
@@ -1820,6 +1859,164 @@ actor EngineRuntime {
         // display observer or its plugin), so a change brings them current.
         if contents(claudeHome) != before { scheduleClaudeHooks(force: true) }
     }
+    /// Codex for Claude's settings file is its switch, written like the
+    /// progress ring's: only by an engine that manages the hooks, removed only
+    /// where this engine turned it on or its hook setup just confirmed. A
+    /// change of the switch brings the plugin's skill current.
+    private func applyCodexDelegationSwitch(setupConfirmed: Bool = false) {
+        guard claudeHookServices != nil, !demo else { return }
+        let wanted = codexDelegationSettings.enabled == true && enabled.contains(.claude) && enabled.contains(.codex)
+        if let previous = codexDelegationHome, previous != claudeHome {
+            ClaudeCodexDelegation.apply(nil, home: previous); codexDelegationHome = nil
+        }
+        let config = ClaudeCodexDelegation.configURL(home: claudeHome)
+        let before = ClaudeCodexDelegation.isOn(home: claudeHome)
+        let trigger = ClaudeCodexDelegation.settings(FileManager.default.contents(atPath: config.path))?.trigger
+        if wanted {
+            // The runner starts the same Codex program Pacer found, also the one inside Codex Desktop.
+            let codex = CodexClient.findExecutable(customPath: codexExecutable)?.path ?? (codexExecutable.isEmpty ? nil : codexExecutable)
+            var settings = codexDelegationSettings.settings(codex: codex)
+            if usesCustomCodexHome { settings.codexHome = EngineCodexSourceReport.path(codexHome) }
+            // The installer owns the pinned Python path. Copy its command once the skill is installed.
+            let skill = try? String(contentsOf: ClaudeCodexDelegation.skillURL(home: claudeHome), encoding: .utf8)
+            let prefix = "allowed-tools: Bash("
+            if let line = skill?.split(whereSeparator: \.isNewline).first(where: { $0.hasPrefix(prefix) && $0.hasSuffix(":*)") }) {
+                settings.command = String(line.dropFirst(prefix.count).dropLast(3))
+            }
+            if ClaudeCodexDelegation.apply(settings, home: claudeHome) { codexDelegationHome = claudeHome }
+        } else if codexDelegationHome == claudeHome || setupConfirmed {
+            ClaudeCodexDelegation.apply(nil, home: claudeHome); codexDelegationHome = nil
+        }
+        codexDelegationQuotaWritten = nil
+        // The switch and the trigger are written into the plugin's skill.
+        if ClaudeCodexDelegation.isOn(home: claudeHome) != before
+            || ClaudeCodexDelegation.settings(FileManager.default.contents(atPath: config.path))?.trigger != trigger {
+            codexDelegationStatusCache = nil; scheduleClaudeHooks(force: true)
+        }
+    }
+    /// The ledger, read at most once a second: a run's rollout changes as it
+    /// starts, runs and is deleted, so each change brings a reconcile anyway.
+    private func codexDelegationLinks(at date: Date) -> [String: CodexDelegationLink] {
+        guard !demo, enabled.contains(.claude), enabled.contains(.codex) else { codexDelegationRuns = []; return [:] }
+        if let cached = codexDelegationLedger, abs(date.timeIntervalSince(cached.at)) < 1 { return cached.links }
+        codexDelegationRuns = ClaudeCodexDelegation.runs(home: claudeHome, runnerExited: WindowsProcessOwnership.hasExited)
+        let links = ClaudeCodexDelegation.links(codexDelegationRuns)
+        codexDelegationLedger = (date, links); return links
+    }
+    private func codexDelegationStatus(at date: Date, presentation: ActivityTaskPresentation,
+                                       codexQuota: QuotaSnapshot?) -> EngineCodexDelegationStatus? {
+        guard !demo, enabled.contains(.claude) else { return nil }
+        var value: EngineCodexDelegationStatus
+        if let cached = codexDelegationStatusCache, abs(date.timeIntervalSince(cached.at)) < 15 { value = cached.value } else {
+            let legacy = ClaudeCodexDelegation.hasLegacySkill(home: claudeHome) ? ClaudeCodexDelegation.legacySkillURL(home: claudeHome).path : nil
+            value = EngineCodexDelegationStatus(enabled: ClaudeCodexDelegation.isOn(home: claudeHome),
+                skillInstalled: FileManager.default.fileExists(atPath: ClaudeCodexDelegation.skillURL(home: claudeHome).path),
+                legacySkill: legacy, codexFound: codexExecutableFound ?? !codexExecutable.isEmpty)
+            value.pending = (try? String(contentsOf: ClaudeCodexDelegation.root(home: claudeHome).appendingPathComponent("pending-deletes.txt"), encoding: .utf8))
+                .map { Set($0.split(whereSeparator: \.isWhitespace)).count } ?? 0
+            value.runsFolder = ClaudeCodexDelegation.root(home: claudeHome).path
+            codexDelegationStatusCache = (date, value)
+        }
+        value.limit = codexDelegationSettings.maxConcurrent ?? 3
+        value.login = codexDelegationCheck.login; value.version = codexDelegationCheck.version
+        value.checking = codexDelegationCheck.checking ? true : nil
+        value.models = codexDelegationCheck.models; value.defaultModel = codexDelegationCheck.defaultModel
+        value.defaultEffort = codexDelegationCheck.defaultEffort; value.defaultFast = codexDelegationCheck.defaultFast
+        let sighting = ClaudeCodexDelegation.Sighting(runs: codexDelegationRuns)
+        value.seenRun = sighting.ran ? true : nil; value.seenEnded = sighting.finished ? true : nil
+        // Runs going now change every second; they come from the task list.
+        value.running = presentation.rows.flatMap { row in
+            row.delegations.filter { $0.phase == .running }.map { EngineRunningDelegation(parentTitle: row.title, row: EngineTaskRow($0)) }
+        }
+        // The least quota left, for the runner's quota floor, written when it changes.
+        let left = codexQuota?.windows.compactMap(\.remainingPercent).min()
+        if value.enabled, codexDelegationQuotaWritten?.left != left || codexDelegationQuotaWritten?.at != codexQuota?.capturedAt {
+            if ClaudeCodexDelegation.writeQuota(remainingPercent: left, home: claudeHome, at: codexQuota?.capturedAt ?? date) {
+                codexDelegationQuotaWritten = (left, codexQuota?.capturedAt)
+            }
+        }
+        let windows = (codexQuota?.windows ?? []).filter { $0.remainingPercent != nil }.sorted { ($0.durationMinutes ?? 0) < ($1.durationMinutes ?? 0) }
+        value.quotaText = windows.isEmpty ? nil : windows.map { $0.label + " " + String(Int($0.remainingPercent!.rounded())) + "%" }.joined(separator: " · ")
+        return value
+    }
+    /// The Collaboration page's self-check: Codex's version, its sign-in, its
+    /// model catalog and what its configuration picks for model, effort and
+    /// fast mode, from the program Pacer found. No model is called.
+    struct CodexDelegationCheck: Equatable {
+        var checking = false
+        var login: String?
+        var version: String?
+        var models: [EngineCodexModel]?
+        var defaultModel: String?
+        var defaultEffort: String?
+        var defaultFast: Bool?
+    }
+    private func checkCodexDelegation() {
+        // A demo never runs the user's Codex; its Collaboration page has no status.
+        guard !demo, !codexDelegationCheck.checking, let executable = CodexClient.findExecutable(customPath: codexExecutable) else {
+            if CodexClient.findExecutable(customPath: codexExecutable) == nil { codexDelegationCheck.login = nil; codexDelegationCheck.version = nil }
+            return
+        }
+        codexDelegationCheck.checking = true
+        let home = codexHome
+        let environment = ProcessInfo.processInfo.environment.merging(["CODEX_HOME": EngineCodexSourceReport.path(home)]) { _, home in home }
+        Task { [weak self] in
+            let version = await WindowsSubprocess.capture(executable: executable, arguments: ["--version"], timeout: 20, limit: 4096, environment: environment)
+                .map { String(decoding: $0, as: UTF8.self).split(whereSeparator: \.isWhitespace).last.map(String.init) } ?? nil
+            // `codex login status` exits non-zero when signed out.
+            let login = await WindowsSubprocess.capture(executable: executable, arguments: ["login", "status"], timeout: 20, limit: 4096, environment: environment)
+            let catalog = await WindowsSubprocess.capture(executable: executable, arguments: ["debug", "models"], timeout: 60, limit: 1024 * 1024, environment: environment)
+            let models = catalog.flatMap(Self.codexModels)
+            let check = Self.codexDelegationDefaults(home: home, models: models,
+                login: version == nil ? "unknown" : login == nil ? "missing" : "ok", version: version)
+            await self?.receiveCodexDelegationCheck(check)
+        }
+    }
+    private func receiveCodexDelegationCheck(_ check: CodexDelegationCheck) {
+        codexDelegationCheck = check
+        publish(notices: [])
+    }
+    /// What the runner follows by default: config.toml's model, effort and
+    /// service tier, else the catalog's first model and that model's own effort.
+    static func codexDelegationDefaults(home: URL, models: [EngineCodexModel]?, login: String, version: String?) -> CodexDelegationCheck {
+        let model = configuredValue("model", home: home)
+        let effort = configuredValue("model_reasoning_effort", home: home)
+            ?? models?.first { $0.slug == model }?.defaultEffort ?? models?.first?.defaultEffort
+        let tier = configuredValue("service_tier", home: home)
+        return CodexDelegationCheck(checking: false, login: login, version: version, models: models, defaultModel: model ?? models?.first?.slug,
+                                    defaultEffort: effort, defaultFast: tier.map { $0 == "priority" || $0 == "fast" } ?? false)
+    }
+    /// The efforts Settings → Collaboration offers, as on the Mac.
+    static let codexDelegationEfforts = ["low", "medium", "high", "xhigh", "max", "ultra"]
+    static func codexModels(_ data: Data) -> [EngineCodexModel]? {
+        guard let value = try? JSONSerialization.jsonObject(with: data) else { return nil }
+        let list = (value as? [[String: Any]]) ?? ((value as? [String: Any])?["models"] as? [[String: Any]]) ?? []
+        let models = list.prefix(64).compactMap { model -> EngineCodexModel? in
+            guard let slug = model["slug"] as? String, slug.utf8.count <= 80, [nil, "list"].contains(model["visibility"] as? String) else { return nil }
+            let efforts = ((model["supported_reasoning_levels"] as? [Any]) ?? []).prefix(12).compactMap { level -> String? in
+                let effort = (level as? [String: Any])?["effort"] as? String ?? level as? String
+                return effort.flatMap { codexDelegationEfforts.contains($0) ? $0 : nil }
+            }
+            let fallback = (model["default_reasoning_level"] as? String).flatMap { codexDelegationEfforts.contains($0) ? $0 : nil }
+            return EngineCodexModel(slug: slug, name: ModelDisplay.name(slug, provider: .codex), efforts: efforts.isEmpty ? nil : efforts, defaultEffort: fallback)
+        }
+        return models.isEmpty ? nil : models
+    }
+    /// A top-level `key = "…"` of Codex's config.toml.
+    static func configuredValue(_ key: String, home: URL) -> String? {
+        guard let text = try? String(contentsOf: home.appendingPathComponent("config.toml"), encoding: .utf8) else { return nil }
+        for line in text.split(whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("[") { break }
+            guard trimmed.hasPrefix(key), let equals = trimmed.firstIndex(of: "=") else { continue }
+            guard trimmed[..<equals].trimmingCharacters(in: .whitespaces) == key else { continue }
+            let raw = trimmed[trimmed.index(after: equals)...].trimmingCharacters(in: .whitespaces)
+            guard raw.hasPrefix("\""), let end = raw.dropFirst().firstIndex(of: "\"") else { return nil }
+            let value = String(raw[raw.index(after: raw.startIndex)..<end])
+            return value.isEmpty || value.utf8.count > 80 ? nil : value
+        }
+        return nil
+    }
     private static func measured(_ rows: [SessionActivity], _ performance: [SessionPerformanceUpdate]) -> [SessionActivity] {
         var result = rows
         for index in result.indices { for sample in performance where sample.id == result[index].id { sample.apply(to: &result[index]) } }
@@ -1928,6 +2125,7 @@ actor EngineRuntime {
                     wslNeedsReconcile = true
                 }
                 enabled = next; projectionReady = false
+                applyCodexDelegationSwitch()
                 for definition in localHarnesses.definitions { scheduleLocalHarnessProgress(definition) }
                 let plan = lifecycle.settings(lifecycleConfiguration)
                 for provider in plan.changedProviders { resetSourceState(provider) }
@@ -2013,7 +2211,7 @@ actor EngineRuntime {
             desktopBinding = UUID(); stopDurable(); durableAccountScope = nil
             bindCodexCompletionSources()
             desktopState = nil; pendingDesktopEndings = [:]
-            codexReader = LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) })
+            codexReader = Self.makeCodexReader()
             codexQuotaState = nil; codexQuota = nil; codexQuotaFailed = false; codexQuotaRefreshing = false
             activityState.codexAttention = .init()
         case .claude:
@@ -2897,6 +3095,7 @@ actor EngineRuntime {
             inbox.observe(current, at: date, retention: retention)
             update = activityState.applyDemoSnapshot(enabled: enabled, at: date, visibility: activityVisibility)
         } else {
+            activityState.codexDelegations = codexDelegationLinks(at: date)
             update = activityState.reconcile(at: date, retention: retention, visibility: activityVisibility)
         }
         notificationActivities = current
@@ -2995,7 +3194,8 @@ actor EngineRuntime {
                 hostApplications: hostTracking.labels(for: visibleActivities, activities: activities, inbox: inbox) {
                     .init(name: $0.name, isClaudeDesktop: $0.isClaudeDesktop)
                 }, showsDeepSeekTurnCost: deepseekSettings.showsTurnCost,
-                progressRingProviders: progressRingProviders, pageSize: panelOptions.pageSize)
+                progressRingProviders: progressRingProviders, pageSize: panelOptions.pageSize,
+                showsDelegationRows: true)
         presentationOptions.hiddenTurnCredits = hiddenTurnCredits
         let taskPresentation = selected == nil ? activityState.presentation(at: date, options: presentationOptions) :
             ActivityTaskPresentation(activities: visibleActivities, requests: visibleRequests, inbox: inbox, options: presentationOptions, at: date)
@@ -3115,6 +3315,7 @@ actor EngineRuntime {
         default: break
         }
         snapshot.codexHooks = hooks
+        snapshot.codexDelegation = codexDelegationStatus(at: date, presentation: taskPresentation, codexQuota: snapshots[.codex])
         refreshCodexHookActivity()
         snapshot.accountCredits = credits.isEmpty ? nil : creditModules.compactMap { provider in
             credits[provider].map { .init(provider: provider.rawValue, credits: $0, stale: accountCredits[provider]?.stale == true,

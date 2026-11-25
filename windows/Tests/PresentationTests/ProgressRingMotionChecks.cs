@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -202,12 +203,73 @@ internal static class ProgressRingMotionChecks
             Check(badge.RingMode == "average" && badge.CoreText == "5", "More tasks than segments give way to the average and keep the count");
             badge.Update(several, true, new BadgeOptions(MultiRing: "average", MultiCore: "percent"));
             Check(badge.RingMode == "average" && badge.CoreText == "50", "The chosen average counts only reported tasks and shows its percent");
+            await CheckHelpers(badge, header, several);
             badge.Update(new EngineHeader(0, "checkmark.circle", new Dictionary<string, int>(), null, "checkmark.circle", "claude", true, "0"), true);
             Check(!badge.SegmentBreathing, "Leaving the segments stops their breath");
             Check(badge.CoreIsSolid, "When everything has ended the core is a solid disc under a dark mark");
             host.Children.Remove(badge);
-            Console.WriteLine("PASS progress ring: comet, running light, long-step breath, breathing, reduced motion, completion sweeps, Codex completion-only pulses, continuous downward rebuilds, one-time arrivals, stage changes, badge estimate and real Unloaded cleanup");
+            Console.WriteLine("PASS progress ring: comet, running light, long-step breath, breathing, reduced motion, completion sweeps, Codex completion-only pulses, continuous downward rebuilds, one-time arrivals, stage changes, badge estimate, Codex for Claude light and real Unloaded cleanup");
         }
         finally { window.Close(); }
+    }
+
+    /// Codex for Claude runs have no number on the badge: without an estimate they
+    /// circle as Codex comets; over an estimate Codex's light travels the stretch
+    /// it has not reached, and in segments the stretch of the task they work for.
+    private static async Task CheckHelpers(ActivityBadge badge, EngineHeader single, EngineHeader several)
+    {
+        const double gap = HelperLight.Gap;
+        static bool Near(double a, double b) => Math.Abs(a - b) < 0.0001;
+        static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
+        var estimate = single with { ProgressFraction = 0.62, ProgressLongStep = false, ProgressStale = false };
+        badge.Update(estimate, true);
+        Check(badge.HelperStretch == null && !badge.HelperTravels, "No run, no Codex light");
+        badge.Update(estimate with { DelegatedRunning = 1, DelegatedText = "Codex 1" }, true);
+        Check(badge.HelperStretch is { } free && Near(free.Start, 0.62 + gap) && Near(free.End, 1 - gap) && badge.HelperTravels,
+            "Codex's light keeps clear of the arc's head and of the top, where the arc starts");
+        Check(badge.EstimateLoops == "flow", "Claude's light keeps running along its arc beside Codex's");
+        Check(badge.OrbitCodexWeight == 0, "Over an estimate the runs are no comets");
+        // The island updates both badges and then shows one: a hidden badge stops its lights, a shown one starts them.
+        badge.Visibility = Visibility.Collapsed;
+        await PresentationWait.UntilAsync(() => !badge.HelperTravels && badge.EstimateLoops == "", "A hidden badge must stop its lights");
+        badge.Visibility = Visibility.Visible;
+        await PresentationWait.UntilAsync(() => badge.HelperTravels && badge.EstimateLoops == "flow", "A badge shown again must start its lights without a new snapshot");
+        badge.Update(estimate with { DelegatedRunning = 1, ProgressLongStep = true }, true);
+        Check(badge.HelperStretch is { } breath && Near(breath.Start, 0.62 + EstimatePaint.StepLengths[0] + gap) && badge.HelperTravels,
+            "Codex's light keeps clear of a long step's breath and keeps travelling");
+        badge.Update(estimate with { DelegatedRunning = 1, ProgressFraction = 0.95 }, true);
+        Check(badge.HelperStretch == null && !badge.HelperTravels, "Too little ring left to show Codex's light");
+        badge.Update(estimate with { DelegatedRunning = 2, ProgressFraction = 0.3 }, false);
+        Check(badge.HelperTinted && !badge.HelperTravels, "Without motion the stretch keeps a still Codex tint");
+        badge.Update(single with { ProgressFraction = null, ProgressLongStep = null, ProgressStale = null, DelegatedRunning = 2 }, true);
+        Check(badge.HelperStretch == null && badge.RingMode == "orbit" && badge.OrbitCodexWeight == 2, "Without an estimate the runs join the comets in Codex's colour");
+        // Segments: the light travels the free stretch of the Claude task the runs work for.
+        var segmented = several with { ProgressTasks = [new("claude", 0.4, false, 1), new("codex", 0.5, false)], ProgressAverage = 0.45, ProgressReported = 2, DelegatedRunning = 1 };
+        badge.Update(segmented, true, new BadgeOptions(MultiRing: "segments"));
+        double span = (1 - SegmentPaint.Gap * 2) / 2, first = SegmentPaint.Gap / 2;
+        var lanes = badge.LaneHelperStretches;
+        Check(badge.RingMode == "segments" && lanes.Length == 2 && lanes[1] == null && lanes[0] is { } lane
+            && Near(lane.Start, first + 0.4 * span + gap) && Near(lane.End, first + span - gap) && badge.HelperLoops,
+            "In segments Codex's light travels the free stretch of the task its runs work for");
+        badge.Update(segmented with { ProgressTasks = [new("claude", 0.4, false), new("codex", 0.5, false)], DelegatedRunning = null }, true, new BadgeOptions(MultiRing: "segments"));
+        Check(badge.LaneHelperStretches.All(stretch => stretch == null) && !badge.HelperLoops, "Codex's light leaves when the runs end");
+        // The light is one smooth gradient: a soft front ahead of the head and a tail that fades away behind it.
+        Check(Near(EstimatePaint.LightShare(0), 1) && Near(EstimatePaint.LightShare(EstimatePaint.FlowFront), 0) && EstimatePaint.LightShare(0.01) is > 0 and < 1
+            && Near(EstimatePaint.LightShare(-0.2 * EstimatePaint.FlowTail), 0.62) && Near(EstimatePaint.LightShare(-EstimatePaint.FlowTail), 0)
+            && Enumerable.Range(1, 40).Select(step => EstimatePaint.LightShare(-EstimatePaint.FlowTail * step / 40)).Zip(
+                Enumerable.Range(0, 40).Select(step => EstimatePaint.LightShare(-EstimatePaint.FlowTail * step / 40))).All(pair => pair.First <= pair.Second),
+            "The light fades smoothly from its head");
+        // Drawn, the light covers only its reach inside its stretch, from the stretch's start to
+        // just past its head, through its gradient; the retained drawing is read, never pixels.
+        var lit = new EstimatePaint(EstimatePaint.Layer.Flow, 9, 2, 0) { Fraction = 1, Start = 0.5, Limit = 0.9, Peak = 1, Ink = Colors.White, Flowing = true, FlowHead = 0.7 };
+        var drawn = DrawingInspection.Render(lit, 20, 20);
+        var reach = EstimatePaint.Arc(new Point(10, 10), 9, 0.5, 0.7 + EstimatePaint.FlowFront).GetRenderBounds(new Pen(Brushes.White, 2));
+        var bounds = VisualTreeHelper.GetDrawing(lit)?.Bounds ?? Rect.Empty;
+        Check(drawn.Count == 1 && drawn[0].Brush is ImageBrush && Math.Abs(bounds.Left - reach.Left) < 0.05 && Math.Abs(bounds.Top - reach.Top) < 0.05
+            && Math.Abs(bounds.Right - reach.Right) < 0.05 && Math.Abs(bounds.Bottom - reach.Bottom) < 0.05,
+            $"The drawn light covers just its reach at its head, through its gradient: {bounds} against {reach}");
+        var travel = EstimatePaint.Travel(0.5, 0.9, 0, 30);
+        Check(travel.KeyFrames[0].Value == 0.5 - EstimatePaint.FlowFront && travel.KeyFrames[2].Value == 0.9 + EstimatePaint.FlowTail,
+            "The light enters at its stretch's start and leaves past its end before resting");
     }
 }

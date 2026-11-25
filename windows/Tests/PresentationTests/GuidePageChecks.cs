@@ -88,6 +88,16 @@ internal static class GuidePageChecks
                 "The last page finishes with Done");
             Check(Find<StackPanel>(window, "welcome.codexSetup").IsVisible && Has(window, "guide.codexSetup.allow.state"),
                 "With Codex on, the last page leads with Codex's two steps");
+            var delegation = Find<CheckBox>(window, "welcome.collaboration");
+            Check(delegation.IsVisible, "The welcome guide offers delegation with both modules on");
+            var both = snapshot;
+            foreach (string provider in new[] { "codex", "claude" })
+            {
+                snapshot = both with { Modules = both.Modules!.Select(module => module with { Enabled = module.Provider != provider }).ToArray() };
+                body.Refresh();
+                Check(!delegation.IsVisible, "The welcome switch is hidden when " + provider + " is off");
+            }
+            snapshot = both; body.Refresh();
             var rings = Find<CheckBox>(window, "welcome.rings"); Toggle(rings);
             await Until(() => !session.Current.ClaudeProgressRing && !session.Current.CodexProgressRing && !session.Current.DeepSeekProgressRing && rings.IsEnabled);
             Toggle(rings);
@@ -194,6 +204,22 @@ internal static class GuidePageChecks
             Check(State("update") == ui.Text("whats_new.codex_setup.checking") && Done() == ui.Text("whats_new.codex_setup.later"), "Setup in progress checks first");
         }
         finally { setupWindow.Close(); }
+        // 4.7: Codex for Claude opens after an update only with the Claude module on; its Settings link opens Collaboration, where the guide waits.
+        Task<GuideCatalog> Upgrade(params string[] on) => engine.QueryAsync<GuideCatalog>("guidePages",
+            new { shell = new { guide = new GuideRequest("4.7.0", "4.6.2", 4, language, false, false, false, false, on) } }, TimeSpan.FromSeconds(3));
+        var pair = await Upgrade("claude", "codex"); var withoutClaude = await Upgrade("codex");
+        Check(pair.Page == "whatsNew" && pair.Releases.Count == 1 && pair.Releases[0].Version == "4.7.0" && pair.Releases[0].Items.Single().Control == "openCollaboration"
+            && withoutClaude.Page == null, "The 4.7.0 note is Codex for Claude alone, and stays closed without the Claude module: " + pair.Page + " "
+            + string.Join(",", pair.Releases.Select(value => value.Version + ":" + string.Join("/", value.Items.Select(item => item.Control)))) + " / " + withoutClaude.Page);
+        var pairBody = Body(pair); var pairWindow = new GuideWindow(ui, pairBody, pair, dark) { ShowActivated = false, IsHitTestVisible = false };
+        try
+        {
+            pairWindow.Show(); await Pump();
+            Invoke(Find<Button>(pairWindow, "guide.control.openCollaboration")); await Pump();
+            Check(settingsActions.Last() == "collaboration", "Its Settings link opens Collaboration");
+            Capture(pairWindow.ClientContent, Path.Combine(output, "pages-whats-new-4.7-" + language + (dark ? "-dark" : "-light") + ".png"));
+        }
+        finally { pairWindow.Close(); }
         // 4.5: WorkBuddy, the Module Library and remote Codex progress; only the library links to a page.
         var modules = await Query("4.4.4", current: "4.5.0"); var modulesBody = Body(modules);
         var modulesWindow = new GuideWindow(ui, modulesBody, modules, dark) { ShowActivated = false, IsHitTestVisible = false };
@@ -264,6 +290,7 @@ internal static class GuidePageChecks
                 Check(Has(settings, "help." + provider + (provider == "deepseek" ? ".balance" : ".quota")) && !Has(settings, "help.hover") && enable.Visibility == Visibility.Visible,
                     "Module topics show only their own samples and how to turn modules on or off");
             }
+            await CheckCollaborationHelp(settings, ui, enable, Path.Combine(output, "pages-help-collaboration-" + language + (dark ? "-dark" : "-light")));
             Select(Find<RadioButton>(settings, "help.topic.collapsed")); await Pump();
             appearance.Set(appearance.Current with { HighContrast = true }); await Pump(); settings.UpdateLayout();
             CheckHelpProviderText(settings, appearance.Current.Colors.Text);
@@ -324,6 +351,22 @@ internal static class GuidePageChecks
         }
         finally { settings.AllowClose = true; settings.Close(); }
         Console.WriteLine("PASS guide pages " + language + (dark ? "-dark" : "-light") + ": welcome, history, read-only help/support, links, keyboard and UIA");
+    }
+    /// Help → Collaboration: the guide's card from Settings, as a plain list beside the same demo,
+    /// with a way to the settings; nothing ticks, and nothing closes it.
+    private static async Task CheckCollaborationHelp(SettingsWindow settings, UiText ui, TextBlock footer, string capture)
+    {
+        Select(Find<RadioButton>(settings, "help.topic.collaboration")); await Pump(); settings.UpdateLayout();
+        var card = SelfAndDescendants(settings).OfType<CollaborationIntro>().Single();
+        Check(AutomationProperties.GetAutomationId(card) == "help.collaboration" && footer.Visibility != Visibility.Visible && !Has(settings, "help.hover") && !Has(settings, "help.move")
+            && card.Finish == null && card.Ticks.All(tick => !tick) && card.TurnOnButton == null && !Has(settings, "settings.collaboration.intro.close"),
+            "Collaboration opens on the guide's card, alone, with nothing to tick or close");
+        Check(Equals(Find<Button>(settings, "help.collaboration.open_settings").Content, ui.Text("collab.intro.open_settings")) && card.PhraseButtons.Count() == 2
+            && SelfAndDescendants(card).OfType<TextBlock>().Any(text => text.Inlines.OfType<System.Windows.Documents.Run>().Any(run => run.Text == "/pacer:codex")),
+            "Its steps lead to the settings, give two phrases to copy and name the command");
+        Check(card.Demo.Caption.Length > 0 && Enumerable.Range(1, 5).All(step => Has(settings, "collaboration.intro.demo.step." + step)), "The same demo plays beside the steps");
+        card.BringIntoView(); await Pump(); settings.UpdateLayout();
+        settings.CapturePreview(capture + ".png");
     }
     private static void CheckHelpProviderText(SettingsWindow window, Color expected)
     {

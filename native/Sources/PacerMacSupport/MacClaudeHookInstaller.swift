@@ -73,6 +73,7 @@ extension ClaudeHookInstaller {
             }.joined(separator: " ")
         }, managedTelemetry: { MacClaudeManagedSettings.telemetry() })
     }
+    public static func codexRunnerCommand(home: URL) -> String { mac.codexRunnerCommand(home: home) }
     public static func status(home: URL) -> Bool { mac.status(home: home) }
     public static func details(home: URL) -> Status { mac.details(home: home) }
     public static func ensureInstalled(home: URL) -> EnsureResult { mac.ensureInstalled(home: home) }

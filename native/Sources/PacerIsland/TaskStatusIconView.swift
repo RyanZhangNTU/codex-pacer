@@ -160,7 +160,7 @@ final class TaskStatusIconNSView: NSView {
     private let cometTrack = CAShapeLayer(), comet = CAGradientLayer(), cometGlow = CAGradientLayer(), cometHead = CAShapeLayer()
     private let halo = CAShapeLayer()
     private let arcGroup = CALayer(), arcGlow = CAShapeLayer(), arc = CAShapeLayer()
-    private let flowBands = [CAShapeLayer(), CAShapeLayer()]
+    private let flowLight = ArcLight(color: .white, peak: 0.6)
     private let step = CALayer(), stepBands = [CAShapeLayer(), CAShapeLayer(), CAShapeLayer()]
     private let orb = CAGradientLayer()
     private let disc = CALayer(), discFill = CAGradientLayer(), discSheen = CAGradientLayer(), discMask = CAShapeLayer()
@@ -195,7 +195,7 @@ final class TaskStatusIconNSView: NSView {
         super.init(frame: frame)
         wantsLayer = true
         layer?.masksToBounds = false
-        for shape in [track, ghost, arc, arcGlow, cometTrack, halo] + flowBands + stepBands {
+        for shape in [track, ghost, arc, arcGlow, cometTrack, halo] + stepBands {
             shape.fillColor = nil; shape.lineWidth = Self.stroke
         }
         track.strokeColor = Self.trackInk; cometTrack.strokeColor = Self.trackInk
@@ -203,9 +203,6 @@ final class TaskStatusIconNSView: NSView {
         arc.lineCap = .round; arc.strokeEnd = 0
         arcGlow.lineCap = .round; arcGlow.strokeEnd = 0; arcGlow.lineWidth = 4.5; arcGlow.opacity = 0.22
         ghost.strokeEnd = 0
-        for (band, alpha) in zip(flowBands, [0.3, 0.45]) {
-            band.strokeColor = NSColor.white.withAlphaComponent(alpha).cgColor; band.strokeStart = 0; band.strokeEnd = 0
-        }
         for band in stepBands { band.strokeStart = 0; band.strokeEnd = 0 }
         step.opacity = 0
         for gradient in [comet, cometGlow] {
@@ -222,7 +219,7 @@ final class TaskStatusIconNSView: NSView {
         [arcGlow, arc].forEach(arcGroup.addSublayer)
         stepBands.forEach(step.addSublayer)
         [track, pending, ghost, arcGroup].forEach(container.addSublayer)
-        flowBands.forEach(container.addSublayer)
+        container.addSublayer(flowLight.layer)
         container.addSublayer(step)
         container.isHidden = true
         ringHost.addSublayer(container)
@@ -266,7 +263,7 @@ final class TaskStatusIconNSView: NSView {
             for host in [ringHost, container] { host.frame = frame }
             // Bounds and position, not frame: the comet may already be turned.
             for layer in [pending, arcGroup, step] as [CALayer] { layer.bounds = frame; layer.position = CGPoint(x: side / 2, y: side / 2) }
-            for shape in [track, ghost, arc, arcGlow, cometTrack, halo] + flowBands + stepBands + ripples {
+            for shape in [track, ghost, arc, arcGlow, cometTrack, halo] + stepBands + ripples {
                 shape.bounds = frame; shape.position = CGPoint(x: side / 2, y: side / 2)
             }
             for gradient in [comet, cometGlow] {
@@ -278,7 +275,8 @@ final class TaskStatusIconNSView: NSView {
             track.path = ring; cometTrack.path = ring; halo.path = ring
             for ripple in ripples { ripple.path = ring }
             let path = arcPath()
-            for shape in [arc, arcGlow, ghost] + flowBands + stepBands { shape.path = path }
+            for shape in [arc, arcGlow, ghost] + stepBands { shape.path = path }
+            flowLight.place(frame: frame, path: path, lineWidth: Self.stroke, downward: drawsDownward)
             // The comet's head sits on its gradient's seam, a hard edge it leads with.
             cometHead.frame = frame
             cometHead.path = CGPath(ellipseIn: CGRect(x: side / 2 - Self.stroke / 2, y: side / 2 - Self.radius - Self.stroke / 2,
@@ -301,7 +299,7 @@ final class TaskStatusIconNSView: NSView {
             // Turns and glyph paths follow the drawing direction.
             if drawsDownward != wasDownward {
                 pending.removeAnimation(forKey: "spin"); spinningPeriod = nil
-                flowBands.forEach { $0.removeAnimation(forKey: "travel") }; flowFraction = nil
+                flowLight.refresh(nil, live: false); flowFraction = nil
                 applyCometStops(tail: cometTail)
                 glyphKey = nil
                 if let input, input.face != nil { rebuildGlyph(for: input, animate: false) }
@@ -372,6 +370,7 @@ final class TaskStatusIconNSView: NSView {
         if spinningPeriod != nil { pending.transform = rotation(currentSpinAngle(CACurrentMediaTime())) }
         for layer in animatedLayers.map({ $0.1 }) { layer.removeAllAnimations() }
         leavingGlyphs.forEach { $0.removeFromSuperlayer() }; leavingGlyphs = []
+        flowLight.refresh(nil, live: false)
         spinningPeriod = nil; flowFraction = nil; breathingTarget = nil; fading = false; rhythmsRunning = false; pulseAt = nil
         container.opacity = 1; container.isHidden = input?.state == nil
         pending.opacity = pendingShown ? Self.pendingOpacity : 0
@@ -826,13 +825,8 @@ final class TaskStatusIconNSView: NSView {
             let travel = ringLive && !pendingShown && !dim && mode == .working && targetFraction > 0.04 && targetFraction < 0.9995
             let wantedFlow = travel ? targetFraction : nil
             if wantedFlow != flowFraction {
-                flowBands.forEach { $0.removeAnimation(forKey: "travel"); $0.strokeStart = 0; $0.strokeEnd = 0 }
                 flowFraction = wantedFlow
-                if let fraction = wantedFlow {
-                    for (band, length) in zip(flowBands, Self.flowLengths) {
-                        band.add(Self.flowAnimation(fraction: fraction, length: length, on: band, now: now), forKey: "travel")
-                    }
-                }
+                flowLight.refresh(wantedFlow.map { (0, $0) }, live: wantedFlow != nil, now: now)
             }
             showStep(stepWanted, breathing: ringLive)
             // The comet's circle breathes until the first estimate, the arc after it.
@@ -892,25 +886,6 @@ final class TaskStatusIconNSView: NSView {
     }
     /// One run of light from the arc's start out through its head, then a
     /// rest, on the shared clock; the band never passes the head.
-    static func flowAnimation(fraction: Double, length: Double, on layer: CALayer, now: CFTimeInterval) -> CAAnimationGroup {
-        let steps = 36, reach = fraction + flowLengths[0]
-        var starts: [NSNumber] = [], ends: [NSNumber] = [], times: [NSNumber] = []
-        for index in 0...steps {
-            let front = reach * Double(index) / Double(steps)
-            starts.append(NSNumber(value: min(fraction, max(0, front - length))))
-            ends.append(NSNumber(value: min(fraction, max(0, front))))
-            times.append(NSNumber(value: flowTravel / flowPeriod * Double(index) / Double(steps)))
-        }
-        starts.append(NSNumber(value: fraction)); ends.append(NSNumber(value: fraction)); times.append(1)
-        let start = CAKeyframeAnimation(keyPath: "strokeStart"), end = CAKeyframeAnimation(keyPath: "strokeEnd")
-        start.values = starts; end.values = ends; start.keyTimes = times; end.keyTimes = times
-        let group = CAAnimationGroup()
-        group.animations = [start, end]
-        group.duration = flowPeriod; group.repeatCount = .infinity
-        group.beginTime = layer.convertTime(now - now.truncatingRemainder(dividingBy: flowPeriod), from: nil)
-        group.preferredFrameRateRange = CAFrameRateRange(minimum: 10, maximum: 30, preferred: 30)
-        return group
-    }
     private func rhythmAnimation(_ rhythm: TaskGlyphArt.Rhythm, now: CFTimeInterval) -> CAKeyframeAnimation {
         let animation = CAKeyframeAnimation(keyPath: "opacity")
         animation.values = rhythm.values; animation.keyTimes = rhythm.times.map { NSNumber(value: $0) }
@@ -1082,7 +1057,7 @@ final class TaskStatusIconNSView: NSView {
         var layers: [(String, CALayer)] = [("icon", icon), ("ring", ringHost), ("container", container), ("pending", pending), ("comet", comet),
             ("comet", cometGlow), ("track", track), ("ghost", ghost), ("arc", arcGroup), ("arc", arc), ("arc", arcGlow), ("step", step),
             ("orb", orb), ("disc", disc), ("disc", discFill), ("disc", discMask)]
-        layers += flowBands.map { ("flow", $0 as CALayer) } + stepBands.map { ("step", $0 as CALayer) } + ripples.map { ("ripple", $0 as CALayer) }
+        layers += [("flow", flowLight.gradient as CALayer)] + stepBands.map { ("step", $0 as CALayer) } + ripples.map { ("ripple", $0 as CALayer) }
         layers += [("glyph", glyph)] + glyphParts.map { ("glyph", $0.layer) } + leavingGlyphs.map { ("glyph", $0) }
         return layers
     }
@@ -1105,5 +1080,122 @@ final class TaskStatusIconNSView: NSView {
     private static func prune(_ now: CFTimeInterval) {
         if memories.count >= 64 { memories = memories.filter { now - $0.value.seen <= 600 } }
         if faces.count >= 64 { faces = faces.filter { now - $0.value.seen <= 600 } }
+    }
+}
+
+/// Light travelling a stretch of a ring: a bright head with a soft front,
+/// leading a tail that fades away, painted by a conic gradient that turns about
+/// the ring's center and seen only through a stroke that moves with it, so it
+/// never shows outside the stretch. The head enters at the stretch's start and
+/// leaves past its end within `flowTravel`; the light then rests until
+/// `flowPeriod` ends, the clock every light in Pacer keeps.
+@MainActor final class ArcLight {
+    let layer = CALayer()
+    /// The light itself; it turns. Read by the animation listings.
+    let gradient = CAGradientLayer()
+    private let window = CAShapeLayer()
+    private let color: NSColor, peak: CGFloat
+    /// The tail and the soft front, as shares of the circle.
+    static let tail = TaskStatusIconNSView.flowLengths[0], front = 0.025
+    private var downward = false
+    private var pathTerms: (Double) -> Double = { $0 }
+    private var stretch: (start: Double, end: Double)?
+    private var running: [Double]?
+
+    init(color: NSColor, peak: CGFloat) {
+        self.color = color; self.peak = peak
+        gradient.type = .conic
+        gradient.startPoint = CGPoint(x: 0.5, y: 0.5)
+        window.fillColor = nil; window.strokeColor = NSColor.black.cgColor; window.lineCap = .butt
+        window.strokeStart = 0; window.strokeEnd = 0
+        layer.addSublayer(gradient)
+        layer.mask = window
+        layer.isHidden = true
+        restyle()
+    }
+
+    /// The seam sits at the top on screen with the head on it; the tail fades
+    /// counterclockwise behind it and the front clockwise ahead, whichever way
+    /// the layer tree draws (a conic gradient's locations grow with its angle).
+    private func restyle() {
+        gradient.endPoint = CGPoint(x: 0.5, y: downward ? 0 : 1)
+        let tail = Self.tail, front = Self.front
+        let fade: [(share: Double, alpha: CGFloat)] = [(0, 1), (0.2, 0.62), (0.5, 0.28), (0.8, 0.08), (1, 0)]
+        func ink(_ alpha: CGFloat) -> CGColor { color.withAlphaComponent(peak * alpha).cgColor }
+        if downward {
+            gradient.colors = [ink(1), ink(0)] + fade.reversed().map { ink($0.alpha) }
+            gradient.locations = ([0, front] + fade.reversed().map { 1 - $0.share * tail }).map { NSNumber(value: $0) }
+        } else {
+            gradient.colors = fade.map { ink($0.alpha) } + [ink(0), ink(1)]
+            gradient.locations = (fade.map { $0.share * tail } + [1 - front, 1]).map { NSNumber(value: $0) }
+        }
+    }
+
+    /// `pathTerms` turns circle shares (clockwise from the top) into the path's
+    /// own, for a path that covers only part of the circle.
+    func place(frame: CGRect, path: CGPath, lineWidth: CGFloat, downward: Bool, pathTerms: @escaping (Double) -> Double = { $0 }) {
+        layer.frame = frame
+        window.frame = CGRect(origin: .zero, size: frame.size); window.path = path; window.lineWidth = lineWidth
+        // A square covering the diagonal keeps the turning gradient under the whole ring.
+        let side = hypot(frame.width, frame.height)
+        gradient.bounds = CGRect(x: 0, y: 0, width: side, height: side)
+        gradient.position = CGPoint(x: frame.width / 2, y: frame.height / 2)
+        self.pathTerms = pathTerms
+        guard downward != self.downward else { return }
+        self.downward = downward
+        restyle()
+        if let stretch, running != nil { running = nil; refresh(stretch, live: true) }
+    }
+
+    /// Travels `stretch`, in circle shares clockwise from the top; nil, or a
+    /// view that is not live, stops it.
+    func refresh(_ stretch: (start: Double, end: Double)?, live: Bool, now: CFTimeInterval = CACurrentMediaTime()) {
+        self.stretch = stretch
+        guard live, let stretch, stretch.end > stretch.start else {
+            gradient.removeAnimation(forKey: "travel"); window.removeAnimation(forKey: "travel")
+            layer.isHidden = true; running = nil
+            return
+        }
+        let key = [stretch.start, stretch.end, downward ? 1 : 0]
+        guard running != key || gradient.animation(forKey: "travel") == nil else { return }
+        running = key
+        layer.isHidden = false
+        let period = TaskStatusIconNSView.flowPeriod, travel = TaskStatusIconNSView.flowTravel / period, steps = 36
+        let first = stretch.start - Self.front, reach = stretch.end + Self.tail - first
+        let sign = downward ? 1.0 : -1.0
+        var starts: [NSNumber] = [], ends: [NSNumber] = [], angles: [NSNumber] = [], times: [NSNumber] = []
+        for index in 0...steps {
+            let head = first + reach * Double(index) / Double(steps)
+            starts.append(NSNumber(value: pathTerms(min(stretch.end, max(stretch.start, head - Self.tail)))))
+            ends.append(NSNumber(value: pathTerms(min(stretch.end, max(stretch.start, head + Self.front)))))
+            angles.append(NSNumber(value: sign * 2 * .pi * head))
+            times.append(NSNumber(value: travel * Double(index) / Double(steps)))
+        }
+        let rest = NSNumber(value: pathTerms(stretch.end))
+        starts.append(rest); ends.append(rest); angles.append(angles[steps]); times.append(1)
+        let begin = now - now.truncatingRemainder(dividingBy: period)
+        func loop(_ animations: [CAAnimation], on target: CALayer) {
+            let group = CAAnimationGroup()
+            group.animations = animations
+            group.duration = period; group.repeatCount = .infinity
+            group.beginTime = target.convertTime(begin, from: nil)
+            group.preferredFrameRateRange = CAFrameRateRange(minimum: 10, maximum: 30, preferred: 30)
+            target.add(group, forKey: "travel")
+        }
+        let start = CAKeyframeAnimation(keyPath: "strokeStart"), end = CAKeyframeAnimation(keyPath: "strokeEnd")
+        start.values = starts; end.values = ends; start.keyTimes = times; end.keyTimes = times
+        let turn = CAKeyframeAnimation(keyPath: "transform.rotation.z")
+        turn.values = angles; turn.keyTimes = times
+        // At rest nothing shows.
+        window.strokeStart = CGFloat(rest.doubleValue); window.strokeEnd = CGFloat(rest.doubleValue)
+        loop([start, end], on: window)
+        loop([turn], on: gradient)
+    }
+    var travels: Bool { gradient.animation(forKey: "travel") != nil }
+    /// The window's keyframes, as path shares; read by tests.
+    var windowKeyframes: (starts: [Double], ends: [Double])? {
+        guard let group = window.animation(forKey: "travel") as? CAAnimationGroup,
+              let start = group.animations?.first as? CAKeyframeAnimation, let end = group.animations?.last as? CAKeyframeAnimation else { return nil }
+        return ((start.values as? [NSNumber] ?? []).map(\.doubleValue), (end.values as? [NSNumber] ?? []).map(\.doubleValue))
     }
 }

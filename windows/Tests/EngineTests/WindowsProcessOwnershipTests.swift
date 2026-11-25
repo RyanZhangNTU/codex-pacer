@@ -34,7 +34,23 @@ final class WindowsProcessOwnershipTests: XCTestCase {
             let writers = try XCTUnwrap(WindowsProcessOwnership.writers(of: holder.file))
             let process = try XCTUnwrap(WindowsProcessOwnership.inspect(holder.pid))
             XCTAssertEqual(writers.contains(process.identity), mode != "file-read")
+            XCTAssertEqual(WindowsProcessOwnership.hasWriter(of: holder.file, within: holder.root), mode != "file-read")
             XCTAssertEqual(try Data(contentsOf: holder.file), original, "Ownership inspection cannot change the source")
+        }
+    }
+    /// The fixture's DACL lets its owner query and stop it but not duplicate its
+    /// handles. An elevated runner (GitHub's Windows images) can open it anyway,
+    /// so the test asks Windows first and checks the answer for that case: a
+    /// writer it cannot inspect is unknown, one it can inspect is found.
+    func testInaccessibleWriterDoesNotProveAbsence() throws {
+        let holder = try Holder("file-write-private"); defer { holder.stop() }
+        let access = DWORD(PROCESS_QUERY_INFORMATION | PROCESS_DUP_HANDLE | PROCESS_QUERY_LIMITED_INFORMATION) | DWORD(SYNCHRONIZE)
+        let inspectable = OpenProcess(access, false, holder.pid).map { CloseHandle($0); return true } ?? false
+        let answer = WindowsProcessOwnership.hasWriter(of: holder.file, within: holder.root)
+        if inspectable {
+            XCTAssertEqual(answer, true, "This runner can duplicate the fixture's handles, so its writer is found")
+        } else {
+            XCTAssertNil(answer, "A writer Pacer cannot inspect never proves the rollout has none")
         }
     }
     func testSameFilenameAndAnAtomicReplacementDoNotInheritTheOldWriter() throws {
@@ -43,10 +59,12 @@ final class WindowsProcessOwnershipTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(WindowsProcessOwnership.writers(of: holder.file)).contains(identity))
         XCTAssertTrue(try XCTUnwrap(WindowsProcessOwnership.writers(of: holder.file, within: holder.root)).contains(identity))
         XCTAssertNil(WindowsProcessOwnership.writers(of: holder.file, within: URL(fileURLWithPath: WindowsCodexExecutableDiscovery.path(holder.root) + "-other")))
+        XCTAssertNil(WindowsProcessOwnership.hasWriter(of: holder.file, within: holder.root.appendingPathComponent("missing")))
         let other = holder.root.appendingPathComponent("elsewhere/rollout-fixture.jsonl")
         try FileManager.default.createDirectory(at: other.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("same name, different file\n".utf8).write(to: other)
         XCTAssertFalse(try XCTUnwrap(WindowsProcessOwnership.writers(of: other)).contains(identity))
+        XCTAssertEqual(WindowsProcessOwnership.hasWriter(of: other, within: holder.root), false)
         try FileManager.default.removeItem(at: holder.file); try Data("replacement\n".utf8).write(to: holder.file)
         XCTAssertFalse(try XCTUnwrap(WindowsProcessOwnership.writers(of: holder.file)).contains(identity), "An old open file must not bind its replacement")
     }

@@ -106,4 +106,63 @@ final class EnginePresentationTests: XCTestCase {
         XCTAssertNotNil(fields["rateIsFresh"])
         XCTAssertNil(fields["activity"], "Core values do not leak into the version 1 row DTO")
     }
+
+    /// Codex for Claude runs reach the badge as a name and as the Claude task
+    /// they work for, never as a count drawn on it.
+    func testHeaderNamesCodexForClaudeRunsAndTheTaskTheyWorkFor() throws {
+        var value = HeaderActivity(core: .count(2), activeCount: 2, orbit: [.claude: 2],
+            tasks: [.init(provider: .claude, fraction: 0.4, helpers: 2), .init(provider: .claude, fraction: nil)])
+        value.delegatedRunning = 2
+        let header = EngineHeader(value)
+        XCTAssertEqual(header.delegatedRunning, 2)
+        XCTAssertEqual(header.delegatedText, L10n.text("delegation.badge", 2))
+        XCTAssertEqual(header.progressTasks?.map(\.helpers), [2, nil])
+        let tasks = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(header.progressTasks)) as? [[String: Any]])
+        XCTAssertEqual(tasks[0]["helpers"] as? Int, 2)
+        XCTAssertNil(tasks[1]["helpers"], "A task without runs leaves the field out")
+        value.delegatedRunning = 0
+        XCTAssertNil(EngineHeader(value).delegatedText)
+    }
+
+    /// A Claude task's older ended Codex for Claude runs reach the island as
+    /// one folded line's text; a task with every run on a line leaves it out.
+    func testOlderEndedCodexForClaudeRunsReachTheRowAsOneFoldedLine() throws {
+        let claude = DemoScenario.claudeTask(stage: .thinking, at: now)
+        func thread(_ number: Int) -> String { String(format: "019a0000-0000-7000-8000-%012d", number) }
+        func run(_ number: Int, ended: Bool) -> SessionActivity {
+            let id = thread(number)
+            var value = SessionActivity(id: AgentProvider.codex.activityID(sessionID: id))
+            value.consumeLive(["method": "turn/started", "threadId": id, "turnId": "first", "at": now.addingTimeInterval(-5).timeIntervalSince1970])
+            value.setCodexOrigin(.init(embedded: true, ignored: false, delegated: true))
+            if ended { value.consumeLive(["method": "turn/completed", "threadId": id, "turnId": "first", "status": "completed", "at": now.timeIntervalSince1970]) }
+            return value
+        }
+        func ledger(_ number: Int, ended: Bool) -> CodexDelegationLink {
+            var value = CodexDelegationLink(parentID: claude.id, label: "Run \(number)", mode: .task, write: false, worktree: false,
+                status: ended ? .ok : .running, started: now.addingTimeInterval(Double(number) - 60),
+                directory: FileManager.default.temporaryDirectory.appendingPathComponent("pacer-run-\(number)"))
+            if ended { value.ended = now.addingTimeInterval(-2) }
+            return value
+        }
+        func row(_ count: Int) throws -> EngineTaskRow {
+            let runs = (1...count).map { run($0, ended: $0 < count) }
+            var state = ActivityApplicationState()
+            state.replaceHarness(.claude, with: .init(activities: [claude]))
+            state.localActivities = runs
+            state.codexDelegations = Dictionary(uniqueKeysWithValues: zip(runs.map(\.id), (1...count).map { ledger($0, ended: $0 < count) }))
+            state.reconcile(at: now, retention: 300, visibility: ActivityVisibilityOptions())
+            return EngineTaskRow(try XCTUnwrap(state.presentation(at: now).rows.first))
+        }
+        // Four ended runs and one running: the running one and the two most recent ended ones show.
+        let folded = try row(5)
+        XCTAssertEqual(folded.delegations?.map(\.title), ["Run 3", "Run 4", "Run 5"])
+        XCTAssertEqual(folded.delegationsFolded, L10n.text("delegation.folded", 2))
+        XCTAssertEqual(folded.delegatedText, L10n.text("delegation.badge", 1), "The chip counts only the runs still running")
+        let fields = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(folded)) as? [String: Any])
+        XCTAssertEqual(fields["delegationsFolded"] as? String, L10n.text("delegation.folded", 2))
+        let whole = try row(3)
+        XCTAssertEqual(whole.delegations?.count, 3)
+        let wholeFields = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(whole)) as? [String: Any])
+        XCTAssertNil(wholeFields["delegationsFolded"], "Nothing folds while every run has its line")
+    }
 }

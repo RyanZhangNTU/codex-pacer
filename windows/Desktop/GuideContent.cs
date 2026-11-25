@@ -331,8 +331,19 @@ internal sealed class GuideContent : StackPanel
                 var layout = Button(ui.Text("welcome.go"), "welcome.collapsed", () => settings("collapsed"));
                 var ringRow = ChoiceRow(GuideArt.Tile("circle.circle", Color.FromRgb(48, 176, 199), 28), ui.Text("main.claude.ring"), ui.Text("main.welcome.ring_info"), null, rings);
                 ringRow.Children.Add(TrustNote());
+                var delegation = Switch(ui.Text("collaboration.codex_for_claude"), "welcome.collaboration", () => session.Current.CodexDelegation,
+                    value => Preference(p => p with { CodexDelegation = value }));
+                var delegationRow = ChoiceRow(GuideArt.Tile(GuideArt.ProviderSymbol("codex"), Color.FromRgb(17, 128, 109), 28), ui.Text("welcome.collaboration.title"),
+                    ui.Text("welcome.collaboration.subtitle") + " " + ui.Text("welcome.collaboration.later"), null, delegation);
+                refresh.Add(() =>
+                {
+                    var modules = snapshot()?.Modules;
+                    delegationRow.Visibility = modules != null && modules.Any(value => value.Provider == "claude" && value.Enabled)
+                        && modules.Any(value => value.Provider == "codex" && value.Enabled) ? Visibility.Visible : Visibility.Collapsed;
+                });
                 var choices = Group(54,
                     ringRow,
+                    delegationRow,
                     ChoiceRow(GuideArt.Tile("bell.badge", Color.FromRgb(255, 77, 74), 28), ui.Text("settings.system_notifications"), ui.Text("main.welcome.notifications_info"), notificationProblem, notification),
                     ChoiceRow(GuideArt.Tile("power", Color.FromRgb(51, 189, 102), 28), ui.Text("settings.open_at_login"), ui.Text("main.welcome.login_info"), loginProblem, Login(ui.Text("settings.open_at_login"), "welcome.startup")),
                     ChoiceRow(GuideArt.Tile("rectangle.topthird.inset.filled", Color.FromRgb(51, 56, 69), 28), ui.Text("welcome.layout.title"), ui.Text("main.welcome.layout_info"), null, layout));
@@ -775,7 +786,8 @@ internal sealed class GuideContent : StackPanel
     {
         string? pane = item.Control switch
         {
-            "openExpandedPanel" => "expandedPanel", "openCollapsedBar" => "collapsed", "openAppearance" => "appearance", "openModules" => "modules", _ => null
+            "openExpandedPanel" => "expandedPanel", "openCollapsedBar" => "collapsed", "openAppearance" => "appearance", "openModules" => "modules",
+            "openCollaboration" => "collaboration", _ => null
         };
         if (pane == null) return null;
         var content = new StackPanel { Orientation = Orientation.Horizontal };
@@ -829,7 +841,7 @@ internal sealed class GuideContent : StackPanel
         var chips = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) }; var topic = new StackPanel(); var footer = Text(ui.Text("help.enable.detail"), 11.5);
         footer.Margin = new Thickness(4, 8, 4, 0); footer.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
         AutomationProperties.SetName(chips, ui.Text("settings.pane.help"));
-        foreach (string id in new[] { "collapsed", "expanded" }.Concat(providers))
+        foreach (string id in new[] { "collapsed", "expanded", "collaboration" }.Concat(providers))
         {
             bool module = providers.Contains(id);
             string name = id switch
@@ -872,12 +884,21 @@ internal sealed class GuideContent : StackPanel
                 // Three icons stand for all, as on the Mac, so the swatch stays roomy as modules are added.
                 HelpRow("help.app_buttons", providers.Take(3).Select(provider => (UIElement)ProviderIcon.CreateLaunch(provider, 14)).ToArray()),
                 HelpRow("help.read", Mark("checkmark.rectangle.stack")), HelpRow("help.pace", PaceSample())));
+        else if (id == "collaboration") target.Children.Add(CollaborationHelp());
         else
         {
             var details = new StackPanel(); ModuleHelp(details, id);
             target.Children.Add(Group(HelpInset, details.Children.Cast<UIElement>().ToArray().Select(child => { details.Children.Remove(child); return child; }).ToArray()));
         }
         Refresh();
+    }
+    /// How Claude calls Codex: the same card as Settings → Collaboration's guide,
+    /// a looping demo beside the three steps, with a way to the settings.
+    private CollaborationIntro CollaborationHelp()
+    {
+        var card = new CollaborationIntro(ui, help: true);
+        card.OpenSettings += () => settings("collaboration");
+        return card;
     }
     /// The services' colors fold away behind one row with a palette; opening it
     /// lists each service with its icon, name and color, as on the Mac.

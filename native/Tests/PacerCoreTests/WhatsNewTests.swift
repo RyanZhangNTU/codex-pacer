@@ -86,6 +86,9 @@ final class WhatsNewTests: XCTestCase {
         let shipped = try XCTUnwrap(WhatsNew.releases.first { $0.version == "4.6.1" })
         XCTAssertEqual(shipped.requiredModule, .codex)
         XCTAssertEqual(shipped.items.map(\.control), [.codexHooksSetup], "4.6.1 is the Codex setup alone")
+        let collaboration = try XCTUnwrap(WhatsNew.releases.first { $0.version == "4.7.0" })
+        XCTAssertEqual(collaboration.requiredModule, .claude, "Codex for Claude's note opens only while the Claude module is on")
+        XCTAssertEqual(collaboration.items.map(\.control), [.openCollaboration], "Its link opens Collaboration, where the guide waits")
         let steps = ["reason", "update", "update_ready", "update_needed", "update_hint_mac", "update_hint_windows", "update_action", "checking",
                      "allow", "allow_detail", "allow_manual", "allow_waiting", "done", "failed", "later"].map { "whats_new.codex_setup." + $0 }
         for key in steps + ["welcome.codex_setup.title", "welcome.codex_setup.reason"] {

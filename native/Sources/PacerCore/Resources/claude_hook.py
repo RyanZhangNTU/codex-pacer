@@ -1,9 +1,10 @@
-"""Opt-in Claude hook/statusline adapter. Stdout never changes hook decisions.
+"""Opt-in Claude hook/statusline adapter.
 
 Claude Code waits for most hooks, so this file imports only what every call
 needs; slower modules load on the paths that use them. While Pacer's progress
 ring is switched on, a typed UserPromptSubmit adds one fixed line of model
 context, and a Stop that leaves background work running is recorded as a wait.
+It never changes a hook decision.
 """
 import fcntl, json, os, pathlib, sys, time
 
@@ -144,15 +145,54 @@ def progress_stop(home,value):
     row={'origin':'hook','sessionId':session,'at':time.time(),'kind':'waiting','background':waited,'wakeups':wakeups}
     if ident(value.get('prompt_id')):row['promptId']=ident(value.get('prompt_id'))
     spool(home,[row])
-def watch_access(home,thread,session,item):
-    # A detached copy of this program checks the request once, after this
-    # hook has returned, so Claude never waits for the check.
+def detached(command):
     import subprocess
-    command=[sys.executable]+(['-S'] if sys.flags.no_site else [])+[os.path.abspath(sys.argv[0]),'access',str(home),thread,session,item,str(ACCESS_WAIT)]
     options={'stdin':subprocess.DEVNULL,'stdout':subprocess.DEVNULL,'stderr':subprocess.DEVNULL,'close_fds':True}
     if os.name=='nt':options['creationflags']=0x08000200  # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
     else:options['start_new_session']=True
     subprocess.Popen(command,**options)
+def sweep_due(root,session):
+    # The admission lock stays in runs/ even when every session is gone.
+    if not (root/'pending-deletes.txt').exists():
+        try:
+            with os.scandir(str(root/'runs')) as entries:
+                if not any(entry.name!=session and entry.is_dir(follow_symlinks=False) for entry in entries):return False
+        except FileNotFoundError:return False
+    fd=private_open(root/'sweep.stamp',os.O_CREAT|os.O_RDWR)
+    try:
+        fcntl.flock(fd,fcntl.LOCK_EX)
+        stamp=os.fstat(fd)
+        if stamp.st_size and 0<=time.time()-stamp.st_mtime<600:return False
+        os.write(fd,b'1')
+        return True
+    finally:os.close(fd)
+def codex_turn_end(home,value):
+    # Other hooks can continue this turn. Only the detached runner waits for the summary.
+    session=ident(value.get('session_id'))
+    if value.get('hook_event_name')!='Stop' or value.get('agent_id') is not None or not session:return
+    root=home/'pacer'/'codex';folder=root/'runs'/session;runner=root/'runner.py'
+    if not runner.is_file():return
+    tasks=value.get('background_tasks')
+    if isinstance(tasks,list) and any(isinstance(task,dict) and task.get('type') not in IDLE for task in tasks):return
+    command=[sys.executable]+(['-S'] if sys.flags.no_site else [])+[str(runner)]
+    transcript=value.get('transcript_path')
+    if folder.is_dir() and isinstance(transcript,str) and transcript:
+        try:
+            import hashlib, stat
+            at=time.time()
+            if stat.S_ISREG(os.stat(transcript).st_mode):
+                with open(transcript,'rb') as handle:
+                    info=os.fstat(handle.fileno());size=info.st_size
+                    handle.seek(max(0,size-64))
+                    tail=hashlib.sha256(handle.read(min(size,64))).hexdigest()
+                cursor=dict(offset=size,dev=info.st_dev,ino=info.st_ino,tail=tail,at=at)
+                detached(command+['turn-end','--session',session,'--transcript',transcript,'--cursor',json.dumps(cursor)])
+        except (OSError,ValueError):pass
+    if sweep_due(root,session):detached(command+['sweep','--session',session])
+def watch_access(home,thread,session,item):
+    # A detached copy of this program checks the request once, after this
+    # hook has returned, so Claude never waits for the check.
+    detached([sys.executable]+(['-S'] if sys.flags.no_site else [])+[os.path.abspath(sys.argv[0]),'access',str(home),thread,session,item,str(ACCESS_WAIT)])
 def access_wait(home,thread,session,item,delay):
     # The tool's end, a new prompt, a stop or the session's end removes it from
     # the waiting tools, so a request found there after the delay is still showing its dialog.
@@ -356,7 +396,7 @@ def main():
         watch=None
         try:watch=hook(home,value)
         finally:
-            for extra in (progress_context,progress_display,progress_stop):
+            for extra in (progress_context,progress_display,progress_stop,codex_turn_end):
                 try:extra(home,value)
                 except OSError:pass
         if watch:watch_access(home,*watch)

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "protectedFiles": {
-    "native/Info.plist": "0fb6ce8909e5182ade9bf176d04f9441f6d30465e946b5bab0ae7836c9c549e5",
+    "native/Info.plist": "97bfaddeec2a1873ae6dc8067056a65962fb13b7b770bf40b692f68895b19071",
     "native/Package.resolved": "7658c033856118a55e157006b40a447836b2a8811568f40e30e353e60c7afdff",
     "native/Resources/Pacer.icns": "d195e227e260c69536a27356e7d0f507d93b9b643b142ab2ba659ff33eb3db8e",
     "native/Resources/Pacer.png": "57c0513b4526deed07f9bb3e43446856e6873500d30c56b1736dff2818f81f49",

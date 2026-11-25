@@ -45,6 +45,8 @@ struct EngineCommand: Decodable {
         var reminderSettings: EngineReminderSettings?
         var expandedPanel: EngineExpandedPanelSettings?
         var claudeProgressRing: Bool?
+        /// Settings → Collaboration: Codex for Claude.
+        var codexDelegation: EngineCodexDelegationSettings?
         var codexProgressRing: Bool?
         var deepseekProgressRing: Bool?
         /// Modules whose progress ring is off. A ring is on unless listed.
@@ -356,6 +358,82 @@ struct EngineNotice: Codable, Equatable {
     }
 }
 
+/// Codex for Claude's settings from the host (Settings → Collaboration, the
+/// Claude → Codex pair). Absent values keep the defaults; keys from earlier
+/// builds are ignored. Nil or empty model and effort, and a nil fast mode,
+/// follow Codex's configuration.
+struct EngineCodexDelegationSettings: Codable, Equatable, Sendable {
+    var enabled: Bool?
+    /// `ask` (default) or `command`: written into the skill.
+    var trigger: String?
+    var model: String?
+    var effort: String?
+    var fast: Bool?
+    /// `turn` (default), `timed` or `keep`, and the hours for `timed`.
+    var records: String?
+    var recordsHours: Int?
+    /// `read-only`, `workspace-write`, `workspace-write-network` (default) or `danger-full-access`.
+    var sandbox: String?
+    var worktree: Bool?
+    var instructions: String?
+    var memory: Bool?
+    var maxConcurrent: Int?
+    /// 10 or 20 percent; absent never holds runs back.
+    var quotaFloor: Int?
+    func settings(codex: String?) -> ClaudeCodexDelegation.Settings {
+        typealias Settings = ClaudeCodexDelegation.Settings
+        return .init(codex: codex, model: model.flatMap { $0.isEmpty ? nil : String($0.prefix(80)) },
+                     effort: effort.flatMap { $0.isEmpty ? nil : String($0.prefix(16)) }, fast: fast,
+                     trigger: trigger.flatMap(Settings.Trigger.init) ?? .ask, records: records.flatMap(Settings.Records.init) ?? .turn,
+                     recordsHours: recordsHours ?? 24, sandbox: sandbox.flatMap(Settings.Sandbox.init) ?? .workspaceWriteNetwork,
+                     worktree: worktree ?? false, instructions: instructions, memory: memory ?? false,
+                     maxConcurrent: maxConcurrent ?? 3, quotaFloor: quotaFloor)
+    }
+}
+
+/// What Settings → Collaboration shows about Codex for Claude.
+struct EngineCodexDelegationStatus: Codable, Equatable {
+    let enabled: Bool
+    /// The skill is in Pacer's Claude plugin; new Claude sessions load it.
+    let skillInstalled: Bool
+    /// The user-level skill from before Pacer managed it, while it is still there.
+    let legacySkill: String?
+    let codexFound: Bool
+    /// The self-check: `ok`, `missing` or `unknown` sign-in, and the program's version.
+    var login: String? = nil
+    var version: String? = nil
+    var checking: Bool? = nil
+    /// Codex's model catalog for the model picker, and the model its configuration names.
+    var models: [EngineCodexModel]? = nil
+    var defaultModel: String? = nil
+    /// What Codex's configuration picks for effort and fast mode.
+    var defaultEffort: String? = nil
+    var defaultFast: Bool? = nil
+    /// Runs going now, across Claude sessions, and how many may run at once.
+    var running: [EngineRunningDelegation] = []
+    var limit = 3
+    /// Codex threads another Codex process kept from being deleted, still queued.
+    var pending = 0
+    var runsFolder: String? = nil
+    /// Codex's quota windows now, such as "5h 63% · 7d 71%".
+    var quotaText: String? = nil
+    /// The ledger holds a run now, and one that ended; absent otherwise. The
+    /// app keeps each once seen, for the Collaboration guide's steps.
+    var seenRun: Bool? = nil
+    var seenEnded: Bool? = nil
+}
+/// A model from Codex's catalog, with the efforts it supports and its own default effort.
+struct EngineCodexModel: Codable, Equatable {
+    let slug: String
+    let name: String
+    var efforts: [String]? = nil
+    var defaultEffort: String? = nil
+}
+struct EngineRunningDelegation: Codable, Equatable {
+    let parentTitle: String
+    let row: EngineTaskRow
+}
+
 struct EngineNavigationFailure: Codable, Equatable {
     let id: String
     let message: String
@@ -398,6 +476,8 @@ struct EngineSnapshot: Codable, Equatable {
     var accountCredits: [EngineAccountCredits]? = nil
     /// Codex task tracking through Pacer's hooks; nil while Codex is not managed.
     var codexHooks: EngineCodexHooks? = nil
+    /// Settings → Collaboration; nil while the Claude module is off.
+    var codexDelegation: EngineCodexDelegationStatus? = nil
     var wslAvailability: WindowsWSLAvailability?
 
     init(sequence: UInt64, demo: Bool, activities: [SessionActivity], requests: [PendingAttentionRequest],

@@ -66,3 +66,30 @@ public enum ClaudeLiveSessionRegistry {
     }
 
 }
+
+/// Registration disappearing is evidence only after a successful, complete scan.
+/// Cache unchanged files; a malformed or unreadable file cannot prove an exit.
+struct ClaudeTranscriptRegistrations {
+    private struct Entry {
+        let metadata: PlatformFileMetadata
+        let session: String
+    }
+    private struct Record: Decodable { let pid: Int32; let sessionId: UUID }
+    private var cache: [URL: Entry] = [:]
+
+    mutating func sessions(home: URL, files: any PlatformFileSystem) -> Set<String>? {
+        let directory = home.appendingPathComponent("sessions", isDirectory: true)
+        guard let entries = try? files.entries(in: directory) else { return nil }
+        var next: [URL: Entry] = [:]
+        for url in entries where url.pathExtension == "json" {
+            guard let pid = Int32(url.deletingPathExtension().lastPathComponent), pid > 0 else { continue }
+            guard next.count < 256, let metadata = files.metadata(url), metadata.isRegularFile, metadata.size <= 65536 else { return nil }
+            if let entry = cache[url], entry.metadata == metadata { next[url] = entry; continue }
+            guard let bytes = try? files.read(url, offset: 0, maximumBytes: 65537),
+                  let record = try? JSONDecoder().decode(Record.self, from: bytes), record.pid == pid else { return nil }
+            next[url] = Entry(metadata: metadata, session: record.sessionId.uuidString.lowercased())
+        }
+        cache = next
+        return Set(next.values.map(\.session))
+    }
+}

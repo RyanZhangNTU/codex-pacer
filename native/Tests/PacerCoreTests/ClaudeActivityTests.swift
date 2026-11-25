@@ -515,6 +515,92 @@ final class ClaudeActivityTests: XCTestCase {
             XCTAssertEqual(value.responsePerformance?.tokensPerSecond, 25); XCTAssertNil(value.firstTokenLatency)
         }
     }
+    /// A Stop hook that only fails (a removed plugin's script) still ends the turn;
+    /// one that blocks keeps it open, in the native reader and the SSH collector alike.
+    func testAStopHookThatOnlyFailsEndsTheTurnForBothCollectors() throws {
+        for (error, ends) in [("hook_non_blocking_error", true), ("hook_blocking_error", false)] {
+            let home = fixtureHomeRoot.appendingPathComponent("pacer-claude-stop-error-" + UUID().uuidString)
+            let dir = home.appendingPathComponent("projects/synthetic")
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: home) }
+            let file = dir.appendingPathComponent(session + ".jsonl")
+            try (ClaudeActivityRecord.encode(["type": "user", "sessionId": session, "uuid": "user-1", "promptId": turn,
+                "timestamp": "2027-01-15T08:00:00Z", "origin": ["kind": "human"], "message": ["content": "PRIVATE synthetic prompt"]])! + Data([10])).write(to: file)
+            let ending: [[String: Any]] = [
+                ["type": "assistant", "sessionId": session, "uuid": "answer-1", "parentUuid": "user-1", "timestamp": "2027-01-15T08:00:04Z", "requestId": "req-1",
+                 "message": ["id": "msg-1", "model": "claude-sonnet-4", "usage": ["output_tokens": 100], "stop_reason": "end_turn", "content": [["type": "text", "text": "PRIVATE response"]]]],
+                ["type": "attachment", "sessionId": session, "uuid": "hook-1", "parentUuid": "answer-1", "timestamp": "2027-01-15T08:00:05Z",
+                 "attachment": ["type": error, "hookEvent": "Stop", "hookName": "Stop", "toolUseID": "stop-use-1", "stderr": "PRIVATE hook output"]],
+                ["type": "system", "subtype": "stop_hook_summary", "sessionId": session, "uuid": "stop-1", "parentUuid": "hook-1", "toolUseID": "stop-use-1",
+                 "timestamp": "2027-01-15T08:00:06Z", "preventedContinuation": false, "hookErrors": ["PRIVATE hook error"], "hookAdditionalContext": [String]()]]
+            let appended = ending.reduce(into: Data()) { bytes, row in bytes.append(ClaudeActivityRecord.encode(row)!); bytes.append(10) }
+            let appendFile = home.appendingPathComponent("append.jsonl"); try appended.write(to: appendFile)
+
+            var reader = ClaudeActivityReader(), native = ClaudeActivityState()
+            for row in reader.read(home: home, discover: true, now: now).records { native.consume(row, now: now) }
+            let handle = try FileHandle(forWritingTo: file); try handle.seekToEnd(); try handle.write(contentsOf: appended); try handle.close()
+            var nativeRows: [Data] = []
+            for _ in 0..<4 {
+                let result = reader.read(home: home, discover: false, now: now.addingTimeInterval(10))
+                nativeRows += result.records; for row in result.records { native.consume(row, now: now.addingTimeInterval(10)) }
+                if result.caughtUp { break }
+            }
+
+            let program = Data(ClaudeActivityProbe.script.utf8).base64EncodedString()
+            let script = """
+            import base64,json,sys,pathlib
+            __name__='fixture'
+            exec(base64.b64decode('\(program)').decode(),globals())
+            path=pathlib.Path(sys.argv[2])
+            prompt=path.read_bytes()
+            ending=pathlib.Path(sys.argv[3]).read_bytes()
+            tailer=Tailer(pathlib.Path(sys.argv[1]))
+            tailer.discover()
+            initial=tailer.read()
+            def drain():
+                chunks=[]
+                for _ in range(4):
+                    tailer.poll()
+                    chunks.append(tailer.read())
+                    if not tailer.dirty: break
+                return chunks
+            with path.open('ab') as stream: stream.write(ending)
+            chunks=drain()
+            path.write_bytes(prompt)
+            drain()
+            summary=json.loads(ending.splitlines()[-1])
+            summary['parentUuid']='user-1'
+            with path.open('ab') as stream: stream.write(json.dumps(summary).encode()+bytes([10]))
+            replay=drain()
+            tailer.close()
+            print(json.dumps({'initial':initial,'chunks':chunks,'replay':[row['kind'] for batch in replay for row in batch]}))
+            """
+            try FileManager.default.removeItem(at: file)
+            try (ClaudeActivityRecord.encode(["type": "user", "sessionId": session, "uuid": "user-1", "promptId": turn,
+                "timestamp": "2027-01-15T08:00:00Z", "origin": ["kind": "human"], "message": ["content": "PRIVATE synthetic prompt"]])! + Data([10])).write(to: file)
+            let child = Process(), output = Pipe()
+            child.executableURL = PythonFixture.executable; child.arguments = ["-c", script, home.path, file.path, appendFile.path]
+            child.standardInput = FileHandle.nullDevice; child.standardOutput = output; child.standardError = FileHandle.nullDevice
+            let pythonFixture = try PythonFixture.prepare(child); defer { pythonFixture.remove() }
+            try child.run(); let bytes = output.fileHandleForReading.readDataToEndOfFile(); child.waitUntilExit()
+            XCTAssertEqual(child.terminationStatus, 0)
+            let projected = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+            let replay = try XCTUnwrap(projected["replay"] as? [String])
+            XCTAssertFalse(replay.contains("stopVerified"), "Truncation removed the only attachment explaining this summary")
+            var remote = ClaudeActivityState(sourceID: "synthetic", sourceName: "Synthetic SSH")
+            for rows in [projected["initial"] as? [[String: Any]] ?? []] + (projected["chunks"] as? [[[String: Any]]] ?? []) {
+                remote.consume(ClaudeActivityRecord.encode(["kind": "claudeBatch", "records": rows])!, now: now.addingTimeInterval(10))
+            }
+
+            XCTAssertFalse((nativeRows.compactMap { String(data: $0, encoding: .utf8) }.joined() + String(decoding: bytes, as: UTF8.self)).contains("PRIVATE"))
+            for (name, value) in [("native", try XCTUnwrap(native.activities.first)), ("ssh", try XCTUnwrap(remote.activities.first))] {
+                XCTAssertEqual(value.turnID, turn, name + " " + error)
+                if ends { XCTAssertEqual(value.phase, .completed, name + " " + error) }
+                else { XCTAssertNotEqual(value.phase, .completed, name + " " + error + " blocks the stop, so Claude goes on") }
+            }
+        }
+    }
+
     func testDroppedOversizeRecordsInvalidateObservedWindowsForBothCollectors() throws {
         // One size finishes just above the record limit; the other crosses the
         // fragment limit before its newline arrives. Both lose real bytes.

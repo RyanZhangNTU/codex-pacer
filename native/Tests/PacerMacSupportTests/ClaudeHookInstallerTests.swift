@@ -363,6 +363,70 @@ final class ClaudeHookInstallerTests: XCTestCase {
         return result
     }
 
+    func testCodexStopConfirmsItsOwnTurnAndThrottlesSweepsFromOtherSessions() async throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        _ = try ClaudeHookInstaller.install(home: fixture.home)
+        let fm = FileManager.default, root = ClaudeCodexDelegation.root(home: fixture.home)
+        let runs = root.appendingPathComponent("runs"), stamp = root.appendingPathComponent("sweep.stamp")
+        try fm.createDirectory(at: runs, withIntermediateDirectories: true)
+        try Data().write(to: runs.appendingPathComponent(".admission.lock"))
+        try XCTUnwrap(ClaudeCodexDelegation.runnerScript()).write(to: root.appendingPathComponent("runner.py"))
+        try write(["records": "timed", "recordsHours": 2], to: root.appendingPathComponent("config.json"))
+        let transcript = fixture.root.appendingPathComponent("session.jsonl")
+        let summary = Data(#"{"type":"system","subtype":"stop_hook_summary","preventedContinuation":false,"hookAdditionalContext":[],"hookErrors":[]}"#.utf8) + Data([10])
+        try summary.write(to: transcript)
+        func stop(_ session: String, extra: [String: Any] = [:]) throws {
+            let input: [String: Any] = ["hook_event_name": "Stop", "session_id": session, "transcript_path": transcript.path]
+            let output = try runScript(home: fixture.home, mode: "hook", input: input.merging(extra) { _, new in new })
+            XCTAssertTrue(output.stdout.isEmpty && output.stderr.isEmpty)
+        }
+        let ended = Date().timeIntervalSince1970 - 3 * 3600, run = runs.appendingPathComponent("owner/expired")
+        func expiredRun() throws {
+            try fm.createDirectory(at: run, withIntermediateDirectories: true)
+            try write(["status": "ok", "created": ended - 60, "ended": ended], to: run.appendingPathComponent("meta.json"))
+        }
+        try stop("unrelated")
+        XCTAssertFalse(fm.fileExists(atPath: stamp.path), "The admission lock alone needs no sweep")
+        try expiredRun()
+        let live = runs.appendingPathComponent("unknown-owner/running")
+        try fm.createDirectory(at: live, withIntermediateDirectories: true)
+        try write(["status": "running", "created": Date().timeIntervalSince1970 - 60, "runner": ["pid": ProcessInfo.processInfo.processIdentifier]],
+                  to: live.appendingPathComponent("meta.json"))
+        let fresh = runs.appendingPathComponent("owner/recent")
+        try fm.createDirectory(at: fresh, withIntermediateDirectories: true)
+        try write(["status": "ok", "created": ended, "ended": Date().timeIntervalSince1970], to: fresh.appendingPathComponent("meta.json"))
+        try stop("unrelated", extra: ["background_tasks": [["type": "shell"]]])
+        try stop("unrelated", extra: ["agent_id": "child"])
+        XCTAssertFalse(fm.fileExists(atPath: stamp.path))
+        try stop("unrelated")
+        let swept = try await TestWait.until { !fm.fileExists(atPath: run.path) }
+        XCTAssertTrue(swept, "A session that never used Codex sweeps expired runs")
+        let stamped = try fm.attributesOfItem(atPath: stamp.path)[.modificationDate] as? Date
+        try expiredRun()
+        try stop("another")
+        XCTAssertEqual(try fm.attributesOfItem(atPath: stamp.path)[.modificationDate] as? Date, stamped)
+        XCTAssertTrue(fm.fileExists(atPath: run.path))
+
+        try stop("owner")
+        XCTAssertTrue(fm.fileExists(atPath: run.path), "An earlier summary cannot confirm this Stop")
+        let handle = try FileHandle(forWritingTo: transcript)
+        try handle.seekToEnd(); try handle.write(contentsOf: summary); try handle.close()
+        let confirmed = try await TestWait.until { !fm.fileExists(atPath: run.path) }
+        XCTAssertTrue(confirmed, "The detached cleaner sees the summary written after the hook returned")
+        XCTAssertTrue(fm.fileExists(atPath: fresh.path), "Timed records stay until they expire")
+        XCTAssertTrue(fm.fileExists(atPath: live.appendingPathComponent("meta.json").path))
+        XCTAssertFalse(fm.fileExists(atPath: live.appendingPathComponent("stop").path))
+        try fm.removeItem(at: live.deletingLastPathComponent())
+        try fm.removeItem(at: fresh.deletingLastPathComponent())
+
+        let pending = root.appendingPathComponent("pending-deletes.txt")
+        try Data().write(to: pending)
+        try fm.setAttributes([.modificationDate: Date().addingTimeInterval(-601)], ofItemAtPath: stamp.path)
+        try stop("unrelated")
+        let retried = try await TestWait.until { !fm.fileExists(atPath: pending.path) }
+        XCTAssertTrue(retried, "A later Stop retries the queue even with no run folders")
+    }
+
     func testHookAdapterPreservesLifecycleAndAgentRoutingWithoutStdoutOrPrivateContent() throws {
         let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
         _ = try ClaudeHookInstaller.install(home: fixture.home)

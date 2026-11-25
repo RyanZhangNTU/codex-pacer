@@ -33,6 +33,39 @@ struct ClaudeTranscriptContext: Sendable {
     private(set) var awaitedParent: String?
     private(set) var parentLookups = 0
     var deferredRows: Int { waiting.values.joined().reduce(0) { $0 + $1.rows.count } }
+    private(set) var latestTimestamp: Date?
+
+    mutating func noteTimestamp(_ parsed: ClaudeTranscriptFields, session: String, now: Date) {
+        guard let timestamp = parsed.timestamp, timestamp <= now.addingTimeInterval(300),
+              ClaudeActivityRecord.identifier(parsed.values["sessionId"]?.string() ?? session) == session else { return }
+        latestTimestamp = max(latestTimestamp ?? timestamp, timestamp)
+    }
+
+    /// Stop hook errors read before their stop summary, by the stop's tool-use ID.
+    private var stopHookErrors: [String: (blocked: Bool, failures: Int)] = [:]
+    private var stopHookOrder: [String] = []
+
+    mutating func noteStopHookError(_ parsed: ClaudeTranscriptFields) {
+        guard let error = ClaudeActivityRecord.stopHookError(parsed) else { return }
+        if stopHookErrors[error.stop] == nil {
+            stopHookOrder.append(error.stop)
+            if stopHookOrder.count > 16 { stopHookErrors.removeValue(forKey: stopHookOrder.removeFirst()) }
+        }
+        var value = stopHookErrors[error.stop] ?? (false, 0)
+        if error.blocked { value.blocked = true } else { value.failures += 1 }
+        stopHookErrors[error.stop] = value
+    }
+
+    /// Whether every error of this stop summary is a Stop hook that failed
+    /// without blocking. Unexplained errors keep the turn open, as before.
+    func stopHookFailuresOnly(_ parsed: ClaudeTranscriptFields) -> Bool {
+        guard parsed.values["subtype"]?.matchesStringLiteral("stop_hook_summary") == true,
+              let stop = ClaudeActivityRecord.identifier(parsed.values["toolUseID"]?.string()),
+              let value = stopHookErrors[stop], !value.blocked,
+              let errors = parsed.values["hookErrors"], errors.isArray,
+              let count = try? errors.countElements(maximumCount: 64), count > 0 else { return false }
+        return value.failures >= count
+    }
 
     /// Follows parent links to a proven prompt, the first unread ID or a root
     /// without an owner. Walked links are compressed onto that answer, so a

@@ -135,10 +135,13 @@ public partial class IslandWindow
         {
             var slots = column ? compactColumn : compactRow;
             if (data.Components.Length == 0) return;
+            // Codex for Claude runs have no number on the badge, so its name says how many work.
+            string? runs = latest?.Presentation?.Header?.DelegatedText;
             foreach (var item in data.Components)
             {
                 if (!slots.TryGetValue(item.Id, out var slot)) continue;
-                AutomationProperties.SetName(slot, item.Accessibility); AutomationProperties.SetHelpText(slot, item.Help);
+                AutomationProperties.SetName(slot, item.Id == "activity" && runs != null ? item.Accessibility + " · " + runs : item.Accessibility);
+                AutomationProperties.SetHelpText(slot, item.Help);
             }
             CompactComponent Item(string id) => data.Components.Single(value => value.Id == id);
             var metrics = data.Sizes;

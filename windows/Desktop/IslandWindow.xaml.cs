@@ -799,7 +799,8 @@ public partial class IslandWindow : Window
         UpdateAppButtons();
         UpdateProgressHint(snapshot);
         if (snapshot.Presentation is not EnginePresentation presentation) { SetStatus(ui.Text("windows.restart_required")); return; }
-        MarkReadButton.IsEnabled = presentation.Rows.Any(row => row.Unread && row.Phase is "completed" or "interrupted");
+        // Core decides what Mark All Read clears: unread endings and unconfirmed tasks.
+        MarkReadButton.IsEnabled = presentation.CanMarkRead ?? presentation.Rows.Any(row => row.Unread && row.Phase is "completed" or "interrupted");
         UpdateCompactBar();
         // New row choices redraw the page even when the rows are the same.
         bool choicesChanged = ApplyPanelChoices(snapshot);
@@ -931,7 +932,7 @@ public partial class IslandWindow : Window
         int index = 0;
         foreach (var value in rows.Skip(page * PageSize).Take(PageSize))
         {
-            var row = new TaskRow(value, panelOptions, settled) { Language = Language, Margin = new Thickness(0, index++ == 0 ? 0 : 2, 0, 0) };
+            var row = new TaskRow(value, panelOptions, settled, showsDelegations: true) { Language = Language, Margin = new Thickness(0, index++ == 0 ? 0 : 2, 0, 0) };
             BindTaskAction(row);
             content.Children.Add(row); measuredRowsWidth = Math.Max(measuredRowsWidth, row.IdealWidth());
         }
@@ -980,6 +981,9 @@ public partial class IslandWindow : Window
             !openingActivityContexts.Contains(link.Context) && latest?.OpeningActivityIDs?.Contains(state.Value.Id) != true;
         row.SetOpenAction(available ? () => _ = OpenConversationTaskAsync(row, link!) : null,
             available ? state.AccessibleName + "\n" + ui.Text("common.open_chat") : ui.Text("activity.no_link"), DecorationsAnimate);
+        // Stop sends the run's ID; the engine asks its runner to stop Codex.
+        row.SetStopAction(state.Value.Delegations is { Count: > 0 } && !presentationStopped
+            ? id => _ = Send("stopDelegation", new { activityID = id }) : null, ui.Text("delegation.stop"));
     }
     /// The main window's Overview lists the same rows; a click there opens the
     /// task through the same prepared navigation as a row on the island.

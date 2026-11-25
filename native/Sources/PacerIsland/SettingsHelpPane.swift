@@ -11,11 +11,14 @@ import SwiftUI
 struct SettingsHelpPane: View {
     private static let repository = "https://github.com/RyanZhangNTU/codex-pacer"
     var onShowWelcome: (() -> Void)?
+    /// Turns the window to another page, such as Collaboration from its guide.
+    var openPane: ((SettingsPane) -> Void)?
     @State private var topic = HelpTopic.collapsed
     @State private var showsServiceColors: Bool
 
-    init(onShowWelcome: (() -> Void)? = nil, showsServiceColors: Bool = false) {
+    init(onShowWelcome: (() -> Void)? = nil, openPane: ((SettingsPane) -> Void)? = nil, showsServiceColors: Bool = false) {
         self.onShowWelcome = onShowWelcome
+        self.openPane = openPane
         _showsServiceColors = State(initialValue: showsServiceColors)
     }
 
@@ -39,6 +42,7 @@ struct SettingsHelpPane: View {
                 switch topic {
                 case .collapsed: collapsedRows
                 case .expanded: expandedRows
+                case .collaboration: CollaborationIntro(mode: .help, openSettings: { openPane?(.collaboration) })
                 case .module(let provider): moduleRows(provider)
                 }
             }
@@ -264,21 +268,23 @@ private struct ProgressRingSample: View {
     }
 }
 
-/// What the legend shows: the bar, the panel or one module's own marks.
+/// What the legend shows: the bar, the panel, how Claude and Codex work
+/// together, or one module's own marks.
 private enum HelpTopic: Hashable {
-    case collapsed, expanded, module(AgentProvider)
+    case collapsed, expanded, collaboration, module(AgentProvider)
 
     /// Every module this Mac can run, in the registry's order.
     static var modules: [AgentProvider] {
         HarnessRegistry.legacyIDs + HarnessRegistry.localHarnesses.filter { $0.platforms.contains(.macOS) }.map(\.descriptor.id)
     }
 
-    static var all: [HelpTopic] { [.collapsed, .expanded] + modules.map(HelpTopic.module) }
+    static var all: [HelpTopic] { [.collapsed, .expanded, .collaboration] + modules.map(HelpTopic.module) }
     var isModule: Bool { if case .module = self { true } else { false } }
     var title: String {
         switch self {
         case .collapsed: L10n.text("help.section.collapsed")
         case .expanded: L10n.text("help.section.expanded")
+        case .collaboration: L10n.text("help.section.collaboration")
         case .module(let provider): provider.displayName
         }
     }

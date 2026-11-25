@@ -92,8 +92,92 @@ internal static class PreferencesChecks
             using (var config = JsonDocument.Parse(JsonSerializer.Serialize(independentlyHidden.EngineConfiguration())))
                 Check(config.RootElement.GetProperty("showEmbeddedCodexSessions").GetBoolean() && !config.RootElement.GetProperty("showEmbeddedClaudeSessions").GetBoolean(),
                     "The acknowledged engine configuration carries both Mac preference keys independently");
+            // Settings → Collaboration, the Claude → Codex pair: off until turned on; model, effort and fast mode follow Codex;
+            // runs may write in the project with network. Choices live under the Mac's per-pair keys and reach the engine.
+            Check(!original.CodexDelegation && original is { CodexDelegationTrigger: "ask", CodexDelegationFollowModel: true, CodexDelegationModel: "",
+                    CodexDelegationFollowEffort: true, CodexDelegationEffort: "high", CodexDelegationFollowFast: true, CodexDelegationFast: false,
+                    CodexDelegationRecords: "turn", CodexDelegationRecordsHours: 24, CodexDelegationSandbox: "workspace-write-network", CodexDelegationWorktree: false,
+                    CodexDelegationInstructions: "", CodexDelegationMemory: false, CodexDelegationConcurrency: 3, CodexDelegationQuotaFloor: 0 }
+                && original.DelegationIsDefault && original.DelegationAdvancedIsDefault,
+                "Collaboration starts off, follows Codex, clears its threads at turn end and writes in the project with network");
+            var picked = original.SetDelegationFollowFast(false, true).SetDelegationFollowEffort(false, "low");
+            Check(picked.CodexDelegationFast && picked.CodexDelegationEffort == "low", "First manual choice starts at the Codex defaults");
+            var remembered = (picked with { CodexDelegationFast = false, CodexDelegationEffort = "high" })
+                .SetDelegationFollowFast(true, null).SetDelegationFollowEffort(true, null);
+            Check(store.Save(remembered) && store.Load().Value.SetDelegationFollowFast(false, true).SetDelegationFollowEffort(false, "low") is { CodexDelegationPickedFast: true, CodexDelegationFast: false,
+                CodexDelegationPickedEffort: true, CodexDelegationEffort: "high" } && remembered.RestoringDelegationDefaults().DelegationIsDefault,
+                "Default-valued manual choices are remembered while following Codex");
+            var delegation = original with { CodexDelegation = true, CodexDelegationTrigger = "command", CodexDelegationFollowModel = false, CodexDelegationModel = "gpt-6.2-sol",
+                CodexDelegationFollowEffort = false, CodexDelegationEffort = "xhigh", CodexDelegationFollowFast = false, CodexDelegationFast = true,
+                CodexDelegationRecords = "timed", CodexDelegationRecordsHours = 72, CodexDelegationSandbox = "read-only", CodexDelegationWorktree = true,
+                CodexDelegationInstructions = "Answer in English.\nDon't edit tests.", CodexDelegationMemory = true, CodexDelegationConcurrency = 2, CodexDelegationQuotaFloor = 20,
+                CodexDelegationIntroDone = true, CodexDelegationIntroRan = true, CodexDelegationIntroFinished = true };
+            Check(store.Save(delegation) && store.Load().Value is { CodexDelegation: true, CodexDelegationTrigger: "command", CodexDelegationFollowModel: false,
+                    CodexDelegationModel: "gpt-6.2-sol", CodexDelegationFollowEffort: false, CodexDelegationEffort: "xhigh", CodexDelegationFollowFast: false,
+                    CodexDelegationFast: true, CodexDelegationRecords: "timed", CodexDelegationRecordsHours: 72, CodexDelegationSandbox: "read-only",
+                    CodexDelegationWorktree: true, CodexDelegationInstructions: "Answer in English.\nDon't edit tests.", CodexDelegationMemory: true,
+                    CodexDelegationConcurrency: 2, CodexDelegationQuotaFloor: 20, CodexDelegationIntroDone: true, CodexDelegationIntroRan: true,
+                    CodexDelegationIntroFinished: true },
+                "Collaboration's choices and its guide's progress survive a restart");
+            var pairKeys = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(file))!.AsObject();
+            Check(pairKeys["collaboration.claude>codex.enabled"]?.GetValue<bool>() == true && pairKeys["collaboration.claude>codex.model"]?.GetValue<string>() == "gpt-6.2-sol"
+                && pairKeys["collaboration.claude>codex.followModel"]?.GetValue<bool>() == false && pairKeys["collaboration.claude>codex.recordsHours"]?.GetValue<int>() == 72
+                && pairKeys["collaboration.claude>codex.concurrency"]?.GetValue<int>() == 2 && pairKeys["collaboration.claude>codex.quotaFloor"]?.GetValue<int>() == 20
+                && pairKeys["collaboration.claude>codex.introDone"]?.GetValue<bool>() == true && pairKeys["collaboration.claude>codex.introFinished"]?.GetValue<bool>() == true
+                && !pairKeys.ContainsKey("codexDelegation") && !pairKeys.ContainsKey("codexDelegationModel"),
+                "Collaboration's choices are stored under the Mac's per-pair keys");
+            Check(delegation.RestoringDelegationDefaults() is { CodexDelegationIntroDone: true, CodexDelegationIntroRan: true, CodexDelegationIntroFinished: true },
+                "Restore Defaults leaves the guide's progress alone");
+            using (var config = JsonDocument.Parse(JsonSerializer.Serialize(delegation.EngineConfiguration())))
+            {
+                var value = config.RootElement.GetProperty("codexDelegation");
+                Check(value.GetProperty("enabled").GetBoolean() && value.GetProperty("trigger").GetString() == "command"
+                    && value.GetProperty("model").GetString() == "gpt-6.2-sol" && value.GetProperty("effort").GetString() == "xhigh" && value.GetProperty("fast").GetBoolean()
+                    && value.GetProperty("records").GetString() == "timed" && value.GetProperty("recordsHours").GetInt32() == 72
+                    && value.GetProperty("sandbox").GetString() == "read-only" && value.GetProperty("worktree").GetBoolean()
+                    && value.GetProperty("instructions").GetString() == "Answer in English.\nDon't edit tests." && value.GetProperty("memory").GetBoolean()
+                    && value.GetProperty("maxConcurrent").GetInt32() == 2 && value.GetProperty("quotaFloor").GetInt32() == 20,
+                    "Collaboration's choices reach the engine");
+            }
+            // A remembered pick stays saved while the choice follows Codex again; the engine then gets no value.
+            using (var config = JsonDocument.Parse(JsonSerializer.Serialize((delegation with { CodexDelegationFollowModel = true, CodexDelegationFollowEffort = true,
+                       CodexDelegationFollowFast = true, CodexDelegationQuotaFloor = 0 }).EngineConfiguration())))
+            {
+                var value = config.RootElement.GetProperty("codexDelegation");
+                Check(value.GetProperty("model").ValueKind == JsonValueKind.Null && value.GetProperty("effort").ValueKind == JsonValueKind.Null
+                    && value.GetProperty("fast").ValueKind == JsonValueKind.Null && value.GetProperty("quotaFloor").ValueKind == JsonValueKind.Null,
+                    "Following Codex sends no model, effort or fast mode, and no quota floor sends none");
+            }
+            var restoredPair = delegation.RestoringDelegationDefaults();
+            Check(restoredPair.CodexDelegation && restoredPair.DelegationIsDefault && !delegation.DelegationIsDefault && !delegation.DelegationAdvancedIsDefault
+                && restoredPair.Language == delegation.Language && (original with { CodexDelegationTrigger = "command" }).DelegationAdvancedIsDefault,
+                "Restore Defaults resets only the pair's choices and keeps its switch");
+            // Keys from builds before the pairs are ignored and dropped at the next save.
+            var earlier = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(file))!.AsObject();
+            earlier["collaboration.claude>codex.enabled"] = false; earlier["codexDelegation"] = true; earlier["codexDelegationRows"] = false; earlier["codexDelegationTimeout"] = 120;
+            File.WriteAllText(file, earlier.ToJsonString());
+            var ignored = store.Load();
+            Check(!ignored.Unavailable && !ignored.Value.CodexDelegation && ignored.Value.CodexDelegationModel == "gpt-6.2-sol"
+                && store.Save(ignored.Value) && !File.ReadAllText(file).Contains("\"codexDelegationTimeout\""),
+                "Earlier Codex for Claude keys are ignored and dropped");
+            // A damaged choice falls back to its default without losing the others.
+            var damagedPair = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(file))!.AsObject();
+            damagedPair["collaboration.claude>codex.sandbox"] = "everything"; damagedPair["collaboration.claude>codex.recordsHours"] = 5;
+            damagedPair["collaboration.claude>codex.model"] = "bad model!";
+            File.WriteAllText(file, damagedPair.ToJsonString());
+            var pairRecovered = store.Load();
+            Check(!pairRecovered.Unavailable && pairRecovered.Value is { CodexDelegationSandbox: "workspace-write-network", CodexDelegationRecordsHours: 24,
+                    CodexDelegationModel: "", CodexDelegationEffort: "xhigh", CodexDelegationConcurrency: 2 },
+                "A damaged Collaboration choice reads as its default without touching the others");
+            Check(!store.Save(original with { CodexDelegationTrigger = "always" }) && !store.Save(original with { CodexDelegationEffort = "turbo" })
+                && !store.Save(original with { CodexDelegationRecords = "weekly" }) && !store.Save(original with { CodexDelegationRecordsHours = 5 })
+                && !store.Save(original with { CodexDelegationSandbox = "everything" }) && !store.Save(original with { CodexDelegationConcurrency = 6 })
+                && !store.Save(original with { CodexDelegationQuotaFloor = 15 }) && !store.Save(original with { CodexDelegationModel = "bad model!" })
+                && !store.Save(original with { CodexDelegationInstructions = new string('x', 4001) }) && !store.Save(original with { CodexDelegationInstructions = "a\u0000b" }),
+                "Collaboration choices outside the lists cannot be saved");
+            Check(store.Save(original), "Restore the original settings after Collaboration");
             // Every main-window page reopens where it was; older names are kept for the window to map.
-            foreach (string pane in new[] { "overview", "history", "general", "appearance", "collapsed", "notifications", "codex", "claude", "deepseek", "modules", "remote", "about", "support", "reminders", "connections", "help", "whatsNew" })
+            foreach (string pane in new[] { "overview", "history", "general", "appearance", "collapsed", "notifications", "codex", "claude", "deepseek", "modules", "collaboration", "remote", "about", "support", "reminders", "connections", "help", "whatsNew" })
                 Check(store.Save(original with { LastSettingsPane = pane }) && store.Load().Value.LastSettingsPane == pane, "The settings page survives a save: " + pane);
             Check(store.Save(original with { LastSettingsPane = "future-page" }) && store.Load().Value.LastSettingsPane == "overview", "An unknown page opens Overview, as on the Mac");
             Check(store.Save(original with { LastSettingsPane = "harness.workbuddy", DisabledHarnessProgress = ["workbuddy"],

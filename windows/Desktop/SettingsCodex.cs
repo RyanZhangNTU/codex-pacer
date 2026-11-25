@@ -215,7 +215,7 @@ internal sealed partial class SettingsWindow
     private void OnProviderSnapshot(EngineSnapshot snapshot)
     {
         if (Dispatcher.HasShutdownStarted) return;
-        _ = Dispatcher.InvokeAsync(() => { if (!sourceClosed) { synchronizing = true; try { RefreshProviderPages(); RefreshCodex(); RefreshClaude(); RefreshDeepSeek(); RefreshProviderHome(); RefreshReminders(); RefreshCollapsed(); RefreshExpandedPanel(); RefreshConnections(); RefreshOverview(); RefreshHistory(); } finally { synchronizing = false; } } });
+        _ = Dispatcher.InvokeAsync(() => { if (!sourceClosed) { synchronizing = true; try { RefreshProviderPages(); RefreshCodex(); RefreshClaude(); RefreshCollaboration(); RefreshDeepSeek(); RefreshProviderHome(); RefreshReminders(); RefreshCollapsed(); RefreshExpandedPanel(); RefreshConnections(); RefreshOverview(); RefreshHistory(); } finally { synchronizing = false; } } });
     }
     private void OnProviderStatus(string status)
     {
@@ -225,7 +225,7 @@ internal sealed partial class SettingsWindow
             if (sourceClosed) return;
             providerConnectionClosed = true; sourceInspectionRevision++; sourceReport = null; sourceInspectionFailed = true;
             synchronizing = true;
-            try { UpdateSourceStatus(); RefreshCodex(); RefreshClaude(); RefreshDeepSeek(); RefreshProviderHome(); RefreshReminders(); RefreshConnections(); RefreshProviderPages(); RefreshOverview(); RefreshHistory(); }
+            try { UpdateSourceStatus(); RefreshCodex(); RefreshClaude(); RefreshCollaboration(); RefreshDeepSeek(); RefreshProviderHome(); RefreshReminders(); RefreshConnections(); RefreshProviderPages(); RefreshOverview(); RefreshHistory(); }
             finally { synchronizing = false; }
         });
     }

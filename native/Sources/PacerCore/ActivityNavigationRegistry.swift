@@ -13,6 +13,7 @@ public struct ActivityNavigationRegistry: Sendable {
     public struct Member: Equatable, Sendable {
         public let id: String, thread: String?, parent: String?, turn: String?
         public let started: Date?, phase: ActivityPhase
+        let unconfirmedSince: Date?
         public let ending: String?
         public let source: CompletionInbox.SourceToken
     }
@@ -24,6 +25,7 @@ public struct ActivityNavigationRegistry: Sendable {
         public let members: [Member], endings: [Ending], cloudContext: String?
         public let activity: SessionActivity
         public let capture: ActivityNavigationOperation
+        let hasPendingUnconfirmedFamily: Bool
     }
     public private(set) var entries: [String: Entry] = [:]
     /// Ending digests from the previous update; unchanged endings are not rehashed on every publish.
@@ -31,11 +33,13 @@ public struct ActivityNavigationRegistry: Sendable {
     public var links: [ActivityNavigationLink] { entries.values.map(\.link).sorted { $0.activityID < $1.activityID } }
 
     private var currentActivities: [SessionActivity] = []
+    private var currentRequests: [PendingAttentionRequest] = []
     public init() {}
 
     public mutating func update(activities: [SessionActivity], requests: [PendingAttentionRequest], inbox: CompletionInbox,
                          cloudContext: String?, remoteSourceIDs: Set<String> = [], canOpen: (SessionActivity) -> Bool) {
         currentActivities = activities
+        currentRequests = requests
         let pending = Set(requests.map { $0.activity.id })
         var next: [String: Entry] = [:], digests: [[String]: String] = [:]
         func endingDigest(_ value: SessionActivity) -> String? {
@@ -53,7 +57,7 @@ public struct ActivityNavigationRegistry: Sendable {
                   canOpen(target) else { continue }
             let members = group.members.sorted { $0.id < $1.id }.map {
                 Member(id: $0.id, thread: $0.threadID, parent: $0.parentThreadID, turn: $0.turnID,
-                       started: $0.turnStartedAt, phase: $0.phase, ending: endingDigest($0),
+                       started: $0.turnStartedAt, phase: $0.phase, unconfirmedSince: $0.phase == .unknown ? $0.phaseChangedAt : nil, ending: endingDigest($0),
                        source: inbox.sourceToken(for: $0))
             }
             let ids = Set(group.members.map { $0.canonicalized().id })
@@ -62,12 +66,13 @@ public struct ActivityNavigationRegistry: Sendable {
                     guard let token = inbox.acknowledgment(for: $0) else { return nil }; return Ending(activity: $0, token: token)
                 }
             let scope = primary.claudeCloud == nil ? nil : cloudContext
+            let hasPendingUnconfirmedFamily = !pending.isDisjoint(with: ids) && members.contains { $0.phase == .unknown }
             let previous = entries[primary.id]
-            let same = previous.map { $0.members == members && $0.endings.map(\.token) == endings.map(\.token) &&
+            let same = previous.map { $0.members == members && $0.hasPendingUnconfirmedFamily == hasPendingUnconfirmedFamily && $0.endings.map(\.token) == endings.map(\.token) &&
                 $0.target.threadID == target.threadID && $0.target.codexOrigin == target.codexOrigin && $0.cloudContext == scope } ?? false
             let link = same ? previous!.link : ActivityNavigationLink(activityID: primary.id, provider: primary.provider.rawValue, context: UUID().uuidString)
-            let capture = same ? previous!.capture : ActivityNavigationOperation(activity: primary, target: target, version: 0, activities: activities, inbox: inbox, scope: scope)
-            next[primary.id] = .init(link: link, target: target, members: members, endings: endings, cloudContext: scope, activity: primary, capture: capture)
+            let capture = same ? previous!.capture : ActivityNavigationOperation(activity: primary, target: target, version: 0, activities: activities, inbox: inbox, scope: scope, requests: requests, group: group)
+            next[primary.id] = .init(link: link, target: target, members: members, endings: endings, cloudContext: scope, activity: primary, capture: capture, hasPendingUnconfirmedFamily: hasPendingUnconfirmedFamily)
         }
         entries = next; endingDigests = digests
     }
@@ -75,6 +80,6 @@ public struct ActivityNavigationRegistry: Sendable {
     public mutating func invalidate() { entries.removeAll() }
     public mutating func acknowledge(context: String, inbox: inout CompletionInbox) -> Bool {
         guard let entry = entry(context: context), entry.members.allSatisfy({ inbox.isCurrentSource($0.source) }) else { return false }
-        return entry.capture.complete(.openedConversation, version: 0, active: true, activities: &currentActivities, inbox: &inbox, scope: entry.cloudContext).accepted
+        return entry.capture.complete(.openedConversation, version: 0, active: true, activities: &currentActivities, inbox: &inbox, scope: entry.cloudContext, requests: currentRequests).accepted
     }
 }

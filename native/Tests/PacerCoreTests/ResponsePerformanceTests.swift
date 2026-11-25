@@ -207,4 +207,46 @@ final class ResponsePerformanceTests: XCTestCase {
         XCTAssertNil(value.firstTokenLatency); XCTAssertNil(value.responsePerformance)
     }
 
+    /// A turn holding for background work writes nothing: its own speed is 0 in
+    /// its row and in the total, while work that runs keeps counting. A Codex for
+    /// Claude run shows its speed on its own line, so its task's row leaves it out.
+    func testAWaitingTurnCountsZeroAndARunsSpeedStaysOnItsOwnLine() {
+        func task(_ number: Int, tokens: Int, duration: Double) -> SessionActivity {
+            let id = String(format: "019a0000-0000-7000-8000-%012d", number)
+            var value = SessionActivity(id: id, phaseAwareRate: true)
+            for event in [["method": "turn/started", "at": start.addingTimeInterval(10 - duration).timeIntervalSince1970],
+                          ["method": "item/agentMessage/delta", "at": start.addingTimeInterval(10).timeIntervalSince1970, "hasText": true],
+                          ["method": "thread/tokenUsage/updated", "at": start.addingTimeInterval(10).timeIntervalSince1970,
+                           "outputTokens": tokens, "lastOutputTokens": tokens]] as [[String: Any]] {
+                var event = event; event["threadId"] = id; event["turnId"] = "turn"; value.consumeLive(event)
+            }
+            return value.canonicalized()
+        }
+        var primary = task(1, tokens: 600, duration: 10)
+        var helper = task(2, tokens: 600, duration: 20); helper.updateParent(primary.threadID)
+        var run = task(3, tokens: 600, duration: 30)
+        run.codexDelegation = .init(parentID: primary.id, label: nil, mode: .task, write: false, worktree: false, status: .running,
+                                    started: start, directory: FileManager.default.temporaryDirectory.appendingPathComponent("pacer-no-run"))
+        let at = start.addingTimeInterval(12)
+        func group() -> ActivityTaskGroup? { ActivityTaskGroup.make([primary, helper, run]).first }
+        XCTAssertEqual(group()?.members.count, 3)
+        XCTAssertEqual(group()?.displayedRate(at: at)?.value, 90, "The task's row adds its own threads, not the run's")
+        XCTAssertEqual(ActivityOverview(groups: [group()!], at: at).displayedRate, 110, "The total counts the run once")
+
+        primary.waitForBackground(kinds: ["subagent"], wakeups: 0, at: start.addingTimeInterval(11))
+        XCTAssertEqual(primary.phase, .running)
+        XCTAssertEqual(primary.displayedOutputEstimate(at: at)?.value, 0, "Waiting, the turn writes nothing")
+        XCTAssertEqual(primary.displayedOutputEstimate(at: at)?.isFresh, true)
+        XCTAssertFalse(primary.displayedRateIsEstimated(at: at))
+        XCTAssertEqual(primary.tokensPerSecond(at: at), 0)
+        XCTAssertEqual(primary.displayedOutputEstimate(at: start.addingTimeInterval(300))?.value, 0, "The last reply's speed never returns while it waits")
+        XCTAssertEqual(group()?.displayedRate(at: at)?.value, 30, "The subagent it waits for still counts")
+        let overview = ActivityOverview(groups: [group()!], at: at)
+        XCTAssertEqual(overview.displayedRate, 50); XCTAssertEqual(overview.tokensPerSecond, 50)
+        XCTAssertEqual(ActivityTaskGroup.make([primary]).first?.displayedRate(at: at)?.value, 0, "Alone, a waiting task reads 0")
+
+        primary.resumeBackgroundWork(at: start.addingTimeInterval(13))
+        XCTAssertNil(primary.currentBackgroundWait)
+        XCTAssertEqual(primary.displayedOutputEstimate(at: start.addingTimeInterval(13))?.value, 60, "Woken, the turn shows its measured speed again")
+    }
 }

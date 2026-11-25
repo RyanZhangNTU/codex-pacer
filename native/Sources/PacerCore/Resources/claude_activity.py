@@ -90,7 +90,7 @@ def unowned_rows(owned):
             row=dict(row,unownedTurn=True);del row['promptId'];rows.append(row)
     return rows
 
-def transcript_record(value, owner, parent=None, prompt=None):
+def transcript_record(value, owner, parent=None, prompt=None, failures_only=False, at=None):
     # The tailer shares this one decoded line with its ID-only parent context.
     # No parsed record is stored on a cursor; only IDs enter its context.
     if not isinstance(value, dict): return []
@@ -101,7 +101,7 @@ def transcript_record(value, owner, parent=None, prompt=None):
     if agent and agent not in (owner,'agent-'+owner):return []
     if value.get('type')=='custom-title' and isinstance(value.get('customTitle'),str):
         return [{'origin':'transcript','sessionId':owner,'at':time.time(),'kind':'metadata','title':value['customTitle'][:240]}]
-    at = stamp(value.get('timestamp'))
+    if at is None:at = stamp(value.get('timestamp'))
     if at is None: return []
     if value.get('serverClassifierRequest') is True:return []
     base = {'origin': 'transcript', 'sessionId': owner, 'at': at}
@@ -129,6 +129,9 @@ def transcript_record(value, owner, parent=None, prompt=None):
     origin=value.get('origin');origin=origin if isinstance(origin,dict) else {}
     human=origin.get('kind')=='human' and origin.get('producer')!='session-task'
     legacy='origin' not in value and 'promptSource' not in value and 'turnOrigin' not in value
+    # A prompt given to `claude -p` or through the Agent SDK. Wakes, task
+    # notifications and system turns carry other origins.
+    sdk='origin' not in value and value.get('promptSource')=='sdk' and value.get('turnOrigin')=='sdk'
     if kind=='user' and message.get('role')=='user' and origin.get('kind')=='task-notification' and origin.get('producer')=='session-task' and ('runId' not in origin or ident(origin['runId'])) and value.get('turnOrigin')!='human':
         text=content if isinstance(content,str) else content[0].get('text') if isinstance(content,list) and len(content)==1 and isinstance(content[0],dict) and content[0].get('type')=='text' else None
         notification=agent_notification(text)
@@ -143,7 +146,7 @@ def transcript_record(value, owner, parent=None, prompt=None):
         if source is not None and not (isinstance(source,dict) and source.get('kind')=='task-notification' and source.get('producer')=='session-task'):return []
         notification=agent_notification(attachment.get('prompt'))
         return [dict(base,kind='agentNotification',agentId=notification[0],itemId=notification[1],agentStatus=notification[2])] if notification else []
-    if kind=='user' and not human and not legacy:return []
+    if kind=='user' and not human and not legacy and not sdk:return []
     if kind=='user' and 'origin' not in value and 'promptSource' not in value and 'turnOrigin' not in value and value.get('isMeta') is not False and value.get('isSynthetic') is not False and ident(value.get('promptId')) and isinstance(content,list) and len(content)==1:
         marker=content[0]
         if isinstance(marker,dict) and marker.get('type')=='text' and marker.get('text') in ('[Request interrupted by user]','[Request interrupted by user for tool use]'):
@@ -157,7 +160,10 @@ def transcript_record(value, owner, parent=None, prompt=None):
             elif block_kind in ('text', 'thinking'): model_kinds.add(block_kind)
     if kind == 'user' and not ends and not value.get('isMeta') and not value.get('isSynthetic'):
         prompt = ident(value.get('promptId')) or ident(value.get('uuid'))
-        if prompt: rows.append(dict(base, kind='prompt', promptId=prompt))
+        if prompt:
+            row=dict(base,kind='prompt',promptId=prompt)
+            if sdk:row['sdkPrompt']=True
+            rows.append(row)
     for item in ends: rows.append(dict(base, kind='toolEnd', itemId=item))
     response=value.get('toolUseResult')
     child,status=agent_launch(response) if isinstance(response,dict) else (None,None)
@@ -181,11 +187,60 @@ def transcript_record(value, owner, parent=None, prompt=None):
             row=dict(base, kind='toolStart', itemId=item, attention='input' if name == 'AskUserQuestion' else 'approval' if name == 'ExitPlanMode' else 'none')
             if name in AGENT_TOOLS:row['agentTool']=True
             rows.append(row)
-        if message.get('stop_reason', value.get('stop_reason')) in ('end_turn', 'stop_sequence', 'refusal'): rows.append(dict(base, kind='stopRequested'))
+        if message.get('stop_reason', value.get('stop_reason')) in ('end_turn', 'stop_sequence', 'refusal'):
+            # A request that failed for good ends the turn with a generated error reply.
+            rows.append(dict(base, kind='stopRequested', apiError=True) if value.get('isApiErrorMessage') is True else dict(base, kind='stopRequested'))
     if kind == 'result' and value.get('subtype') in ('success', 'error_during_execution', 'error_max_turns', 'interrupted'):
         subtype = value['subtype']; rows.append(dict(base, kind='stop' if subtype == 'success' else 'interrupt' if subtype == 'interrupted' else 'failure'))
-    if kind=='system' and value.get('subtype')=='stop_hook_summary' and value.get('preventedContinuation') is False and value.get('hookErrors')==[] and value.get('hookAdditionalContext')==[]:rows.append(dict(base,kind='stopVerified'))
+    # A blocking Stop hook makes Claude go on working, so its errors keep the turn
+    # open. A hook that only failed (a missing script, a crash) does not.
+    errors=value.get('hookErrors')
+    if kind=='system' and value.get('subtype')=='stop_hook_summary':
+        verified=value.get('preventedContinuation') is False and (errors==[] or (failures_only and isinstance(errors,list))) and value.get('hookAdditionalContext')==[]
+        rows.append(dict(base,kind='stopVerified' if verified else 'stopUnconfirmed'))
+    elif kind=='attachment':
+        error=stop_hook_error(value)
+        if error and error[1]:rows.append(dict(base,kind='stopUnconfirmed'))
     return rows
+
+def stop_hook_error(value):
+    # The Stop hook error attachment written before its stop summary: the stop's
+    # tool-use ID, and whether the hook blocked the stop or only failed.
+    attachment=value.get('attachment') if isinstance(value,dict) and value.get('type')=='attachment' else None
+    if not isinstance(attachment,dict) or attachment.get('hookEvent')!='Stop':return None
+    stop=ident(attachment.get('toolUseID'))
+    if not stop:return None
+    if attachment.get('type')=='hook_blocking_error':return stop,True
+    if attachment.get('type')=='hook_non_blocking_error':return stop,False
+    return None
+
+def cost_checkpoint(value,cursor,file_ended_at=None):
+    if cursor['parent'] or not isinstance(value,dict) or value.get('type')!='cost-state':return []
+    if ident(value.get('sessionId'))!=cursor['session']:return []
+    at=cursor.get('latestStamp')
+    if at is None:return []
+    row={'origin':'transcript','kind':'costCheckpoint','sessionId':cursor['session'],'at':at}
+    if file_ended_at is not None:row['fileEndedAt']=file_ended_at
+    if cursor.get('registered'):row['registered']=True
+    if cursor.get('registrationEndedAt') is not None:row['registrationEndedAt']=cursor['registrationEndedAt']
+    return [row]
+
+def note_stop_hook_error(cursor,value):
+    error=stop_hook_error(value)
+    if not error:return
+    stops=cursor.setdefault('stopHookErrors',{});order=cursor.setdefault('stopHookOrder',[])
+    if error[0] not in stops:
+        order.append(error[0])
+        if len(order)>16:stops.pop(order.pop(0),None)
+    blocked,failures=stops.get(error[0],(False,0))
+    stops[error[0]]=(True,failures) if error[1] else (blocked,failures+1)
+
+def stop_hook_failures_only(cursor,value):
+    # Every error of this stop summary is a Stop hook that failed without blocking.
+    if not isinstance(value,dict) or value.get('subtype')!='stop_hook_summary':return False
+    stop=ident(value.get('toolUseID'));errors=value.get('hookErrors')
+    entry=(cursor.get('stopHookErrors') or {}).get(stop) if stop else None
+    return bool(entry) and not entry[0] and isinstance(errors,list) and 0<len(errors)<=entry[1]
 
 ALLOWED_RECORD = {'kind','origin','sessionId','promptId','parentId','itemId','at','project','title','model','effort','attention','agentId','parentAgentId','agentTool','agentStatus','requestId','messageId','toolIds','startedAt','outputTokens','durationMs','ttftMs','firstContentMs','partial','index','displayTurnId','hasText','promptOwned','engineInterrupt','typedInterruptMarker','unownedTurn','embedded','progress','background','wakeups','wake','agents'}
 KINDS = {'metadata','prompt','toolStart','toolEnd','thinking','response','responseDelta','modelBlock','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','stopRequested','failure','interrupt','subagentStart','subagentStop','unavailable','request','progress','waiting'}
@@ -400,6 +455,11 @@ def otlp_respond(stream,status):
     except OSError:pass
 
 class Tailer:
+    @staticmethod
+    def reset_transcript_context(cursor):
+        for key in ('context', 'contextOrder', 'deferred', 'awaiting', 'released', 'stopHookErrors', 'stopHookOrder', 'latestStamp'):
+            cursor.pop(key, None)
+
     def __init__(self, home):
         self.home = home; self.cursors = {}; self.watches = {}; self.dirty = set(); self.fd = -1; self.scans = 0
         if sys.platform.startswith('linux'):
@@ -420,6 +480,26 @@ class Tailer:
     def modified(self, path):
         try: return path.stat().st_mtime
         except OSError: return 0
+    def registrations(self):
+        import uuid
+        cache=getattr(self,'registration_cache',{})
+        updated={}
+        try:
+            with os.scandir(str(self.home/'sessions')) as entries:
+                for entry in entries:
+                    if not re.fullmatch(r'[1-9][0-9]{0,9}\.json',entry.name):continue
+                    if len(updated)>=256 or not entry.is_file(follow_symlinks=False):return None
+                    info=entry.stat(follow_symlinks=False)
+                    if info.st_size>65536:return None
+                    signature=(info.st_ino,info.st_size,info.st_mtime_ns)
+                    prior=cache.get(entry.name)
+                    if prior and prior[0]==signature:updated[entry.name]=prior;continue
+                    with open(entry.path,'rb') as handle:record=json.loads(handle.read(65537))
+                    if not isinstance(record,dict) or record.get('pid')!=int(entry.name[:-5]):return None
+                    updated[entry.name]=(signature,str(uuid.UUID(record['sessionId'])))
+        except (OSError,ValueError,TypeError,KeyError,AttributeError):return None
+        self.registration_cache=updated
+        return set(row[1] for row in updated.values())
     def discover(self):
         self.scans += 1; root = self.home / 'projects'; candidates = []; dirs = [self.home, root, self.home/'pacer']
         for project in sorted(self.entries(root, 256), key=self.modified, reverse=True)[:64]:
@@ -441,7 +521,18 @@ class Tailer:
             if file not in desired: self.cursors.pop(file,None)
         for file, session, parent, owned in selected:
             if file not in self.cursors: self.cursors[file] = {'inode':0,'offset':0,'fragment':b'','session':session,'parent':parent,'owned':owned,'historicalEnd':None};self.dirty.add(file)
+        registered=self.registrations()
+        if registered is not None:
+            for file,cursor in self.cursors.items():
+                if cursor['parent'] or cursor['owned']:continue
+                present=cursor['session'] in registered
+                if present==cursor.get('registered',False):continue
+                at=time.time()
+                cursor['registered']=present;cursor['registrationEndedAt']=None if present else at
+                cursor['registrationRow']={'origin':'reader','kind':'registrationStarted' if present else 'registrationEnded','sessionId':cursor['session'],'at':at}
+                self.dirty.add(file)
         watches = desired.union(dirs[:4])
+        if (self.home/'sessions').is_dir():watches.add(self.home/'sessions')
         for wd,path in list(self.watches.items()):
             if path not in watches:
                 self.watches.pop(wd,None)
@@ -449,7 +540,9 @@ class Tailer:
         if self.fd >= 0:
             existing = set(self.watches.values())
             for path in watches-existing:
-                wd = self.libc.inotify_add_watch(self.fd,os.fsencode(str(path)),0x2|0x8|0x40|0x80|0x100|0x200|0x400|0x800)
+                mask=0x40|0x80|0x100|0x200|0x400|0x800
+                if path!=self.home/'sessions':mask|=0x2|0x8
+                wd = self.libc.inotify_add_watch(self.fd,os.fsencode(str(path)),mask)
                 if wd >= 0: self.watches[wd] = path
     def drain(self):
         discover = False
@@ -495,15 +588,19 @@ class Tailer:
             if owned_backlog and cursor is not None and not cursor['owned']:continue
             self.dirty.discard(file)
             if cursor is None: continue
+            if 'registrationRow' in cursor:rows.append(cursor.pop('registrationRow'))
             try:
                 s=file.stat();reset=s.st_ino!=cursor['inode'] or cursor['offset']>s.st_size
-                if reset: cursor.update(inode=s.st_ino,offset=0,fragment=b'',historicalEnd=s.st_size,context={},contextOrder=[],deferred={},discardingOversize=False)
+                if reset:
+                    self.reset_transcript_context(cursor)
+                    cursor.update(inode=s.st_ino,offset=0,fragment=b'',historicalEnd=s.st_size,discardingOversize=False)
                 budget=512*1024 if cursor['offset']==0 else 128*1024
                 # Large normal attachment appends must drain sequentially;
                 # the per-read budget is not an actual missing-data boundary.
                 gap=s.st_size-cursor['offset']>(budget if cursor['offset']==0 else 8*1024*1024)
                 if gap:
-                    cursor.update(offset=s.st_size-budget,fragment=b'',context={},contextOrder=[],deferred={},discardingOversize=False)
+                    self.reset_transcript_context(cursor)
+                    cursor.update(offset=s.st_size-budget,fragment=b'',discardingOversize=False)
                     if not cursor['owned']:rows.append({'kind':'discontinuity','origin':'reader','sessionId':cursor['session'],'at':time.time()})
                 fragment_start=cursor['offset']-len(cursor['fragment'])
                 with file.open('rb') as handle: handle.seek(cursor['offset']);data=handle.read(budget)
@@ -522,7 +619,7 @@ class Tailer:
                 for line in lines:
                     historical=cursor['historicalEnd'] is not None and fragment_start<cursor['historicalEnd'];fragment_start+=len(line)+1
                     if len(line)>MAX_FRAME:
-                        cursor.update(context={},contextOrder=[],deferred={})
+                        self.reset_transcript_context(cursor)
                         if not cursor['owned']:rows.append({'kind':'discontinuity','origin':'reader','sessionId':cursor['session'],'at':time.time()})
                         continue
                     if cursor['owned']: values=sanitized(line)
@@ -530,15 +627,20 @@ class Tailer:
                         try: value=json.loads(line)
                         except (ValueError,UnicodeError): continue
                         prompt=self.prompt_context_record(value,cursor)
+                        note_stop_hook_error(cursor,value);only=stop_hook_failures_only(cursor,value)
+                        at=stamp(value.get('timestamp')) if isinstance(value,dict) else None
+                        if not cursor['parent'] and at is not None and at<=time.time()+300 and ident(value.get('sessionId',cursor['session']))==cursor['session']:
+                            cursor['latestStamp']=max(at,cursor.get('latestStamp',at))
                         if prompt is None and cursor.get('awaiting'):
-                            owned=transcript_record(value,cursor['session'],cursor['parent'],PENDING_OWNER)
+                            owned=transcript_record(value,cursor['session'],cursor['parent'],PENDING_OWNER,only,at)
                             values=unowned_rows(owned);self.defer_record(cursor,owned,historical)
-                        else:values=transcript_record(value,cursor['session'],cursor['parent'],prompt)
+                        else:values=transcript_record(value,cursor['session'],cursor['parent'],prompt,only,at)+cost_checkpoint(value,cursor,s.st_mtime if fragment_start==s.st_size else None)
                     rows.extend(dict(row,historical=historical) for row in values)
                     # A late parent proves the owner of descendants read before it.
                     rows.extend(cursor.pop('released',[]))
                 if len(cursor['fragment'])>MAX_FRAME:
-                    cursor.update(fragment=b'',context={},contextOrder=[],deferred={},discardingOversize=True)
+                    self.reset_transcript_context(cursor)
+                    cursor.update(fragment=b'',discardingOversize=True)
                     if not cursor['owned']:rows.append({'kind':'discontinuity','origin':'reader','sessionId':cursor['session'],'at':time.time()})
                 if cursor['offset']<s.st_size:self.dirty.add(file)
                 # Keep both byte/line budgets. Complete owned records must
@@ -639,7 +741,7 @@ def main():
     except (IndexError,ValueError):interval=5
     pending=[];pending_due=None
     # Only the first reply of a turn is urgent; later streaming text waits for the batch.
-    urgent={'prompt','progress','waiting','toolStart','toolEnd','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','failure','interrupt','subagentStart','subagentStop','unavailable'}
+    urgent={'costCheckpoint','registrationEnded','prompt','progress','waiting','toolStart','toolEnd','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','failure','interrupt','subagentStart','subagentStop','unavailable'}
     turn_ends={'prompt','stop','stopVerified','failure','interrupt'};replying=set()
     def is_urgent(row):
         kind=row.get('kind');session=row.get('sessionId')
