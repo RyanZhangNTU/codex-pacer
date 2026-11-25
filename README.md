@@ -1,79 +1,199 @@
-<p align="center">
-  <img src="native/Resources/Pacer.png" width="128" height="128" alt="Codex Pacer app icon">
-</p>
+<a id="readme-top"></a>
 
-<h1 align="center">Codex Pacer</h1>
+<div align="center">
 
-<p align="center">
-  A Dynamic Island for <b>Codex</b>, <b>Claude Code</b>, <b>DeepSeek Harness</b> and <b>WorkBuddy</b>, on Mac and Windows.<br>
-  See every running task, its progress and your quota without leaving what you're doing.
-</p>
+<img src="native/Resources/Pacer.png" width="120" alt="Codex Pacer app icon">
 
-<p align="center">
-  <a href="https://github.com/RyanZhangNTU/codex-pacer/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/RyanZhangNTU/codex-pacer?label=release&color=2f9e8f"></a>
-  <img alt="macOS 14 or later" src="https://img.shields.io/badge/macOS-14%2B-111111?logo=apple">
-  <img alt="Windows 10 or later" src="https://img.shields.io/badge/Windows-10%2B-0078D4?logo=windows">
-  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/github/license/RyanZhangNTU/codex-pacer?color=555555"></a>
-</p>
+<h1>Codex Pacer</h1>
 
-<p align="center">
-  <a href="https://github.com/RyanZhangNTU/codex-pacer/releases/latest"><b>Download</b></a>
-  &nbsp;·&nbsp; <a href="docs/guide.md">User Guide</a>
-  &nbsp;·&nbsp; <a href="README.zh-CN.md">简体中文</a>
-</p>
+<h3>A progress bar for your AI coding agents.</h3>
 
-![Codex Pacer with sample data: the collapsed bar's badge shows the average progress, then the expanded island shows each task's progress ring as Codex, Claude Code and DeepSeek Harness report their estimates, a task turns amber when it needs approval, the same moment in black, graphite and Liquid Glass, and each service on its own](docs/assets/demo.webp)
+See how far every task has got, when it needs you and how much quota is left,<br>
+without leaving what you're doing. On Mac and Windows.
 
-## Features
+<br>
 
-- **Progress for every task.** Codex, Claude Code, DeepSeek Harness and WorkBuddy report how much of your request is done. Each task shows it as a ring around its icon, and the collapsed bar can show the average.
-- **Every task in one place.** Tasks on this computer, on your SSH hosts, in WSL and in Claude's cloud Projects, each with its stage, model, speed and turn time.
-- **Know when you're needed.** A task waiting for your reply or approval turns the island amber, and a finished task stays until you've seen it. System notifications are optional.
-- **Jump back in.** Click a task to open its conversation in the app that runs it.
-- **Quota with pace.** Each service's 5-hour and weekly quota on one ring, with a tick that shows whether you're ahead of or behind an even pace, and a forecast for the reset.
-- **DeepSeek balance and budgets.** Today's spend on a 24-hour dial with the peak-price hours marked, or daily and weekly budgets paced like quota. Spending elsewhere on your account counts too.
-- **WorkBuddy credits.** WorkBuddy and WorkBuddy AI show the month's credits, any extra credits and when they expire, with reminders before they run low or lapse.
-- **Only the services you use.** Settings lists the services found on this computer. Turn on or get the others in the Module Library.
-- **Overview and history.** The main window opens on everything that needs you, with each service's quota history.
-- **English and Simplified Chinese.**
+<img src="native/Sources/PacerCore/Resources/provider-codex.png" width="22" align="middle" alt="">&nbsp;<b>Codex</b>
+&emsp;<img src="native/Sources/PacerCore/Resources/provider-claude.png" width="22" align="middle" alt="">&nbsp;<b>Claude Code</b>
+&emsp;<img src="native/Sources/PacerCore/Resources/provider-deepseek.png" width="22" align="middle" alt="">&nbsp;<b>DeepSeek Harness</b>
+&emsp;<img src="native/Sources/PacerCore/Resources/provider-workbuddy.png" width="22" align="middle" alt="">&nbsp;<b>WorkBuddy</b>
 
-## Make it yours
+<br>
 
-![The collapsed bar around the camera: a task badge and output speed on the left, quota rings and a value on the right](docs/assets/collapsed-bar.png)
+<a href="https://github.com/RyanZhangNTU/codex-pacer/releases/latest"><img src="docs/assets/download-mac.png" height="56" alt="Download for macOS"></a>
+&nbsp;
+<a href="https://github.com/RyanZhangNTU/codex-pacer/releases/latest"><img src="docs/assets/download-windows.png" height="56" alt="Download for Windows"></a>
 
-Collapsed, Pacer is a slim bar around the camera. **Hover** to expand it, **move away** to collapse it.
+[![Latest release](https://img.shields.io/github/v/release/RyanZhangNTU/codex-pacer?style=flat-square&label=release&color=2f9e8f)](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)
+[![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FRyanZhangNTU%2Fcodex-pacer%2Fbadges%2Fdownloads.json&style=flat-square)](https://github.com/RyanZhangNTU/codex-pacer/releases)
+![macOS 14 or later](https://img.shields.io/badge/macOS-14%2B-111111?style=flat-square&logo=apple&logoColor=white)
+![Windows 10 or later](https://img.shields.io/badge/Windows-10%2B-0078D4?style=flat-square&logo=windows&logoColor=white)
+[![MIT License](https://img.shields.io/github/license/RyanZhangNTU/codex-pacer?style=flat-square&color=555555)](LICENSE)
 
-- Choose what the bar shows and on which side of the camera, on a live preview.
-- Four sizes, and black, graphite or Liquid Glass.
-- Keep it at the top center as an island, or drag it anywhere and let it snap to an edge. Each display remembers its own place.
+[Features](#features) · [Supported agents](#supported-agents) · [Install](#install) · [User Guide](docs/guide.md) · [Community](#community) · [简体中文](README.zh-CN.md)
 
-![Collapsed Bar settings: the bar on a live preview above the component library, with the selected component's options](docs/assets/settings-collapsed-bar.png)
+<br>
+
+<img src="docs/assets/demo.webp" width="100%" alt="Codex Pacer with sample data: tasks from several agents report their progress as rings, a task turns amber when it needs approval, and the collapsed bar shows the average progress">
+
+</div>
+
+> [!TIP]
+> **New in 4.7: Claude calls Codex (Beta).** Ask Claude Code to have Codex review a change or take on a task, and follow Codex's progress right under Claude's task. [See how it works](#claude-calls-codex).
+
+## Why Pacer
+
+| Without Pacer | With Pacer |
+| --- | --- |
+| You stare at *Thinking…* and guess how long is left. | The ring is at 56%. Go do something else. |
+| You switch back and find it has waited ten minutes for your approval. | The island turns amber. One click takes you back. |
+| You learn the quota is gone when it's gone. | You see early that you're using it too fast. |
+
+<a id="features"></a>
+
+## Stop watching the terminal
+
+Codex, Claude Code, DeepSeek Harness and WorkBuddy report how much of your request is done. Each task shows it as a ring around its icon, and the collapsed bar can show the average.
+
+<img src="docs/assets/readme-rings.png" width="100%" alt="The five task states: a comet when a task has just started, an arc while it works, a moon while it waits for background work, an amber hand when it needs you, and a check when it's done">
+
+## It raises its hand when you're needed
+
+A task that waits for your approval or reply turns the island amber and moves to the top. A finished task stays until you've seen it. Click any task to open its conversation in the app that runs it.
+
+<img src="docs/assets/readme-attention.png" width="100%" alt="The expanded island with a task waiting for approval at the top, in amber, above two running tasks">
+
+<a id="supported-agents"></a>
+
+## Several agents at once, still in order
+
+Tasks on this computer, on your SSH hosts, in WSL and in Claude's cloud Projects share one list, each with its stage, model, speed and turn time.
+
+<table>
+<thead>
+<tr>
+<th></th>
+<th><img src="native/Sources/PacerCore/Resources/provider-codex.png" width="20" align="middle" alt="">&nbsp;Codex</th>
+<th><img src="native/Sources/PacerCore/Resources/provider-claude.png" width="20" align="middle" alt="">&nbsp;Claude Code</th>
+<th><img src="native/Sources/PacerCore/Resources/provider-deepseek.png" width="20" align="middle" alt="">&nbsp;DeepSeek Harness</th>
+<th><img src="native/Sources/PacerCore/Resources/provider-workbuddy.png" width="20" align="middle" alt="">&nbsp;WorkBuddy</th>
+</tr>
+</thead>
+<tbody>
+<tr><td nowrap><b>Progress ring</b></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
+<tr><td nowrap><b>Alert when it needs you</b></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
+<tr><td nowrap><b>Speed and model</b></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
+<tr><td nowrap><b>Click to jump back</b></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
+<tr><td nowrap><b>Usage</b></td><td align="center">5-hour and weekly quota, pace, forecast, banked resets</td><td align="center">5-hour and weekly quota, pace, forecast</td><td align="center">Balance, today's spend by the hour, budgets</td><td align="center">Monthly and extra credits, expiry reminders</td></tr>
+<tr><td nowrap><b>Cost of each turn</b></td><td align="center">—</td><td align="center">—</td><td align="center">Estimated</td><td align="center">Credits</td></tr>
+<tr><td nowrap><b>Where tasks run</b></td><td align="center">App, CLI, SSH, WSL¹, Dot tasks</td><td align="center">App, CLI, SSH, WSL¹, cloud Projects</td><td align="center">App, CLI</td><td align="center">WorkBuddy and WorkBuddy AI</td></tr>
+<tr><td nowrap><b>Collaboration</b></td><td align="center">Called by Claude</td><td align="center">Calls Codex</td><td align="center">—</td><td align="center">—</td></tr>
+</tbody>
+</table>
+
+<sub>¹ On Windows.</sub>
+
+<details>
+<summary><b>First-time setup for each agent</b></summary>
+<br>
+
+The welcome guide walks you through these when you first open Pacer.
+
+| | Once |
+| --- | --- |
+| **Codex** | Allow Pacer's hooks in Codex. Quota needs nothing else. |
+| **Claude Code** | Restart running sessions once. Sign in to Claude in Pacer's window to see quota. |
+| **DeepSeek Harness** | Sign in to the DeepSeek platform in Pacer's window, or paste an API key, to see the balance. |
+| **WorkBuddy** | Trust Pacer's progress tool in WorkBuddy; Pacer shows each click. Sign in to see credits. |
+| **SSH hosts** | SSH without a password prompt, and Python 3 on the host. |
+
+</details>
+
+## How much is left, and how fast it's going
+
+Codex and Claude show their 5-hour and weekly quota on one ring, with a tick for an even pace and a forecast for the reset. DeepSeek shows your balance and today's spend hour by hour, with budgets if you want them. WorkBuddy shows this month's credits and when extra credits expire.
+
+<img src="docs/assets/readme-quota.png" width="100%" alt="Codex and Claude quota, each with its 5-hour and weekly windows, pace and a forecast for the reset">
+
+## Claude calls Codex <img src="https://img.shields.io/badge/Beta-8250df?style=flat-square" align="middle" alt="Beta">
+
+Turn on **Claude calls Codex** in **Settings → Collaboration**, then just ask Claude, for example "have Codex review this change". Each Codex run shows under the Claude task that started it, with its own progress, speed and model. Hover over a running one to stop it.
+
+<img src="docs/assets/readme-collab.png" width="100%" alt="A Claude task with two Codex runs under it, each with its own progress ring, speed and model">
+
+## Put it anywhere, make it yours
+
+Keep it at the top center of the screen, or drag it anywhere and let it snap to an edge. Choose black, graphite or Liquid Glass, one of four sizes, and what the collapsed bar shows. Each display remembers its own place.
+
+<img src="docs/assets/readme-forms.png" width="100%" alt="The collapsed bar floating over a window, snapped to the side of the screen, and snapped to the bottom">
+
+<a id="install"></a>
 
 ## Install
 
-**Mac.** Download the DMG from the [latest release](https://github.com/RyanZhangNTU/codex-pacer/releases/latest), open it and drag **Codex Pacer** into **Applications**. The app is notarized by Apple.
+<table>
+<tr>
+<td width="50%" valign="top">
 
-**Windows.** Download the `x64` installer, or `arm64` on an ARM PC, and run it. No administrator rights are needed. The installer isn't code signed yet, so if SmartScreen appears, choose **More info → Run anyway**.
+<img src="docs/assets/logo-apple.png" height="16" align="middle" alt="">&nbsp;**Mac**
 
-On first launch a short guide helps you pick a layout and the services to follow. Pacer then updates itself; check any time in **Help & Updates**.
+1. Download the DMG from the [latest release](https://github.com/RyanZhangNTU/codex-pacer/releases/latest).
+2. Open it and drag **Codex Pacer** into **Applications**.
 
-## Requirements
+macOS 14 or later, Apple silicon or Intel. Notarized by Apple.
 
-- macOS 14 or later (Apple silicon or Intel), or Windows 10 version 2004 or later (x64 or ARM64). Liquid Glass needs macOS 26 or Windows 11 22H2.
-- At least one of Codex, Claude Code, DeepSeek Harness or WorkBuddy, installed and signed in.
-- For SSH hosts: SSH access without a password prompt, and Python 3 on the host.
+</td>
+<td width="50%" valign="top">
+
+<img src="docs/assets/logo-windows.png" height="16" align="middle" alt="">&nbsp;**Windows**
+
+1. Download the `x64` installer, or `arm64` on an ARM PC.
+2. Run it. No administrator rights needed.
+
+Windows 10 version 2004 or later, x64 or ARM64.
+
+</td>
+</tr>
+</table>
+
+> [!NOTE]
+> The Windows installer isn't code signed yet. If SmartScreen appears, choose **More info → Run anyway**.
+
+On first launch, a short guide helps you pick a layout and the agents to follow. Pacer then keeps itself up to date. You need at least one of Codex, Claude Code, DeepSeek Harness or WorkBuddy, installed and signed in. Liquid Glass needs macOS 26 or Windows 11 22H2.
+
+<a id="community"></a>
+
+## Community
+
+- **Bugs and ideas:** [open an issue](https://github.com/RyanZhangNTU/codex-pacer/issues/new/choose).
+- **QQ group (Chinese):** [1131553244](https://qm.qq.com/q/5AieQJsCWY)
 
 ## Privacy
 
-- No account and no analytics. Pacer reads the logs your agents already write and keeps only what the island shows: task titles, stages, timing and token counts. It never keeps your prompts or replies.
-- Claude, DeepSeek and WorkBuddy sign in inside Pacer's own window. Pacer never reads other apps' passwords or browser cookies.
-- Anything Pacer adds to your agents' settings is removed when you turn that feature off.
-- **Hide Project Names** keeps task titles off screen when you share it.
+- **No account, no analytics.** Pacer reads the logs your agents already write and keeps only what the island shows: task titles, stages, timing and token counts. It never keeps your prompts or replies.
+- **Your sign-ins stay in Pacer.** Claude, DeepSeek and WorkBuddy sign in inside Pacer's own window. Pacer never reads other apps' passwords or browser cookies.
+- **Nothing left behind.** Anything Pacer adds to your agents' settings is removed when you turn that feature off. **Hide Project Names** keeps task titles off screen when you share it.
+
+## Star history
+
+<div align="center">
+<a href="https://star-history.com/#RyanZhangNTU/codex-pacer&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=RyanZhangNTU/codex-pacer&type=Date&theme=dark">
+    <img alt="Star history of Codex Pacer" src="https://api.star-history.com/svg?repos=RyanZhangNTU/codex-pacer&type=Date" width="720">
+  </picture>
+</a>
+</div>
 
 ## Contributing
 
-Bug reports and ideas are welcome in [Issues](https://github.com/RyanZhangNTU/codex-pacer/issues). To build from source or send a pull request, start with [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues privately as described in [SECURITY.md](SECURITY.md).
+To build from source or send a pull request, start with [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues privately as described in [SECURITY.md](SECURITY.md).
 
-## License
+<div align="center">
+<br>
 
-[MIT](LICENSE). Codex Pacer is an independent project and is not affiliated with OpenAI, Anthropic, DeepSeek or Tencent. Codex, Claude, DeepSeek and WorkBuddy are trademarks of their respective owners. Codex Pacer includes the decompression part of [Zstandard](https://github.com/facebook/zstd) (BSD license).
+<sub>[MIT](LICENSE). Codex Pacer is an independent project and is not affiliated with OpenAI, Anthropic, DeepSeek or Tencent.<br>Codex, Claude, DeepSeek and WorkBuddy are trademarks of their respective owners. Codex Pacer includes the decompression part of [Zstandard](https://github.com/facebook/zstd) (BSD license).</sub>
+
+<sub>[Back to top ↑](#readme-top)</sub>
+
+</div>

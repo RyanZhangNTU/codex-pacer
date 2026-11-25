@@ -1,0 +1,57 @@
+name: Download badge
+
+# The README shows the downloads of every release as a full number. Shields'
+# own GitHub downloads badge rounds it (16k), so this adds up the counts and
+# publishes them in Shields' endpoint format as downloads.json on the `badges`
+# branch, which holds only that file in a single commit. It runs when it lands
+# on main, after each release, every six hours and on demand, and pushes only
+# when the number changed.
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/download-badge.yml']
+  release:
+    types: [published]
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: download-badge
+  cancel-in-progress: false
+
+jobs:
+  badge:
+    name: Count downloads
+    if: github.repository == 'RyanZhangNTU/codex-pacer'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Count and publish
+        run: |
+          set -euo pipefail
+          total=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '[.[].assets[].download_count] | add // 0' | awk '{ s += $1 } END { print s + 0 }')
+          message=$(python3 -c 'import sys; print(f"{int(sys.argv[1]):,}")' "$total")
+          printf '{"schemaVersion":1,"label":"downloads","message":"%s","color":"3fb950","cacheSeconds":3600}\n' "$message" > "$RUNNER_TEMP/downloads.json"
+          current=$(gh api "repos/$GITHUB_REPOSITORY/contents/downloads.json?ref=badges" \
+            -H 'Accept: application/vnd.github.raw' 2>/dev/null || true)
+          if [ "$current" = "$(cat "$RUNNER_TEMP/downloads.json")" ]; then
+            echo "Unchanged: $message"
+            exit 0
+          fi
+          mkdir "$RUNNER_TEMP/badges" && cd "$RUNNER_TEMP/badges"
+          git init -q -b badges
+          cp "$RUNNER_TEMP/downloads.json" .
+          git add downloads.json
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -q -m "Downloads: $message"
+          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:badges
+          echo "Published: $message"
