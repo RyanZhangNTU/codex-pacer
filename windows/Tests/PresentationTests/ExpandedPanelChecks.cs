@@ -61,6 +61,7 @@ internal static class ExpandedPanelChecks
             island.CollapseForAutomation(); await island.WaitForPresentationAsync();
             Invoke((Button)island.FindName("HeaderAction"));
             await Until(() => island.IsExpandedForAutomation && island.IsActive);
+            Check(!((Button)island.FindName("HeaderAction")).IsKeyboardFocused, "A click-opened panel takes focus without drawing a focus ring on the bar");
             window.Activate();
             await Until(() => !island.IsExpandedForAutomation, "Returning to Settings dismisses the click-opened panel");
             Select(hover);

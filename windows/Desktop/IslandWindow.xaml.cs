@@ -411,7 +411,9 @@ public partial class IslandWindow : Window
         {
             bool open = !expanded;
             SetPinned(open, byBarClick: true); SetExpanded(open);
-            if (open && pinned) { Activate(); (Header.IsVisible ? HeaderAction : StripAction).Focus(); }
+            // Activation lets Esc and a click elsewhere close the panel. Focus goes to the window, not the
+            // bar, so a pointer click draws no focus ring; a keyboard press keeps the focus it already has.
+            if (open && pinned) { Activate(); if (!IsKeyboardFocusWithin) Focus(); }
         }
         else { SetPinned(!pinned); SetExpanded(true); }
     }
