@@ -20,7 +20,8 @@ internal static class IslandMoveChecks
         var window = new IslandWindow(engine, true, false, animationOverride: false) { AllowClose = true };
         var original = System.Windows.Forms.Cursor.Position;
         int writes = 0;
-        var session = new PreferencesSession(new() { DisplayMode = "notch", IslandAppearance = surface },
+        // Per-display memory saves once when the island arrives on a display; these checks count only clicks and drags.
+        var session = new PreferencesSession(new() { DisplayMode = "notch", IslandAppearance = surface, IslandPositionPerDisplay = false },
             _ => throw new InvalidOperationException("A placement must not reconfigure the engine"), _ => { writes++; return true; });
         window.SaveIslandPlacement = edit => session.ChangeAsync(edit);
         session.Changed += window.ApplyPreferences;
@@ -32,6 +33,13 @@ internal static class IslandMoveChecks
             var monitor = window.SelectedDisplay.Display ?? throw new InvalidOperationException("The interaction check needs an interactive monitor.");
             var work = monitor.Work;
             var hwnd = new WindowInteropHelper(window).Handle;
+            var shell = (Border)window.FindName("Shell");
+            var header = (Grid)window.FindName("Header");
+            foreach (double x in new[] { 6, shell.ActualWidth - 6 })
+            {
+                var hit = shell.InputHitTest(new Point(x, header.ActualHeight / 2)) as DependencyObject;
+                Check(hit == header || (hit != null && header.IsAncestorOf(hit)), "Both ends of the visible bar receive bar gestures");
+            }
             var pin = (Button)window.FindName("PinButton");
             string originalPin = AutomationProperties.GetName(pin);
             await Press(); Up();
@@ -58,6 +66,18 @@ internal static class IslandMoveChecks
                     IslandEdge.Left => bounds.Left - work.Left, _ => work.Right - bounds.Right
                 };
                 Check(Math.Abs(gap) <= 2, "The visible bar meets the selected work-area edge: " + edge + ", gap=" + gap);
+                if (edge == IslandEdge.Left)
+                {
+                    window.ApplyPreferences(session.Current with { IslandExpandMode = "click" });
+                    window.CollapseForAutomation(); await window.WaitForPresentationAsync();
+                    Move(midX, midY);
+                    await Press();
+                    Check(!window.IsExpandedForAutomation, "Entering and pressing the side strip waits for a click");
+                    Up(); await PresentationWait.UntilAsync(() => window.IsExpandedForAutomation, "Clicking the side strip opens the panel");
+                    await Press(); Up();
+                    await PresentationWait.UntilAsync(() => !window.IsExpandedForAutomation, "Clicking the open side strip collapses it");
+                    window.ApplyPreferences(session.Current);
+                }
             }
             Move(midX, midY);
             window.CollapseForAutomation(); await window.WaitForPresentationAsync();

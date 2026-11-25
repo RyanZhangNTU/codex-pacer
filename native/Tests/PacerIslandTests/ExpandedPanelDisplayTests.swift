@@ -125,7 +125,7 @@ final class ExpandedPanelDisplayTests: XCTestCase {
         var saved: ExpandedPanelLayout?
         var selection: ExpandedPanelSelection?
         func pane(_ providers: [AgentProvider], options: ExpandedPanelOptions = .init()) -> SettingsExpandedPanelPane {
-            SettingsExpandedPanelPane(savedLayout: Binding(get: { saved }, set: { saved = $0 }), options: .constant(options),
+            SettingsExpandedPanelPane(expandMode: .constant(.hover), savedLayout: Binding(get: { saved }, set: { saved = $0 }), options: .constant(options),
                 selection: Binding(get: { selection }, set: { selection = $0 }), quotaStyle: .constant(.split),
                 retention: .constant(30), showsAppButtons: .constant(true), providers: providers, deepseekDetailed: true,
                 openGeneral: {}, openDeepSeek: {})

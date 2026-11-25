@@ -1,3 +1,4 @@
+import AppKit
 import PacerMacSupport
 import XCTest
 @testable import PacerCore
@@ -31,6 +32,7 @@ final class IslandMoveTests: XCTestCase {
     func testAMoveHoldsHoverAndTheClickThatEndsItDoesNotPin() async throws {
         let (model, _, name, directory) = try fixture()
         defer { removeTestDefaults(name); try? FileManager.default.removeItem(at: directory) }
+        model.close()
         model.hover(true)
         XCTAssertTrue(model.expanded)
         model.setIslandMoving(true)
@@ -40,14 +42,91 @@ final class IslandMoveTests: XCTestCase {
         model.setExpanded(false)
         model.hover(true)
         XCTAssertFalse(model.expanded, "Hover does not open the island while it moves")
-        var clicks = 0
-        model.barClicked { clicks += 1 }
+        model.barClicked()
+        XCTAssertFalse(model.pinned)
         model.setIslandMoving(false)
-        model.barClicked { clicks += 1 }
-        XCTAssertEqual(clicks, 0, "The mouse-up that ends a drag is not a click")
+        model.barClicked()
+        XCTAssertFalse(model.pinned, "The mouse-up that ends a drag is not a click")
         try await Task.sleep(nanoseconds: 400_000_000)
-        model.barClicked { clicks += 1 }
-        XCTAssertEqual(clicks, 1)
+        model.barClicked()
+        XCTAssertTrue(model.pinned)
+        await model.shutdown()
+    }
+
+    func testClickModePinsUntilTheBarIsClickedAgain() async throws {
+        let (model, _, name, directory) = try fixture()
+        defer { removeTestDefaults(name); try? FileManager.default.removeItem(at: directory) }
+        model.expandMode = .click
+        let request = PendingAttentionRequest(id: "question", threadID: "019a0000-0000-7000-8000-000000000001",
+            sourceHostID: nil, sourceName: nil, kind: .input, detectedAt: model.now)
+        model.observeAttentionRequests([request])
+        XCTAssertTrue(model.canOpen(request.activity))
+        model.onOpenActivity = { _ in XCTFail("In click mode the activity badge opens the panel"); return .openedConversation }
+        model.close()
+        model.hover(true)
+        XCTAssertFalse(model.expanded)
+        var focused = false
+        model.onFocusRequested = { focused = true }
+        model.barClicked(.activity)
+        XCTAssertTrue(model.expanded && model.pinned && focused)
+        model.hover(false)
+        try await Task.sleep(nanoseconds: 550_000_000)
+        XCTAssertTrue(model.expanded && model.pinned)
+        model.barClicked()
+        XCTAssertFalse(model.expanded)
+        XCTAssertFalse(model.pinned)
+
+        model.setExpanded(true)
+        model.hover(false)
+        model.hover(true)
+        try await Task.sleep(nanoseconds: 550_000_000)
+        XCTAssertTrue(model.expanded, "Returning to an automatically opened panel cancels its pending close")
+        XCTAssertFalse(model.pinned)
+        model.hover(false)
+        try await TestWait.until { !model.expanded }
+        XCTAssertFalse(model.expanded)
+        await model.shutdown()
+    }
+
+    func testLocalClickFollowsTheWindowAttachmentBackToTheIsland() {
+        func window() -> NSWindow {
+            NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: true)
+        }
+        let island = window(), preview = window(), settings = window(), popover = window(), child = window()
+        func outside(_ target: NSWindow?) -> Bool {
+            PanelController.isOutsideIsland(target, panel: island, preview: preview)
+        }
+        popover.parent = island
+        child.parent = popover
+        XCTAssertFalse(outside(island))
+        XCTAssertFalse(outside(child))
+        XCTAssertFalse(outside(preview))
+        XCTAssertFalse(outside(nil))
+        XCTAssertTrue(outside(settings))
+        popover.parent = settings
+        XCTAssertTrue(outside(child))
+        let menu = window()
+        menu.level = .popUpMenu
+        XCTAssertFalse(outside(menu))
+    }
+
+    func testHoverIsTheDefaultAndUnpinningStillWaitsForHoverExit() async throws {
+        let (model, _, name, directory) = try fixture()
+        defer { removeTestDefaults(name); try? FileManager.default.removeItem(at: directory) }
+        XCTAssertEqual(model.expandMode, .hover)
+        model.close()
+        model.hover(true)
+        XCTAssertTrue(model.expanded)
+        XCTAssertFalse(model.pinned)
+        model.barClicked()
+        XCTAssertTrue(model.pinned)
+        model.barClicked()
+        XCTAssertFalse(model.pinned)
+        XCTAssertTrue(model.expanded)
+        model.hover(false)
+        XCTAssertTrue(model.expanded)
+        try await TestWait.until { !model.expanded }
+        XCTAssertFalse(model.expanded)
         await model.shutdown()
     }
 

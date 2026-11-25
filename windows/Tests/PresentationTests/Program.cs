@@ -359,6 +359,24 @@ internal static class Program
             Check(expansion.ExpandCollapseState == ExpandCollapseState.Expanded && window.LogicalTarget.Height == PresentationWait.ReferenceHeight(window), "The UIA Expand action must reveal the panel");
             expansion.Collapse(); await window.WaitForPresentationAsync();
             Check(expansion.ExpandCollapseState == ExpandCollapseState.Collapsed && window.LogicalTarget.Height == 36, "The UIA Collapse action must clear the pin and close the panel");
+            window.ApplyPreferences(withQuota with { IslandExpandMode = "click" });
+            window.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = Mouse.MouseEnterEvent });
+            Check(expansion.ExpandCollapseState == ExpandCollapseState.Collapsed, "In click mode hovering leaves the bar collapsed");
+            var headerAction = (Button)window.FindName("HeaderAction");
+            Invoke(headerAction);
+            await Until(() => expansion.ExpandCollapseState == ExpandCollapseState.Expanded, "Clicking the bar opens the panel");
+            window.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = Mouse.MouseLeaveEvent });
+            await Task.Delay(600); await Pump();
+            Check(window.IsExpandedForAutomation && AutomationProperties.GetName((Button)window.FindName("PinButton")) == ui.Text("common.unpin"),
+                "A click-opened panel stays pinned after hover exit");
+            Invoke(headerAction);
+            await Until(() => !window.IsExpandedForAutomation, "A second bar click collapses the panel");
+            Check(AutomationProperties.GetName((Button)window.FindName("PinButton")) == ui.Text("common.pin"), "Closing by click clears the pin");
+            expansion.Expand(); await window.WaitForPresentationAsync();
+            Check(window.IsExpandedForAutomation, "A programmatic reveal still opens the panel in click mode");
+            window.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, Key.Escape) { RoutedEvent = Keyboard.KeyDownEvent });
+            Check(!window.IsExpandedForAutomation, "Escape closes a pinned panel in click mode");
+            window.ApplyPreferences(withQuota);
             Console.WriteLine("PASS " + scenario + ": read action, Escape, hover reopening/exit and accessibility cleanup");
             window.Reveal(); await window.WaitForPresentationAsync(); await Pump();
             window.CapturePreview(Path.Combine(output, "presentation-" + scenario + ".png"));

@@ -102,6 +102,9 @@ internal sealed partial class SettingsWindow
         panelRestore.Click += async (_, _) => { if (panelRestore.IsVisible && activePane == "expandedPanel") await EditPanel(new("restore")); };
         SetPaneHeader(panelRestore, true);
 
+        var expandMode = PanelSegmentChoices("expand", "main.panel.expand",
+            [("hover", "main.panel.expand.hover"), ("click", "main.panel.expand.click")], value => Change(p => p with { IslandExpandMode = value }));
+        form.Children.Add(Card(InfoRow(ui.Text("main.panel.expand"), expandMode)));
         var columns = new Grid();
         columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(270) }); columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
         columns.ColumnDefinitions.Add(new ColumnDefinition());
@@ -455,6 +458,7 @@ internal sealed partial class SettingsWindow
 
         void Pick(string id, string value) { if (panelSegments.TryGetValue(id, out var group)) foreach (var (key, choice) in group) choice.IsChecked = key == value; }
         void Flip(string id, bool value) { if (panelSwitches.TryGetValue(id, out var check)) check.IsChecked = value; }
+        Pick("expand", preferences.IslandExpandMode);
         Pick("pageSize", options.PageSize.ToString(System.Globalization.CultureInfo.InvariantCulture)); Pick("rowStyle", options.RowStyle);
         foreach (var (field, chip) in panelChips)
         {

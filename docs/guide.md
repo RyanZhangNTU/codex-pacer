@@ -43,7 +43,7 @@ Codex quota needs nothing extra.
 | **Quota** | Quota left for Codex and Claude, your DeepSeek balance or budget, or your WorkBuddy credits. |
 | **Warnings** | Appear only when something needs attention, such as low quota, low credits or a disconnected SSH host. |
 
-**Hover** to expand the island, **move away** to collapse it. Click the top to keep it open, and press Esc to close it.
+**Hover** to expand the island, **move away** to collapse it. Click the top to keep it open, and press Esc to close it. In **Settings → Expanded Panel**, choose **On click** to open the island with one click and close it with another.
 
 Choose what the bar shows in **Collapsed Bar**: drag items on the live preview to reorder them or move them to the other side of the camera, and click one to see its options. In the list of items, the round button at the end of each one adds it to the bar or removes it. The badge's ring can show the services that are running, the average progress, or one segment per task.
 

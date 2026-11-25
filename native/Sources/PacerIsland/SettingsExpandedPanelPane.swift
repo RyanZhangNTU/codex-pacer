@@ -16,6 +16,7 @@ enum ExpandedPanelSelection: Hashable {
 struct SettingsExpandedPanelPane: View {
     @Environment(\.pacerAccent) private var accent
     @Environment(\.colorScheme) private var colorScheme
+    @Binding var expandMode: IslandExpandMode
     /// The saved blocks; nil follows the enabled services.
     @Binding var savedLayout: ExpandedPanelLayout?
     @Binding var options: ExpandedPanelOptions
@@ -57,6 +58,12 @@ struct SettingsExpandedPanelPane: View {
     }
 
     var body: some View {
+        MainCard {
+            CardRow(title: L10n.text("main.panel.expand")) {
+                MainSegmented(options: IslandExpandMode.allCases.map { ($0, L10n.text("main.panel.expand." + $0.rawValue)) },
+                              selection: $expandMode, label: L10n.text("main.panel.expand"))
+            }
+        }
         HStack(alignment: .top, spacing: 20) {
             VStack(alignment: .leading, spacing: 16) {
                 outline

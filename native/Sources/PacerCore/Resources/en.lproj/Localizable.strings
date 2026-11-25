@@ -93,6 +93,7 @@
 "account.expiry_timezone" = "Local time (%@)";
 "activity.header_open" = "%@. Click to open chat";
 "activity.header_pin" = "%@. Click to keep expanded";
+"activity.header_toggle" = "%@. Click to expand or collapse";
 "activity.hidden_local_name" = "Local task";
 "activity.hidden_name" = "Task";
 "activity.idle" = "Idle";
@@ -946,7 +947,7 @@
 "deepseek.speed_source.account" = "Account";
 "deepseek.speed_basis_help" = "This Mac estimates from tasks here and updates with every reply. Account counts balance changes, including other devices and web searches, about once a minute, and needs a connected balance. Speed bars and the spend-spike alert follow this.";
 "help.hover.title" = "Expand and collapse";
-"help.hover.detail" = "Move the pointer onto the bar to expand it, and away to collapse it.";
+"help.hover.detail" = "Move the pointer onto the bar to expand it, and away to collapse it. Choose On click in Settings → Expanded Panel to open it with a click.";
 "help.move.title" = "Move the island";
 "help.move.detail" = "Drag the status bar; release near an edge to snap. To start over, use Settings → Appearance → Return to Top Center.";
 "help.section.collaboration" = "Collaboration";
@@ -1207,6 +1208,11 @@
 "panel.action.recenter_help" = "Shows while Free Move is on.";
 "panel.action.settings" = "Settings";
 "main.panel.subtitle" = "Click a block for its settings. Drag it to change the order.";
+"main.panel.expand" = "Expand";
+"main.panel.expand.hover" = "On hover";
+"main.panel.expand.click" = "On click";
+"island.expand" = "Expand island";
+"island.collapse" = "Collapse island";
 "main.panel.blocks" = "Blocks";
 "main.panel.selected" = "Selected";
 "main.panel.always" = "Always shown";

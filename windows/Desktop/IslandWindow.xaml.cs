@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,6 +14,7 @@ using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
@@ -49,6 +51,8 @@ public partial class IslandWindow : Window
     private readonly NativeLayout geometry;
     private readonly Func<(MotionBounds Screen, MotionBounds WorkArea)>? screenGeometry;
     private bool pinned, expanded, rendering, presentationStopped;
+    // Null for other pins. A click-open with no foreground window still dismisses on deactivation.
+    private IntPtr? foregroundBeforeBarClick;
     private bool updateInputSuspended;
     internal void SetUpdateInputSuspended(bool value)
     {
@@ -142,6 +146,11 @@ public partial class IslandWindow : Window
         ShellProjection.Changed += OnShellProjectionChanged;
         Loaded += (_, _) => OnShellProjectionChanged("");
         Closing += OnClosing;
+        Deactivated += (_, _) =>
+        {
+            if (foregroundBeforeBarClick.HasValue && !presentationStopped && move == null && !MoreButton.ContextMenu.IsOpen)
+            { SetPinned(false); SetExpanded(false); }
+        };
         Closed += (_, _) => StopPresentation();
         IsVisibleChanged += (_, _) =>
         {
@@ -306,7 +315,9 @@ public partial class IslandWindow : Window
             compactPreferences.Position != preferences.Position || compactPreferences.DisplayMode != preferences.DisplayMode;
         if (screenChanged || placementChanged) CancelMove();
         bool memoryTurnedOn = preferences.IslandPositionPerDisplay && !compactPreferences.IslandPositionPerDisplay;
+        bool expandModeChanged = compactPreferences.IslandExpandMode != preferences.IslandExpandMode;
         compactPreferences = preferences;
+        if (expandModeChanged) { foregroundBeforeBarClick = null; UpdateMainAction(); }
         RememberDisplayPlace(preferences);
         // Light Liquid Glass turns the whole island light before its surface changes.
         bool toneChanged = PacerPalette.ApplyTone(preferences.IslandAppearance == "liquidGlassLight");
@@ -388,18 +399,52 @@ public partial class IslandWindow : Window
         if (opened) DismissForSettings();
         else ShowNavigationError(ui.Text("windows.app.open_failed"));
     }
-    private void OnMouseEnter(object sender, MouseEventArgs e) { if (move != null) return; RecordInteraction("hover-in"); collapse.Stop(); SetExpanded(true); }
+    private void OnMouseEnter(object sender, MouseEventArgs e)
+    {
+        if (move != null) return;
+        RecordInteraction("hover-in"); collapse.Stop();
+        if (compactPreferences.IslandExpandMode == "hover") SetExpanded(true);
+    }
     private void OnMouseLeave(object sender, MouseEventArgs e) { if (move != null) return; RecordInteraction("hover-out"); if (!pinned && !MoreButton.ContextMenu.IsOpen) collapse.Start(); }
     private void OnPin(object sender, RoutedEventArgs e) => SetPinned(!pinned);
+    private void BarClicked()
+    {
+        if (compactPreferences.IslandExpandMode == "click")
+        {
+            if (expanded) { CloseAndReturnFocus(); return; }
+            SetPinned(true); SetExpanded(true);
+            // Activation lets Esc and a click elsewhere close the panel. Focus goes to the window, not the
+            // bar, so a pointer click draws no focus ring; a keyboard press keeps the focus it already has.
+            if (pinned)
+            {
+                foregroundBeforeBarClick = GetForegroundWindow();
+                Activate(); if (!IsKeyboardFocusWithin) Focus();
+            }
+        }
+        else { SetPinned(!pinned); SetExpanded(true); }
+    }
+    private void CloseAndReturnFocus()
+    {
+        var target = foregroundBeforeBarClick.GetValueOrDefault();
+        SetPinned(false); SetExpanded(false);
+        if (target == IntPtr.Zero) return;
+        var island = new WindowInteropHelper(this).Handle;
+        if (island != IntPtr.Zero && target != island && IsWindow(target) && GetForegroundWindow() == island)
+            SetForegroundWindow(target);
+    }
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetForegroundWindow(IntPtr hwnd);
     private void SetPinned(bool value)
     {
         value = value && !updateInputSuspended;
         pinned = value;
+        foregroundBeforeBarClick = null;
         PinButton.Background = value ? PacerPalette.Hover : Brushes.Transparent;
         PinButton.Foreground = value ? PacerPalette.Primary : PacerPalette.Secondary;
         ((IconGlyph)PinButton.Content).Symbol = value ? "pin.fill" : "pin";
         SetButtonName(PinButton, ui.Text(value ? "common.unpin" : "common.pin"));
-        UpdateMainAction();
+        if (compactPreferences.IslandExpandMode == "hover") UpdateMainAction();
     }
     private async void OnMarkRead(object sender, RoutedEventArgs e) { if (latest != null) await Send("markAllRead", new { snapshotSequence = latest.Sequence }); }
     private async void OnRefresh(object sender, RoutedEventArgs e) => await Send("refresh", new { discover = true });
@@ -427,7 +472,7 @@ public partial class IslandWindow : Window
     }
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Escape) { RecordInteraction("escape"); SetPinned(false); SetExpanded(false); e.Handled = true; }
+        if (e.Key == Key.Escape) { RecordInteraction("escape"); CloseAndReturnFocus(); e.Handled = true; }
         if (IsPagingInput(e.Key, e.SystemKey, Keyboard.Modifiers, IsEditing(e.OriginalSource as DependencyObject)))
         { Key key = e.Key == Key.System ? e.SystemKey : e.Key; ChangePage(key == Key.Left ? -1 : 1); e.Handled = true; }
         if (demo && (Keyboard.Modifiers & ModifierKeys.Control) != 0 && e.Key >= Key.D1 && e.Key <= Key.D4)
@@ -458,6 +503,7 @@ public partial class IslandWindow : Window
         if (value == expanded) return;
         if (!value) Keyboard.ClearFocus();
         expanded = value;
+        if (compactPreferences.IslandExpandMode == "click") UpdateMainAction();
         // A collapsed island skipped the panel's snapshots; it is built once, before it is measured.
         // Rows kept from a hidden panel resume their loops once they show.
         if (value) { RefreshDirtyPanel(); RefreshRowMotion(); }
@@ -717,6 +763,7 @@ public partial class IslandWindow : Window
         if (harnessAccounts != null) harnessAccounts.Changed -= UpdateHarnessAccount;
         if (presentationStopped) return;
         ShellProjection.Changed -= OnShellProjectionChanged; engine.Snapshot -= QueueSnapshot;
+        foregroundBeforeBarClick = null;
         presentationStopped = true; CancelMove(); StopRendering(); DisposeOcclusion(); DisposeBackdrop(); motion.Dispose(); collapse.Stop(); QuotaLabel.Stop(); StripQuota.Stop();
         if (decoration != null) { decoration.Close(); decoration = null; }
         foreach (var clock in pageClocks) clock.Dispose(); pageClocks.Clear();

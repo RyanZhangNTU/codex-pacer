@@ -332,7 +332,7 @@ struct SettingsView: View {
                 options: $componentOptions, deepseekBudgets: $deepseekBudgets,
                 providers: AgentProvider.allCases.filter { moduleEnabled($0) }, openNotifications: { pane = .notifications })
         case .expandedPanel:
-            SettingsExpandedPanelPane(savedLayout: $panelLayout, options: $panelOptions, selection: $panelSelection,
+            SettingsExpandedPanelPane(expandMode: $model.expandMode, savedLayout: $panelLayout, options: $panelOptions, selection: $panelSelection,
                 quotaStyle: $quotaStyle, retention: $completedRetention, showsAppButtons: $showsAppButtons,
                 providers: AgentProvider.allCases.filter { moduleEnabled($0) },
                 deepseekDetailed: DeepSeekPanelStyle.load() == .detailed,

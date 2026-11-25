@@ -524,6 +524,7 @@ Both renderers share these values; keep them in step (`TaskStatusIconView.swift`
 
 ### Collapsed bar
 
+- `islandExpandMode` applies to the bar and the side-docked strip. A missing or unknown value uses `hover`. With `click`, a bar click pins the panel open and a second click closes it.
 - `compactIslandLayout` is schema 11: left and right lanes and the enabled warning kinds. Migrations, which run without writing during load: schema 11 adds Codex reset expiry and 10 low account credits, both on; 9 adds DeepSeek's spike and budget kinds, removes the ×2 kind and adds the price clock; 8 adds low balance; 7 merges the 5h, delayed-update and SSH components into one warnings slot; 6 maps former Codex/Claude values to the rings plus the value; 5 replaces the status icon and task count with the activity badge; 1–3 read the old combined quota component as both providers. Unknown names are ignored, unsupported schemas use defaults, and an intentionally empty layout stays empty.
 - `compactComponentOptions` holds every component's choices as versioned JSON whose fields decode independently; a missing or unknown field falls back alone, and data over 4 KB reads as defaults. Settings edits one field at a time and leaves fields it cannot read untouched. `CompactBarPresentation` applies them so both platforms draw the same text.
 - The warnings slot shows enabled warnings whose condition holds, solid marks before outlined ones. The activity badge's orbit is a render-server animation that pauses while occluded.
