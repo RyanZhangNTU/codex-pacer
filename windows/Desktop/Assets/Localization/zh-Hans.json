@@ -1709,6 +1709,8 @@
     "whats_new.cloud_coordination_detail": "线程等你决定或回复、已解决时都会提醒，在 Claude 中读过已解决的线程后，这里的卡片会自动消失。线程写回复时显示估算速度，一轮结束后显示真实速度。",
     "whats_new.cloud_projects": "Claude 云端项目",
     "whats_new.cloud_projects_detail": "项目里的线程和协调现在会出现在任务列表中，带云朵图标和项目名。使用你的 claude.ai 登录，可在“设置 → Claude”中关闭。",
+    "whats_new.codex_for_claude": "让 Claude 请 Codex 帮忙",
+    "whats_new.codex_for_claude_detail": "在“协作”页打开「Claude 调用 Codex」，然后直接跟 Claude 说，比如“让 Codex 审查一下这次改动”。Pacer 按你的设置启动 Codex，在对应的 Claude 任务下实时显示进度，这一轮结束后把它从 Codex 的历史里清掉。",
     "whats_new.codex_hooks": "让 Pacer 继续显示 Codex 任务",
     "whats_new.codex_hooks_detail": "Codex 新版（26.1117）改了应用读取任务的方式。Codex 较旧时先更新，再在 Codex 里允许 Pacer 一次，Pacer 就能继续显示 Codex 任务和审批提醒。",
     "whats_new.codex_setup.allow": "在 Codex 里允许 Pacer",

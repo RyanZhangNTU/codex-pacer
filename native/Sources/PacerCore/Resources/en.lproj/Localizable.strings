@@ -1611,6 +1611,8 @@
 "whats_new.claude_app_access_detail" = "When Claude Desktop asks to use an app on your computer, Pacer shows that the task is waiting for you.";
 "whats_new.codex_hooks" = "Keep Codex tasks showing";
 "whats_new.codex_hooks_detail" = "Codex 26.1117 changed how apps read its tasks. Update Codex if it's older, then allow Pacer in Codex once, and Pacer keeps showing Codex tasks and approval requests.";
+"whats_new.codex_for_claude" = "Claude can ask Codex for help";
+"whats_new.codex_for_claude_detail" = "Turn on “Claude calls Codex” under Collaboration, then just ask Claude, for example “have Codex review this change”. Pacer starts Codex with your settings, shows each run under its Claude task with live progress, and clears it from Codex's history when the turn ends.";
 "whats_new.codex_setup.reason" = "Codex 26.1117 changed how apps read its tasks. Two steps let Pacer keep showing Codex tasks and approval requests.";
 "whats_new.codex_setup.update" = "Update Codex";
 "whats_new.codex_setup.update_ready" = "Your Codex is ready";

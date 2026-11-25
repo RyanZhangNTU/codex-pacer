@@ -786,7 +786,8 @@ internal sealed class GuideContent : StackPanel
     {
         string? pane = item.Control switch
         {
-            "openExpandedPanel" => "expandedPanel", "openCollapsedBar" => "collapsed", "openAppearance" => "appearance", "openModules" => "modules", _ => null
+            "openExpandedPanel" => "expandedPanel", "openCollapsedBar" => "collapsed", "openAppearance" => "appearance", "openModules" => "modules",
+            "openCollaboration" => "collaboration", _ => null
         };
         if (pane == null) return null;
         var content = new StackPanel { Orientation = Orientation.Horizontal };

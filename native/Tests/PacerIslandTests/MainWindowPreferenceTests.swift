@@ -45,9 +45,10 @@ final class MainWindowPreferenceTests: XCTestCase {
 
     func testHighlightLinksOpenThePageTheyIntroduce() {
         let links = WhatsNew.releases.flatMap(\.items).compactMap { item in item.control?.settingsPane.map { (item.titleKey, $0) } }
-        XCTAssertEqual(links.map(\.0), ["whats_new.return_top_center", "whats_new.module_library", "whats_new.arrange_items", "whats_new.bar_upgrade",
-                                        "whats_new.fresh_look"])
-        XCTAssertEqual(links.map(\.1), [.expandedPanel, .modules, .expandedPanel, .collapsedBar, .appearance])
+        XCTAssertEqual(links.map(\.0), ["whats_new.codex_for_claude", "whats_new.return_top_center", "whats_new.module_library",
+                                        "whats_new.arrange_items", "whats_new.bar_upgrade", "whats_new.fresh_look"])
+        XCTAssertEqual(links.map(\.1), [.collaboration, .expandedPanel, .modules, .expandedPanel, .collapsedBar, .appearance],
+                       "4.7.0's Settings › opens Collaboration, where its guide waits")
         for control: WhatsNew.Item.Control in [.openAtLogin, .showEmbeddedSessions, .showAppButtons] {
             XCTAssertNil(control.settingsPane, "A switch stays in place")
         }

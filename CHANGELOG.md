@@ -1,5 +1,19 @@
 # Changelog
 
+## 4.7.0
+
+- Mac and Windows: Codex for Claude (Beta). Turn on **Claude calls Codex** in **Settings → Collaboration**, and Claude Code can hand a task, an investigation, a review or a fix to Codex through Pacer's `/pacer:codex` skill. Just ask Claude, for example "have Codex review this change", or type `/pacer:codex`; the trigger can be set to the command only.
+- Mac and Windows: Pacer starts Codex with your settings: model, reasoning effort and fast mode follow Codex or take your own choice, and file access, work location (the project or a separate worktree), standing instructions, Codex memories, runs at once and a quota floor sit under Advanced.
+- Mac and Windows: Each Codex run shows under the Claude task that started it, with its progress, speed, time and model; hover over a running one to stop it. A task shows up to three runs, always including the ones still running; older finished runs fold into one line. While Codex works, a green light runs around the task's ring in the collapsed bar.
+- Mac and Windows: When Claude's turn ends, Pacer clears the runs from Codex's history, so it keeps only your own chats. **Session records** can instead clear them after a set time or keep them.
+- Mac and Windows: The first time you open Collaboration, a short guide shows what happens in a looping demo and walks you through three steps that tick as you go. **How It Works** next to Pairs brings it back, and **Help → Collaboration** shows the same guide.
+- Mac and Windows: The light that runs along progress rings now moves smoothly.
+- Mac and Windows: A task waiting for its background work no longer shows its last speed.
+- Mac and Windows: Claude tasks no longer stay on "Writing a reply" after they finish.
+- Mac and Windows: Codex tasks no longer keep showing as running after Codex quits.
+- Mac and Windows: **Mark All as Read** and opening a task no longer leave some tasks behind.
+- Mac and Windows: Claude tasks started from scripts no longer keep running after they finish.
+
 ## 4.6.2
 
 - Mac and Windows: In a Codex Desktop chat set to Approve for Me, a task no longer shows that it waits for your approval while Codex reviews the request itself. The alert used to appear for each such command and vanish a few seconds later.

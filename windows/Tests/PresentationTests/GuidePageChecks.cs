@@ -204,6 +204,22 @@ internal static class GuidePageChecks
             Check(State("update") == ui.Text("whats_new.codex_setup.checking") && Done() == ui.Text("whats_new.codex_setup.later"), "Setup in progress checks first");
         }
         finally { setupWindow.Close(); }
+        // 4.7: Codex for Claude opens after an update only with the Claude module on; its Settings link opens Collaboration, where the guide waits.
+        Task<GuideCatalog> Upgrade(params string[] on) => engine.QueryAsync<GuideCatalog>("guidePages",
+            new { shell = new { guide = new GuideRequest("4.7.0", "4.6.2", 4, language, false, false, false, false, on) } }, TimeSpan.FromSeconds(3));
+        var pair = await Upgrade("claude", "codex"); var withoutClaude = await Upgrade("codex");
+        Check(pair.Page == "whatsNew" && pair.Releases.Count == 1 && pair.Releases[0].Version == "4.7.0" && pair.Releases[0].Items.Single().Control == "openCollaboration"
+            && withoutClaude.Page == null, "The 4.7.0 note is Codex for Claude alone, and stays closed without the Claude module: " + pair.Page + " "
+            + string.Join(",", pair.Releases.Select(value => value.Version + ":" + string.Join("/", value.Items.Select(item => item.Control)))) + " / " + withoutClaude.Page);
+        var pairBody = Body(pair); var pairWindow = new GuideWindow(ui, pairBody, pair, dark) { ShowActivated = false, IsHitTestVisible = false };
+        try
+        {
+            pairWindow.Show(); await Pump();
+            Invoke(Find<Button>(pairWindow, "guide.control.openCollaboration")); await Pump();
+            Check(settingsActions.Last() == "collaboration", "Its Settings link opens Collaboration");
+            Capture(pairWindow.ClientContent, Path.Combine(output, "pages-whats-new-4.7-" + language + (dark ? "-dark" : "-light") + ".png"));
+        }
+        finally { pairWindow.Close(); }
         // 4.5: WorkBuddy, the Module Library and remote Codex progress; only the library links to a page.
         var modules = await Query("4.4.4", current: "4.5.0"); var modulesBody = Body(modules);
         var modulesWindow = new GuideWindow(ui, modulesBody, modules, dark) { ShowActivated = false, IsHitTestVisible = false };
