@@ -11,7 +11,8 @@
 
 <h3>The perfect companion for AI coding.</h3>
 
-No more staring at “Thinking…” or switching windows to see how far it's got. Pacer keeps an eye on every task for you, so you stay focused and get more done.
+No more staring at “Thinking…” or switching windows to see how far it's got.<br>
+Pacer keeps an eye on every task for you, so you stay focused and get more done.
 
 <p>
 <picture>
