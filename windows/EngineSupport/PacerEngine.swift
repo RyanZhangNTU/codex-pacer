@@ -222,6 +222,8 @@ actor EngineRuntime {
     private var showEmbeddedClaudeSessions = true
     private var showClaudeCloudProjects = true
     private var monitorSSH = true
+    private var sshMonitoring = SSHHostMonitoring()
+    private var discoveredCodexTargets: [RemoteActivityTarget] = [], discoveredClaudeTargets: [RemoteActivityTarget] = []
     private var sshReconnect = SSHReconnectPolicy()
     private let sshServices: WindowsSSHServices?
     private let claudeRemoteServices: EngineClaudeRemoteServices?
@@ -1247,7 +1249,12 @@ actor EngineRuntime {
         if let shown = parameters.showClaudeCloudProjects { showClaudeCloudProjects = shown }
         if let value = parameters.monitorSSH, value != monitorSSH {
             monitorSSH = value; ownedWork.cancel(.init(.discovery, identifier: "ssh"))
-            codexRemoteTargets = []; claudeRemoteTargets = []; claudeRemoteStatuses = [:]
+            replaceSSHTargets([], claude: []); claudeRemoteStatuses = [:]
+        }
+        let previousMonitoring = sshMonitoring
+        if let monitoring = parameters.sshHostsOff, monitoring != sshMonitoring {
+            sshMonitoring = monitoring
+            replaceSSHTargets(discoveredCodexTargets, claude: discoveredClaudeTargets)
         }
         if var value = parameters.deepseekSettings {
             if value.balanceSource == nil { value.balanceSource = deepseekSettings.balanceSource }
@@ -1269,7 +1276,7 @@ actor EngineRuntime {
         }
         if changesCodex || changesClaude {
             ownedWork.cancel(.init(.discovery, identifier: "ssh"))
-            codexRemoteTargets = []; claudeRemoteTargets = []; claudeRemoteStatuses = [:]
+            replaceSSHTargets([], claude: []); claudeRemoteStatuses = [:]
         }
         applyClaudeProgressSwitch()
         applyCodexDelegationSwitch()
@@ -1283,6 +1290,13 @@ actor EngineRuntime {
         bindWSLCompletionSources(.claude)
         inbox.bindSourceHomes(provider: .deepseek, localHome: deepseekHome)
         let plan = lifecycle.settings(lifecycleConfiguration)
+        if sshMonitoring != previousMonitoring, active, !demo {
+            let retrying = Set(previousMonitoring.offIDs).subtracting(sshMonitoring.offIDs)
+            await desktopMonitor?.retryInactiveHelpers(sources: retrying)
+            if enabled.contains(.claude) {
+                await claudeActivityMonitor.updateRemoteTargets(monitoredRemoteTargets(.claude), retrying: retrying)
+            }
+        }
         await bindClaudeRemoteSetup()
         await bindCodexRemoteProgress()
         for provider in plan.changedProviders {
@@ -2404,7 +2418,7 @@ actor EngineRuntime {
     private func monitoredRemoteTargets(_ provider: AgentProvider) -> [RemoteActivityTarget] {
         let ssh = monitorSSH ? (provider == .codex ? codexRemoteTargets : claudeRemoteTargets) : []
         let wsl = monitorWSL ? wslServices?.registry.targets(provider) ?? [] : []
-        return Array(ssh.prefix(8)) + Array(wsl.prefix(8))
+        return ssh + Array(wsl.prefix(8))
     }
     private var monitorsWSLTasks: Bool {
         !demo && active && monitorWSL && !enabled.isDisjoint(with: WindowsWSLProfile.providers)
@@ -2580,7 +2594,7 @@ actor EngineRuntime {
             await desktopMonitor?.shutdown(); return
         }
         bindDurableMonitor()
-        let configuration = "\(context)|\(codexHome.path)|\(codexExecutable)|\(monitorWSL)|\(monitorSSH)"
+        let configuration = "\(context)|\(codexHome.path)|\(codexExecutable)|\(monitorWSL)|\(monitorSSH)|" + codexRemoteTargets.map(\.id).joined(separator: ",")
         let replace = configuration != desktopConfiguration
         guard force || replace || ownedWork.task(key) == nil else { return }
         desktopConfiguration = configuration
@@ -2703,12 +2717,37 @@ actor EngineRuntime {
         let current = lifecycle.owns(owner)
         ownedWork.finish(owner)
         guard active, monitorSSH, current, !Task.isCancelled else { return }
-        codexRemoteTargets = codex; claudeRemoteTargets = claude
+        replaceSSHTargets(codex, claude: claude)
         await bindClaudeRemoteSetup()
         await bindCodexRemoteProgress()
         bindRemoteCompletionSources()
         await bindDesktopMonitor(); await bindActivityMonitor(.claude)
     }
+    private func replaceSSHTargets(_ codex: [RemoteActivityTarget], claude: [RemoteActivityTarget]) {
+        discoveredCodexTargets = codex; discoveredClaudeTargets = claude
+        let previousCodex = codexRemoteTargets, previousClaude = claudeRemoteTargets
+        codexRemoteTargets = sshMonitoring.monitored(codex)
+        claudeRemoteTargets = sshMonitoring.monitored(claude)
+        let removedCodex = Set(previousCodex.map(\.id)).subtracting(codexRemoteTargets.map(\.id))
+        if !removedCodex.isEmpty {
+            if let state = desktopState {
+                desktopState = .init(context: state.context, activities: state.activities.filter { !removedCodex.contains($0.sourceHostID ?? "") },
+                    names: [], performance: [], statuses: state.statuses.filter { !removedCodex.contains($0.key) },
+                    unavailable: state.unavailable.filter { !removedCodex.contains($0) })
+            }
+            pendingDesktopEndings = pendingDesktopEndings.filter { !removedCodex.contains($0.value.sourceHostID ?? "") }
+        }
+        let removedClaude = Set(previousClaude.map(\.id)).subtracting(claudeRemoteTargets.map(\.id))
+        if !removedClaude.isEmpty {
+            claudeRemoteStatuses = claudeRemoteStatuses.filter { !removedClaude.contains($0.key) }
+            if var rows = harnessActivities[.claude] {
+                rows.activities.removeAll { removedClaude.contains($0.sourceHostID ?? "") }
+                rows.requests.removeAll { removedClaude.contains($0.sourceHostID ?? "") }
+                harnessActivities.replace(.claude, with: rows)
+            }
+        }
+    }
+
     private func bindRemoteCompletionSources() {
         bindCodexCompletionSources(); bindWSLCompletionSources(.claude)
     }
@@ -2828,14 +2867,6 @@ actor EngineRuntime {
         if !demo, showClaudeCloudProjects, let cloud = cloudState, cloud.enabled, let status = cloud.status {
             streams[.claude, default: [:]][ClaudeCloudProjectState.sourceID] = status
         }
-        if !demo, monitorSSH {
-            for provider in [AgentProvider.codex, .claude] where enabled.contains(provider) {
-                for target in provider == .claude ? claudeRemoteTargets : codexRemoteTargets where streams[provider]?[target.id] == nil {
-                    var status = RuntimeStreamStatus(); status.sourceName = target.name
-                    streams[provider, default: [:]][target.id] = status
-                }
-            }
-        }
         let catalog = !demo && monitorWSL ? wslServices?.registry.snapshot() : nil
         for provider in [AgentProvider.codex, .claude] where enabled.contains(provider) {
             for profile in catalog?.profiles ?? [] {
@@ -2846,7 +2877,15 @@ actor EngineRuntime {
                 streams[provider, default: [:]][profile.id] = status
             }
         }
-        return EngineConnectionProjection.make(enabled: enabled, statuses: streams, targets: monitorSSH ? claudeRemoteTargets : [],
+        let codexTargets = demo ? demoActivity.activities.compactMap { row -> RemoteActivityTarget? in
+            guard let id = row.sourceHostID, id.hasPrefix(ConnectionSource.sshPrefix) else { return nil }
+            let alias = String(id.dropFirst(ConnectionSource.sshPrefix.count))
+            return .init(id: id, name: row.sourceHost ?? alias, alias: alias, home: "~/.codex")
+        } : discoveredCodexTargets
+        return EngineConnectionProjection.make(enabled: enabled, statuses: streams, targets: monitorSSH ? discoveredClaudeTargets : [],
+            codexTargets: monitorSSH ? codexTargets : [], monitoring: sshMonitoring, unavailableSSH: desktopState?.unavailable.filter {
+                ConnectionSource.isSSHSourceID($0) && allowsRemoteSource($0, provider: .codex)
+            } ?? [],
             setups: claudeRemoteSetups, wsl: catalog, canRetrySetup: !demo && claudeRemoteServices != nil)
     }
     private func receiveClaudeRemoteSetups(_ rows: [EngineClaudeRemoteSetup], version: UInt64) {
@@ -3017,7 +3056,10 @@ actor EngineRuntime {
         var status: [EngineSource] = []
         let cloud = usesClaudeWeb && enabled.contains(.claude) && cloudState?.enabled == true ? cloudState : nil
         if demo {
-            current = demoActivity.activities
+            current = demoActivity.activities.filter { row in
+                guard let id = row.sourceHostID, ConnectionSource.isSSHSourceID(id) else { return true }
+                return !sshMonitoring.offIDs.contains(id)
+            }
             status = HarnessRegistry.legacyIDs.map { .init(id: $0.rawValue + ":demo", provider: $0.rawValue,
                 available: true, transport: "demo", reason: nil) }
             if let cloud { current.append(contentsOf: cloud.activities) }

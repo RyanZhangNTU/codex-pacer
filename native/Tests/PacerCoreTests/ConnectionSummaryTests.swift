@@ -18,6 +18,37 @@ final class ConnectionSummaryTests: XCTestCase {
                 configured: configured, configuring: configuring, failed: failed))
     }
 
+    func testOffManagedHostKeepsBothModulesWithoutContributingProblemsOrSessions() throws {
+        let id = "remote-ssh-codex-managed:019a0000-0000-7000-8000-000000000001"
+        let target = RemoteActivityTarget(id: id, name: "Build server", alias: "codex-hash", home: "~/.codex")
+        let stale = [id: status(true, sessions: 5)]
+        let off = SSHHostMonitoring(offIDs: [id])
+        for monitoring in [off, off.setting(id, monitored: true)] {
+            let rows = SSHHost.hosts(codex: stale, unavailableCodex: [id], claude: [:], claudeAliases: [target.alias],
+                claudeIDs: [target.alias: id], configured: [], configuring: [], failed: [target.alias],
+                codexTargets: [target], monitoring: monitoring)
+            let row = try XCTUnwrap(rows.first)
+            XCTAssertEqual(rows.count, 1)
+            XCTAssertEqual(row.name, target.name)
+            XCTAssertEqual(row.modules.map(\.provider), [.codex, .claude])
+            let summary = ConnectionSummary(enabledProviders: [.codex, .claude], sources: ConnectionSource.sources(
+                statuses: [.codex: stale], unavailableSSH: [id], names: [:]), hosts: rows, hostsOnly: true)
+            if monitoring == off {
+                XCTAssertFalse(row.monitored)
+                XCTAssertEqual(row.modules.map(\.state), [.notMonitored, .notMonitored])
+                XCTAssertFalse(row.claudeSetupFailed)
+                XCTAssertEqual(summary.state, .noHosts)
+                XCTAssertEqual(summary.sources, 0)
+                XCTAssertEqual(summary.sessions, 0)
+            } else {
+                XCTAssertTrue(row.monitored)
+                XCTAssertEqual(summary.state, .retrying(1))
+                XCTAssertEqual(summary.sources, 2)
+                XCTAssertEqual(summary.sessions, 5)
+            }
+        }
+    }
+
     func testUnpublishedAndConfiguringTargetsPreventAllConnectedSummary() {
         var statuses: [AgentProvider: [String: RuntimeStreamStatus]] = [
             .codex: ["local": status(true, sessions: 2)], .claude: ["local": status(true, sessions: 1)]]

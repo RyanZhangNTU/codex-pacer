@@ -242,6 +242,16 @@ final class WindowsSSHTests: XCTestCase {
         try await wait { capture.snapshot()?.sources.contains { $0.transport == "ssh" && $0.available } == true }
         XCTAssertTrue(capture.snapshot()?.tasks.contains { $0.sessionID == self.thread } == true)
         XCTAssertFalse(String(describing: capture.snapshot()).contains("PRIVATE TASK SENTINEL"))
+        _ = await runtime.receive(try command("configure", ["sshHostsOff": [id, "wsl:ignored", 42] as [Any]]))
+        try await wait {
+            guard let snapshot = capture.snapshot(), let page = snapshot.connections else { return false }
+            return page.hosts.first?.modules.first?.state == "notMonitored" && page.sourceCount == 0 &&
+                page.sessionCount == 0 && !snapshot.tasks.contains { $0.sessionID == self.thread }
+        }
+        _ = await runtime.receive(try command("refreshTaskSources"))
+        XCTAssertFalse(capture.snapshot()?.sources.contains { $0.transport == "ssh" } == true)
+        _ = await runtime.receive(try command("configure", ["sshHostsOff": [] as [String]]))
+        try await wait { capture.snapshot()?.tasks.contains { $0.sessionID == self.thread } == true }
         _ = await runtime.receive(try command("configure", ["monitorSSH": false]))
         XCTAssertFalse(capture.snapshot()?.sources.contains { $0.transport == "ssh" } == true)
         XCTAssertFalse(capture.snapshot()?.tasks.contains { $0.sessionID == thread } == true, "Disabled SSH callbacks cannot restore remote tasks")

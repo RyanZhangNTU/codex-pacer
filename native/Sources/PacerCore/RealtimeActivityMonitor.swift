@@ -10,6 +10,8 @@ public actor RealtimeActivityMonitor {
     private var retryTask: Task<Void, Never>?
     private struct Configuration { let home: URL; let includeSSH: Bool; let useSSHFallback: Bool }
     private var configuration: Configuration?
+    private var discoveredTargets: [RemoteActivityTarget] = []
+    private var sshMonitoring = SSHHostMonitoring()
     private struct Source: Equatable {
         let id: String
         let name: String?
@@ -50,17 +52,19 @@ public actor RealtimeActivityMonitor {
         self.retryInterval = retryInterval.isFinite ? min(30, max(0.01, retryInterval)) : 30
     }
 
-    public func start(home: URL, includeSSH: Bool = true, useSSHFallback: Bool = true, refreshPolicy: ActivityRefreshPolicy = .collapsed,
+    public func start(home: URL, includeSSH: Bool = true, sshMonitoring: SSHHostMonitoring = .init(), useSSHFallback: Bool = true, refreshPolicy: ActivityRefreshPolicy = .collapsed,
                       update: @escaping @Sendable (RealtimeActivitySnapshot) -> Void) async {
-        await startAsync(home: home, includeSSH: includeSSH, useSSHFallback: useSSHFallback, refreshPolicy: refreshPolicy) { update($0) }
+        await startAsync(home: home, includeSSH: includeSSH, sshMonitoring: sshMonitoring, useSSHFallback: useSSHFallback, refreshPolicy: refreshPolicy) { update($0) }
     }
 
-    public func startAsync(home: URL, includeSSH: Bool = true, useSSHFallback: Bool = true, refreshPolicy: ActivityRefreshPolicy = .collapsed,
+    public func startAsync(home: URL, includeSSH: Bool = true, sshMonitoring: SSHHostMonitoring = .init(), useSSHFallback: Bool = true, refreshPolicy: ActivityRefreshPolicy = .collapsed,
                            update: @escaping @Sendable (RealtimeActivitySnapshot) async -> Void) async {
+        guard !Task.isCancelled else { return }
+        self.sshMonitoring = sshMonitoring
         startGeneration += 1
         let generation = startGeneration
         if let previous = configuration, previous.home != home {
-            callback = nil; configuration = nil; retryTask?.cancel(); retryTask = nil
+            callback = nil; configuration = nil; discoveredTargets = []; retryTask?.cancel(); retryTask = nil
             let children = connections.values.map(\.process)
             for id in Array(connections.keys) { stop(id) }
             failed = [:]; retryAfter = [:]; disconnected = [:]; failureCounts = [:]
@@ -81,7 +85,24 @@ public actor RealtimeActivityMonitor {
         if includeSSH, let discover = services.sshTargets { targets = await discover(home) }
         else { targets = includeSSH ? RemoteActivityTarget.readConfiguration(home: home) ?? [] : [] }
         guard generation == startGeneration else { return }
-        let sources = includeSSH && useSSHFallback ? targets.map {
+        discoveredTargets = targets
+        await reconcileTargets(useSSHFallback: useSSHFallback, refreshPolicy: refreshPolicy)
+    }
+
+    /// A host switch uses the last discovery immediately, including while a new route lookup is suspended.
+    public func updateSSHMonitoring(_ monitoring: SSHHostMonitoring, retrying: Set<String> = []) async {
+        sshMonitoring = monitoring
+        retryInactiveHelpers(sources: retrying)
+        guard let configuration else { return }
+        await reconcileTargets(useSSHFallback: configuration.useSSHFallback, refreshPolicy: refreshPolicy)
+    }
+
+    private func reconcileTargets(useSSHFallback: Bool, refreshPolicy: ActivityRefreshPolicy) async {
+        let generation = startGeneration
+        let monitoring = sshMonitoring
+        let ssh = monitoring.monitored(discoveredTargets.filter { !$0.id.hasPrefix(ConnectionSource.wslPrefix) })
+        let targets = ssh + discoveredTargets.filter { $0.id.hasPrefix(ConnectionSource.wslPrefix) }
+        let sources = useSSHFallback ? targets.map {
             Source(id: $0.id, name: $0.name, alias: $0.alias, home: $0.home, target: $0, refreshPolicy: refreshPolicy)
         } : []
         let wanted = Set(sources.map(\.id))
@@ -90,10 +111,12 @@ public actor RealtimeActivityMonitor {
             disconnected.removeValue(forKey: id)
         }
         for id in Array(failed.keys) where !wanted.contains(id) { failed.removeValue(forKey: id); retryAfter.removeValue(forKey: id); disconnected.removeValue(forKey: id) }
+        failureCounts = failureCounts.filter { wanted.contains($0.key) }
         disconnected = disconnected.filter { wanted.contains($0.key) }
         for (id, connection) in Array(connections) where Date().timeIntervalSince(connection.lastFrame) > 45 {
             await closed(id, identity: connection.id)
         }
+        guard generation == startGeneration, monitoring == sshMonitoring else { return }
         for source in sources where connections[source.id] == nil && Date() >= (retryAfter[source.id] ?? .distantPast) { connect(source) }
         await updateRefreshPolicy(refreshPolicy)
         guard generation == startGeneration else { return }
@@ -134,7 +157,7 @@ public actor RealtimeActivityMonitor {
 
     public func shutdown(deadline: ShutdownDeadline = ShutdownDeadline()) async {
         let children = connections.values.map(\.process)
-        startGeneration += 1; configuration = nil; retryTask?.cancel(); retryTask = nil
+        startGeneration += 1; configuration = nil; discoveredTargets = []; retryTask?.cancel(); retryTask = nil
         callback = nil
         for id in Array(connections.keys) { stop(id) }
         failed = [:]; retryAfter = [:]; disconnected = [:]; failureCounts = [:]
@@ -257,7 +280,7 @@ public actor RealtimeActivityMonitor {
     private func publish() async {
         let status = statuses()
         let down = failed.values.filter { status[$0.id]?.connected != true }
-        let value = RealtimeActivitySnapshot(activities: activities(), statuses: status,
+        let value = RealtimeActivitySnapshot(discoveredTargets: discoveredTargets, activities: activities(), statuses: status,
             unavailable: down.compactMap(\.name).sorted(), unavailableSources: down.map(\.id).sorted(),
             names: connections.values.flatMap { $0.state.nameUpdates },
             performance: connections.values.flatMap { $0.state.performanceUpdates })
@@ -268,6 +291,7 @@ public actor RealtimeActivityMonitor {
 }
 
 public struct RealtimeActivitySnapshot: Sendable {
+    public let discoveredTargets: [RemoteActivityTarget]
     public let activities: [SessionActivity]
     public let statuses: [String: RuntimeStreamStatus]
     /// Names of failed sources that have no connected stream.

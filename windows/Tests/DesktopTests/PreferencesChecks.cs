@@ -15,6 +15,22 @@ internal static class PreferencesChecks
             Check(!missing.Unavailable && missing.Value.IsValid && !Directory.Exists(root), "Missing settings must use defaults without creating files");
             Check(missing.Value.IslandAppearance == "liquidGlass", "The appearance default matches the Mac preference");
             Check(missing.Value.ShowEmbeddedCodexSessions && missing.Value.ShowEmbeddedClaudeSessions, "Both independent embedding preferences default to visible");
+            const string alias = "remote-ssh-discovered:lab", managed = "remote-ssh-codex-managed:019a0000-0000-7000-8000-000000000001";
+            var off = missing.Value.SetSSHHost(alias, false).SetSSHHost(managed, false);
+            Check(missing.Value.SshHostsOff.Length == 0 && store.Save(off) && store.Load().Value.SshHostsOff.SequenceEqual(new[] { managed, alias }),
+                "Alias and Desktop host IDs persist in the order disabled");
+            using (var config = JsonDocument.Parse(JsonSerializer.Serialize(off.SetSSHHost(alias, true).EngineConfiguration())))
+                Check(config.RootElement.GetProperty("sshHostsOff").EnumerateArray().Select(id => id.GetString()).SequenceEqual(new[] { managed }),
+                    "Re-enabling one host leaves the other disabled in the engine");
+            var ids = Enumerable.Range(0, 70).Select(i => "remote-ssh-discovered:host-" + i).ToArray();
+            var mixed = new object[] { false, null!, "", "wsl:ubuntu", "remote-ssh-discovered:-bad", ids[0] }.Concat(ids);
+            var damagedHosts = JsonSerializer.SerializeToUtf8Bytes(new { schemaVersion = 2, monitorSSH = false, sshHostsOff = mixed });
+            var bounded = PreferencesCodec.Decode(damagedHosts);
+            Check(!bounded.MonitorSSH && bounded.SshHostsOff.SequenceEqual(ids.Take(64)) &&
+                bounded.SetSSHHost(ids[69], false).SshHostsOff.SequenceEqual(ids.Take(63).Prepend(ids[69])),
+                "Invalid and duplicate IDs use no slots, and the latest switch is kept at the limit");
+            Check(PreferencesCodec.Decode(JsonSerializer.SerializeToUtf8Bytes(new { schemaVersion = 2, sshHostsOff = true })).SshHostsOff.Length == 0,
+                "An invalid list uses the default");
             var original = new DesktopPreferences
             {
                 Language = "zh-Hans", Position = "topRight", DisplayMode = "notch", IslandAppearance = "classic", ExpandedQuotaStyle = "classic", PositionChosen = true, LastSettingsPane = "appearance", HideProjects = true, ShowAppButtons = false, ShowEmbeddedCodexSessions = false, RetentionMinutes = 60,

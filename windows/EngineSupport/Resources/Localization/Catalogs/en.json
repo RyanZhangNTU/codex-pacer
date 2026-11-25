@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "da218f9323a4fc3998a705eb0fca18855230133951d0a04a75420f129a04b255",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "c9d02234472a4ec03f614751d3f73c0e90fd9070a9628746c84cf32f291dee75",
     "windows/EngineSupport/Resources/Localization/en.json": "9c5c3afa9978273c9160fabc0506c301ea0cb77b9090d382d0ec78e963927bff"
   },
   "strings": {
@@ -430,6 +430,9 @@
     "connections.host.configuring": "setting up",
     "connections.host.connected": "connected",
     "connections.host.missing": "not installed",
+    "connections.host.monitor": "Monitor %@",
+    "connections.host.not_monitored": "Not monitored",
+    "connections.host.queued": "waiting for a slot",
     "connections.host.retrying": "retrying",
     "connections.host.setup_failed": "setup failed",
     "connections.host.waiting": "connecting",
@@ -453,6 +456,7 @@
     "connections.summary.detail": "%ld sources \u00b7 %ld running sessions",
     "connections.summary.idle": "Waiting for Remote Control sessions",
     "connections.summary.no_hosts": "No remote hosts",
+    "connections.summary.none_monitored": "No hosts monitored",
     "connections.summary.offline": "%d devices offline",
     "connections.summary.offline_one": "%d device offline",
     "connections.summary.ok": "All sources connected",

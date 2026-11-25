@@ -2,6 +2,7 @@ import PacerMacSupport
 import XCTest
 import Darwin
 import AppKit
+import SwiftUI
 @testable import PacerCore
 @testable import PacerIsland
 import PacerTestSupport
@@ -95,6 +96,78 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
         XCTAssertFalse(model.hasSSHConnectionIssue)
     }
 
+    func testRemotePaneHostSwitchOperatesOnlyItsRow() async throws {
+        let fixture = try fixture(), model = fixture.model
+        let target = try XCTUnwrap(model.claudeRemoteTargets.first { $0.alias == "fixture" })
+        _ = NSApplication.shared
+        let pane = NSHostingView(rootView: SettingsConnectionsPane(model: model, monitorSSH: .constant(true),
+            codexEnabled: false, claudeEnabled: true))
+        let window = NSWindow(contentRect: NSRect(x: -2000, y: 0, width: 540, height: 220),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = pane
+        window.orderBack(nil)
+        defer { window.close() }
+        func switches(_ view: NSView) -> [NSSwitch] {
+            if let toggle = view as? NSSwitch { return [toggle] }
+            return view.subviews.flatMap(switches)
+        }
+        // The master, then "fixture" and "other" in name order.
+        for expected in [false, true] {
+            pane.layoutSubtreeIfNeeded()
+            let toggles = switches(pane).sorted { $0.convert($0.bounds, to: nil).midY > $1.convert($1.bounds, to: nil).midY }
+            XCTAssertEqual(toggles.count, 3)
+            guard toggles.count == 3 else { return }
+            toggles[1].performClick(nil)
+            let changed = try await TestWait.until {
+                pane.layoutSubtreeIfNeeded()
+                return toggles[1].state == (expected ? .on : .off) && !model.sshMonitoring.offIDs.contains(target.id) == expected
+            }
+            XCTAssertTrue(changed)
+            XCTAssertEqual(model.sshMonitoring.offIDs, expected ? [] : [target.id])
+        }
+    }
+
+    func testHostSwitchPersistsAndRetiresClaudeSetupAndTasks() async throws {
+        let fixture = try fixture(), model = fixture.model
+        let target = try XCTUnwrap(model.claudeRemoteTargets.first)
+        let session = UUID().uuidString.lowercased()
+        var row = SessionActivity(id: session, sourceHost: target.name, sourceHostID: target.id, provider: .claude, sessionID: session)
+        row.applyRuntime(["method": "turn/started", "threadId": session, "turnId": "fixture", "at": Date().timeIntervalSince1970])
+        model.receiveClaudeUpdate([row], statuses: [target.id: RuntimeStreamStatus()], requests: [])
+        XCTAssertTrue(model.visibleActivities.contains { $0.sourceHostID == target.id })
+        model.setSSHHost(target.id, monitored: false)
+        XCTAssertEqual(SSHHostMonitoring(defaults: fixture.defaults).offIDs, [target.id])
+        XCTAssertFalse(model.claudeRemoteTargets.contains(target))
+        XCTAssertFalse(model.visibleActivities.contains { $0.sourceHostID == target.id })
+        model.receiveClaudeUpdate([row], statuses: [target.id: RuntimeStreamStatus()], requests: [])
+        XCTAssertFalse(model.visibleActivities.contains { $0.sourceHostID == target.id })
+        XCTAssertEqual(SettingsConnectionsPane.problemCount(model), 0)
+        XCTAssertEqual(SettingsConnectionsPane.hosts(model).first { $0.id == target.id }?.monitored, false)
+        _ = await model.configureClaudeRemote(targetID: target.id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent(target.alias + ".command").path))
+        let discovered = model.discoveredClaudeTargets
+        model.reconcileClaudeRemoteTargets([])
+        model.reconcileClaudeRemoteTargets(discovered)
+        XCTAssertFalse(model.claudeRemoteTargets.contains(target))
+        model.setSSHHost(target.id, monitored: true)
+        XCTAssertTrue(model.claudeRemoteTargets.contains(target))
+        XCTAssertEqual(SSHHostMonitoring(defaults: fixture.defaults).offIDs, [])
+    }
+
+    func testMalformedAndOversizedHostPreferencesKeepOnlyBoundedStableIDs() throws {
+        let fixture = try fixture(), key = SSHHostMonitoring.defaultsKey
+        let ids = (0..<70).map { ConnectionSource.sshPrefix + "test-\($0)" }
+        fixture.defaults.set([123, "", "wsl:ubuntu", ConnectionSource.sshPrefix + "-bad", ids[0]] as [Any] + ids, forKey: key)
+        let saved = SSHHostMonitoring(defaults: fixture.defaults)
+        XCTAssertEqual(saved.offIDs, Array(ids.prefix(64)))
+        let wire = try JSONSerialization.data(withJSONObject: fixture.defaults.array(forKey: key) ?? [])
+        XCTAssertEqual(try JSONDecoder().decode(SSHHostMonitoring.self, from: wire), saved)
+        XCTAssertEqual(saved.setting(ids[69], monitored: false).offIDs, [ids[69]] + ids.prefix(63))
+        fixture.defaults.set("bad", forKey: key)
+        XCTAssertTrue(SSHHostMonitoring(defaults: fixture.defaults).offIDs.isEmpty)
+    }
+
     func testSuccessfulRemoteSetupImmediatelyRechecksOnlyItsPausedHost() async throws {
         let fixture = try fixture(), recovered = expectation(description: "setup resumes configured source")
         try await start(fixture, recovered: recovered)
@@ -168,7 +241,7 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
     }
 
     func testRemoteSetupCancellationStopsWritesAndDoesNotReportSetupFailure() async throws {
-        enum Change: CaseIterable { case module, ssh, home, aliases, sleep, shutdown, caller }
+        enum Change: CaseIterable { case module, ssh, host, home, aliases, sleep, shutdown, caller }
         let targetID = "remote-ssh-discovered:fixture"
         for change in Change.allCases {
             let fixture = try fixture(blockingSetup: true), model = fixture.model
@@ -182,6 +255,7 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
                 model.applySettings(sourceChanged: false)
             case .ssh:
                 fixture.defaults.set(false, forKey: "monitorSSH"); model.applySettings(sourceChanged: false)
+            case .host: model.setSSHHost(targetID, monitored: false)
             case .home:
                 fixture.defaults.set(fixture.root.path, forKey: "claudeHome"); model.applySettings(sourceChanged: false)
             case .aliases:
@@ -203,7 +277,7 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
             XCTAssertTrue(model.claudeRemoteSetupFailures.isEmpty)
             XCTAssertTrue(model.claudeRemoteSetupStatus.isEmpty)
             XCTAssertFalse(model.claudeRemoteTargets.contains { model.claudeRemoteConfigured($0) })
-            if [.module, .ssh, .sleep, .shutdown].contains(change) {
+            if [.module, .ssh, .host, .sleep, .shutdown].contains(change) {
                 let blocked = await model.configureClaudeRemote(targetID: targetID)
                 XCTAssertNil(blocked)
                 XCTAssertEqual(try String(contentsOf: fixture.root.appendingPathComponent("fixture.installer-pid")), String(pid),

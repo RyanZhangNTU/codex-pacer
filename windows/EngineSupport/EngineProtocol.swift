@@ -41,6 +41,7 @@ struct EngineCommand: Decodable {
         var showEmbeddedClaudeSessions: Bool?
         var showClaudeCloudProjects: Bool?
         var monitorSSH: Bool?
+        var sshHostsOff: SSHHostMonitoring?
         var deepseekSettings: EngineDeepSeekSettings?
         var reminderSettings: EngineReminderSettings?
         var expandedPanel: EngineExpandedPanelSettings?

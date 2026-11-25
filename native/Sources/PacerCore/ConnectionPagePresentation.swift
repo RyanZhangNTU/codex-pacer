@@ -28,15 +28,16 @@ public struct ConnectionPagePresentation: Codable, Equatable, Sendable {
                 unavailableSSH: [String] = [], claudeAliases: [String] = [], claudeIDs: [String: String] = [:], configured: Set<String> = [],
                 configuring: Set<String> = [], failed: Set<String> = [], names: [String: String] = [:],
                 setup: [String: Setup] = [:], canRetrySetup: Bool = false, quotaSources: Set<String> = [],
-                transportProblemsFirst: Bool = false, hostsOnly: Bool = false) {
+                transportProblemsFirst: Bool = false, hostsOnly: Bool = false,
+                codexTargets: [RemoteActivityTarget] = [], monitoring: SSHHostMonitoring = .init()) {
         let enabled = Set(enabledProviders)
         let streams = statuses.filter { enabled.contains($0.key) }
-        let sourceValues = ConnectionSource.sources(statuses: streams, unavailableSSH: unavailableSSH, names: names)
+        let sourceValues = ConnectionSource.sources(statuses: streams, unavailableSSH: unavailableSSH, names: names, monitoring: monitoring)
             .filter { !hostsOnly || ConnectionSummary.isHost($0.key) }
         let ssh = SSHHost.hosts(codex: enabled.contains(.codex) ? streams[.codex] ?? [:] : nil,
             unavailableCodex: enabled.contains(.codex) ? unavailableSSH : [],
             claude: enabled.contains(.claude) ? streams[.claude] ?? [:] : nil, claudeAliases: claudeAliases, claudeIDs: claudeIDs,
-            configured: configured, configuring: configuring, failed: failed, names: names)
+            configured: configured, configuring: configuring, failed: failed, names: names, codexTargets: codexTargets, monitoring: monitoring)
         var overrides: [String: SSHHost.State] = [:]
         for source in sourceValues where source.provider == .claude && source.key.hasPrefix(ConnectionSource.wslPrefix) && source.state != .paused {
             if setup[source.key] == .failed && (!transportProblemsFirst || source.state == .connected) { overrides[source.id] = .setupFailed }
@@ -54,7 +55,7 @@ public struct ConnectionPagePresentation: Codable, Equatable, Sendable {
         case .offline(let count): state = "offline"; title = L10n.text(count == 1 ? "connections.summary.offline_one" : "connections.summary.offline", count)
         case .idle: state = "idle"; title = L10n.text("connections.summary.idle")
         case .connected: state = "connected"; title = L10n.text("connections.summary.ok")
-        case .noHosts: state = "noHosts"; title = L10n.text("connections.summary.no_hosts")
+        case .noHosts: state = "noHosts"; title = L10n.text(ssh.isEmpty ? "connections.summary.no_hosts" : "connections.summary.none_monitored")
         }
         retry = state == "retrying"; tone = retry ? "warning" : state == "connected" ? "success" : "neutral"
         func module(provider: AgentProvider, key: String, state: String, sessions: Int, label: String) -> Module {
@@ -87,6 +88,8 @@ public struct ConnectionPagePresentation: Codable, Equatable, Sendable {
                 case .connected: "connected"
                 case .configuring: "configuring"
                 case .waiting: "waiting"
+                case .queued: "queued"
+                case .notMonitored: "not_monitored"
                 case .paused: "missing"
                 case .retrying: "retrying"
                 case .setupFailed: "setup_failed"

@@ -106,6 +106,11 @@ final class ClaudeSSHDiscoveryTests: XCTestCase {
         let discovery = ClaudeSSHDiscovery { await reads.resolve($0, $1) }
         let first = await discovery.configured(codexHome: root, claudeHome: root.appendingPathComponent(".claude"), userHome: root)
         XCTAssertEqual(first.count, 8)
+        let all = await discovery.discovered(codexHome: root, claudeHome: root.appendingPathComponent(".claude"), userHome: root)
+        let off = SSHHostMonitoring(offIDs: [all[0].id, all[3].id])
+        XCTAssertEqual(all.count, 20)
+        XCTAssertEqual(off.monitored(all).map(\.alias), [1, 2, 4, 5, 6, 7, 8, 9].map { "host-\($0)" })
+        XCTAssertEqual(off.setting(all[0].id, monitored: true).monitored(all).first, first.first)
         let initial = await reads.count
         _ = await discovery.configured(codexHome: root, claudeHome: root.appendingPathComponent(".claude"), userHome: root)
         let cached = await reads.count
