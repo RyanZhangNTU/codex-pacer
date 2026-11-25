@@ -20,7 +20,8 @@ internal static class IslandMoveChecks
         var window = new IslandWindow(engine, true, false, animationOverride: false) { AllowClose = true };
         var original = System.Windows.Forms.Cursor.Position;
         int writes = 0;
-        var session = new PreferencesSession(new() { DisplayMode = "notch", IslandAppearance = surface },
+        // Per-display memory saves once when the island arrives on a display; these checks count only clicks and drags.
+        var session = new PreferencesSession(new() { DisplayMode = "notch", IslandAppearance = surface, IslandPositionPerDisplay = false },
             _ => throw new InvalidOperationException("A placement must not reconfigure the engine"), _ => { writes++; return true; });
         window.SaveIslandPlacement = edit => session.ChangeAsync(edit);
         session.Changed += window.ApplyPreferences;
