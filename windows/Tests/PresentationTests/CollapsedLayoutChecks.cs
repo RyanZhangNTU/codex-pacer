@@ -176,7 +176,7 @@ internal static class CollapsedLayoutChecks
             island.Reveal(); await island.WaitForPresentationAsync();
             var header = ((StackPanel)island.FindName("HeaderLeading")).Children.Cast<Button>()
                 .Concat(((StackPanel)island.FindName("HeaderTrailing")).Children.Cast<Button>()).ToArray();
-            var surface = (Grid)island.FindName("Header");
+            var surface = (Grid)island.FindName("HeaderContent");
             foreach (var button in header)
             {
                 var bounds = new Rect(button.TranslatePoint(new Point(), surface), button.RenderSize);

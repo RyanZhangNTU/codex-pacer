@@ -33,6 +33,13 @@ internal static class IslandMoveChecks
             var monitor = window.SelectedDisplay.Display ?? throw new InvalidOperationException("The interaction check needs an interactive monitor.");
             var work = monitor.Work;
             var hwnd = new WindowInteropHelper(window).Handle;
+            var shell = (Border)window.FindName("Shell");
+            var header = (Grid)window.FindName("Header");
+            foreach (double x in new[] { 6, shell.ActualWidth - 6 })
+            {
+                var hit = shell.InputHitTest(new Point(x, header.ActualHeight / 2)) as DependencyObject;
+                Check(hit == header || (hit != null && header.IsAncestorOf(hit)), "Both ends of the visible bar receive bar gestures");
+            }
             var pin = (Button)window.FindName("PinButton");
             string originalPin = AutomationProperties.GetName(pin);
             await Press(); Up();

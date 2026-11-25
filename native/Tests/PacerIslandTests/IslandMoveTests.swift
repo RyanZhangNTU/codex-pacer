@@ -1,3 +1,4 @@
+import AppKit
 import PacerMacSupport
 import XCTest
 @testable import PacerCore
@@ -85,6 +86,28 @@ final class IslandMoveTests: XCTestCase {
         try await TestWait.until { !model.expanded }
         XCTAssertFalse(model.expanded)
         await model.shutdown()
+    }
+
+    func testLocalClickFollowsTheWindowAttachmentBackToTheIsland() {
+        func window() -> NSWindow {
+            NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: true)
+        }
+        let island = window(), preview = window(), settings = window(), popover = window(), child = window()
+        func outside(_ target: NSWindow?) -> Bool {
+            PanelController.isOutsideIsland(target, panel: island, preview: preview)
+        }
+        popover.parent = island
+        child.parent = popover
+        XCTAssertFalse(outside(island))
+        XCTAssertFalse(outside(child))
+        XCTAssertFalse(outside(preview))
+        XCTAssertFalse(outside(nil))
+        XCTAssertTrue(outside(settings))
+        popover.parent = settings
+        XCTAssertTrue(outside(child))
+        let menu = window()
+        menu.level = .popUpMenu
+        XCTAssertFalse(outside(menu))
     }
 
     func testHoverIsTheDefaultAndUnpinningStillWaitsForHoverExit() async throws {

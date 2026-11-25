@@ -54,7 +54,7 @@ public partial class IslandWindow
     private void OnMovePointerDown(object sender, MouseButtonEventArgs e)
     {
         if (presentationStopped || updateInputSuspended || move != null || sender is not FrameworkElement bar) return;
-        // Measure across the whole visible bar; the header band is inset by its margins.
+        // Keep the horizontal grab relative to the shell as it collapses for a drag.
         var across = e.GetPosition(Shell); var within = e.GetPosition(bar);
         var grab = new Point(Math.Clamp(across.X / Math.Max(1, Shell.ActualWidth), 0, 1),
             Math.Clamp(within.Y / Math.Max(1, bar.ActualHeight), 0, 1));

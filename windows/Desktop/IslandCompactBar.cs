@@ -111,7 +111,7 @@ public partial class IslandWindow
         foreach (var clock in new[] { compactClock, compactStripClock }) { clock.Width = clock.Height = sizes.Gauge; clock.Update(latest?.Wallet); }
         WarningGlyphs.Update(latest?.CompactWarnings, choices.WarningStyle, choices.WarningLimit, sizes.Warning, DecorationsAnimate);
         StripWarnings.Update(latest?.CompactWarnings, choices.WarningStyle, choices.WarningLimit, sizes.Warning, DecorationsAnimate);
-        Header.Margin = new Thickness(sizes.Inset, 0, sizes.Inset, 0);
+        HeaderContent.Margin = new Thickness(sizes.Inset, 0, sizes.Inset, 0);
         HeaderDivider.Height = sizes.Divider; StripDivider.Width = sizes.Divider;
         StripLeading.Margin = new Thickness(0, sizes.StripInset, 0, 0); StripTrailing.Margin = new Thickness(0, 0, 0, sizes.StripInset);
         Fill(HeaderLeading, horizontal.Leading, compactRow, false, sizes.Gap);
