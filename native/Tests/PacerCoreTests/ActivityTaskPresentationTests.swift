@@ -307,4 +307,12 @@ final class ActivityTaskPresentationTests: XCTestCase {
         XCTAssertEqual(narrow.more, 7)
         XCTAssertEqual(row.subagentDotsAccessibility, L10n.text("subagent.dots_accessibility", 12, 3))
     }
+
+    func testSubagentLinesCarryTheirModelAndReasoningEffort() throws {
+        let tasks = DemoScenario.subagentTasks(stage: .thinking, at: now)
+        let line = ActivityTaskRowPresentation.subagentLine(tasks[1], options: .init(), at: now)
+        let effort = try XCTUnwrap(tasks[1].reasoningEffort.flatMap { ModelDisplay.effortLabel($0) })
+        XCTAssertEqual(line.model, ActivityTaskRowPresentation(activity: tasks[1], unread: false, at: now).model + " " + effort)
+        XCTAssertTrue(line.accessibilityText.contains(effort))
+    }
 }

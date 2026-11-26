@@ -33,6 +33,9 @@ public struct SubagentDisplay: Equatable, Sendable {
     public let typeTag: String?
     public let nameTag: String?
     public let title: String?
+    /// A Codex subagent has no description of its own: its line says what it
+    /// is doing now, as Codex's own list does under the task name.
+    public let titleFollowsState: Bool
 
     private static func text(_ value: String?, limit: Int) -> String? {
         guard let value else { return nil }
@@ -46,6 +49,7 @@ public struct SubagentDisplay: Equatable, Sendable {
         typeTag = type == "general-purpose" ? nil : type
         nameTag = nil
         title = Self.text(description, limit: 120)
+        titleFollowsState = false
     }
 
     init(spawn: [String: Any], header: [String: Any]) {
@@ -54,14 +58,16 @@ public struct SubagentDisplay: Equatable, Sendable {
                   word.range(of: #"^[\p{L}\p{N}_-]+\z"#, options: .regularExpression) != nil else { return nil }
             return word
         }
-        let role = word("agent_role")
-        typeTag = role == "default" ? nil : role
-        nameTag = word("agent_nickname")
+        let role = word("agent_role").flatMap { $0 == "default" ? nil : $0 }
         let path = (spawn["agent_path"] ?? header["agent_path"]) as? String
         let leaf = path?.split(separator: "/", omittingEmptySubsequences: false).last.map(String.init)
-        title = leaf.flatMap {
-            $0.range(of: #"^[a-z0-9_]{1,64}\z"#, options: .regularExpression) == nil ? nil : $0
-        } ?? nameTag
+        // The task name, written as Codex's own list writes it: "fix_login" reads "Fix login".
+        let task = leaf.flatMap { $0.range(of: #"^[a-z0-9_]{1,64}\z"#, options: .regularExpression) == nil ? nil : $0 }
+            .map { $0.replacingOccurrences(of: "_", with: " ") }.map { $0.prefix(1).uppercased() + $0.dropFirst() }
+        typeTag = task ?? role
+        nameTag = task == nil ? nil : role
+        title = task
+        titleFollowsState = true
     }
 }
 

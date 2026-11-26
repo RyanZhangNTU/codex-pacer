@@ -37,6 +37,8 @@ struct MinimumLineWidth: Layout {
 /// Shared rail content and width probe for subagents and Codex for Claude.
 struct ChildTaskLine: View {
     let row: ActivityTaskRowPresentation
+    /// The text after the tags; a run line uses its row's title.
+    var title: String? = nil
     let typeTag: String?
     var nameTag: String? = nil
     let active: Bool
@@ -81,7 +83,7 @@ struct ChildTaskLine: View {
                             tag(typeTag, ink: tint, fill: tint.opacity(0.16))
                         }
                         if let nameTag { tag(nameTag, ink: PacerPalette.secondary, fill: PacerPalette.fill) }
-                        Text(row.title).font(.system(size: 12, weight: .semibold))
+                        Text(title ?? row.title).font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(active ? PacerPalette.primary : PacerPalette.secondary)
                             .lineLimit(1).truncationMode(.tail)
                             .frame(minWidth: 48, maxWidth: measuring ? Self.measuredTitleWidth : .infinity, alignment: .leading)

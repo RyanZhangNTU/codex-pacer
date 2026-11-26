@@ -24,7 +24,7 @@ final class SubagentMetricsMacTests: XCTestCase {
         parent='019a0000-0000-7000-8000-000000000001';child='019a0000-0000-7000-8000-000000000002'
         header=sanitize({'type':'session_meta','payload':{'id':child,'source':{'subagent':{'thread_spawn':{'parent_thread_id':parent,'agent_path':'/PRIVATE/check_rows','agent_nickname':'Linnaeus','agent_role':'explorer','message':'PRIVATE'}}}}})
         assert header['payload']['parent_thread_id']==parent and 'PRIVATE' not in repr(header)
-        assert header['payload']['source']['subagent']['thread_spawn']=={'agent_path':'check_rows','agent_nickname':'Linnaeus','agent_role':'explorer'}
+        assert header['payload']['source']['subagent']['thread_spawn']=={'agent_path':'check_rows','agent_role':'explorer'}
         boundary=sanitize({'type':'event_msg','payload':{'type':'thread_settings_applied','thread_id':child,'thread_settings':{'prompt':'PRIVATE'}}})
         assert boundary['payload']=={'type':'thread_settings_applied','thread_id':child} and 'PRIVATE' not in repr(boundary)
         ws=WS();s=Session(ws);s.pending={};s.ready=True;s.known[parent]={'type':'active'};s.attached.add(parent)

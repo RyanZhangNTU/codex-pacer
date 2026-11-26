@@ -87,7 +87,7 @@ enum SessionLogProbe {
                     spawn=sub.get('thread_spawn',sub.get('threadSpawn'))
                     if isinstance(spawn,dict):
                         display={}
-                        for key in ('agent_role','agent_nickname'):
+                        for key in ('agent_role',):
                             word=spawn.get(key,p.get(key))
                             if isinstance(word,str) and len(word.encode('utf-8','replace'))<=48 and re.fullmatch(r'[\w-]+',word):display[key]=word
                         path=spawn.get('agent_path',p.get('agent_path'))

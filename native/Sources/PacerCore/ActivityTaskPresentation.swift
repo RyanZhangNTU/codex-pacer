@@ -265,7 +265,13 @@ public struct ActivityTaskRowPresentation: Sendable {
         public let time: String?
         public var typeTag: String? { row.activity.subagentDisplay?.typeTag }
         public var nameTag: String? { row.activity.subagentDisplay?.nameTag }
-        public var model: String? { row.activity.modelName == nil ? nil : row.model }
+        /// Its model and reasoning effort, like the task's own row.
+        public var model: String? { row.activity.modelName == nil ? nil : [row.model, row.effort].compactMap { $0 }.joined(separator: " ") }
+        /// A Codex subagent's line says what it is doing now; a Claude one shows its description.
+        public var title: String {
+            guard row.activity.subagentDisplay?.titleFollowsState == true else { return row.title }
+            return state == .running ? row.status : ""
+        }
         public var detail: String { [statusText, time].compactMap { $0 }.joined(separator: " · ") }
         public var dot: SubagentDot {
             switch state {
@@ -276,7 +282,9 @@ public struct ActivityTaskRowPresentation: Sendable {
             }
         }
         public var isActive: Bool { [.running, .approval, .input].contains(state) }
-        public var accessibilityText: String { [typeTag, nameTag, row.title, rateText.map { $0 + " t/s" }, statusText, time, model].compactMap { $0 }.joined(separator: ", ") }
+        public var accessibilityText: String {
+            [typeTag, nameTag, title.isEmpty ? nil : title, rateText.map { $0 + " t/s" }, statusText, time, model].compactMap { $0 }.joined(separator: ", ")
+        }
     }
     public struct FoldedSubagents: Equatable, Sendable {
         public let active: Int, ended: Int, failed: Int

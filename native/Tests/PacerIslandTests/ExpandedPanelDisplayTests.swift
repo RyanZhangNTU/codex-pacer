@@ -113,10 +113,12 @@ final class ExpandedPanelDisplayTests: XCTestCase {
         XCTAssertEqual(TaskRowView.height(.oneLine), 38)
         XCTAssertEqual(TaskRowView.height(.twoLine), 54)
 
-        func subagentWidth(_ description: String, type: String?, name: String? = nil) async throws -> CGFloat {
+        func subagentWidth(_ description: String, type: String?, codexTask: String? = nil) async throws -> CGFloat {
             var child = DemoScenario.subagentTasks(stage: .thinking, at: now)[1]
-            if let name, let type {
-                child.subagentDisplay = SubagentDisplay(spawn: ["agent_role": type, "agent_nickname": name, "agent_path": description], header: [:])
+            if let codexTask {
+                var spawn: [String: Any] = ["agent_path": "/root/" + codexTask]
+                if let type { spawn["agent_role"] = type }
+                child.subagentDisplay = SubagentDisplay(spawn: spawn, header: [:])
             } else {
                 child.subagentDisplay = SubagentDisplay(claudeType: type, description: description)
             }
@@ -131,8 +133,10 @@ final class ExpandedPanelDisplayTests: XCTestCase {
         let wideTag = String(repeating: "W", count: 48)
         let plugin = try await subagentWidth("Trace", type: "pr-review-toolkit:silent-failure-hunter")
         XCTAssertEqual(plugin - short, 120 + 4, accuracy: 1)
-        let both = try await subagentWidth("trace", type: wideTag, name: wideTag)
-        XCTAssertEqual(both - short, 2 * (120 + 4), accuracy: 1, "Each truncated tag and its gap add to the title minimum")
+        // A Codex subagent: its task-name tag and its role tag, each truncated; its title is its state.
+        let oneTag = try await subagentWidth("", type: nil, codexTask: String(repeating: "w", count: 48))
+        let both = try await subagentWidth("", type: wideTag, codexTask: String(repeating: "w", count: 48))
+        XCTAssertEqual(both - oneTag, 120 + 4, accuracy: 1, "Each truncated tag and its gap add to the width")
 
         let withButtons = try await measure(TaskPagerView(model: model, actions: true).header)
         let alone = try await measure(TaskPagerView(model: model, actions: false).header)

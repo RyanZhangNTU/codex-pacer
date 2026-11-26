@@ -225,7 +225,7 @@ struct EngineSubagentLine: Codable, Equatable {
     var time: String? = nil
     init(_ value: ActivityTaskRowPresentation.SubagentLine) {
         row = EngineTaskRow(value.row); state = value.state.rawValue; rateText = value.rateText
-        typeTag = value.typeTag; nameTag = value.nameTag; title = value.row.title; model = value.model
+        typeTag = value.typeTag; nameTag = value.nameTag; title = value.title; model = value.model
         statusText = value.statusText; time = value.time
         rateIsFresh = value.rateIsFresh; detail = value.detail; accessibilityText = value.accessibilityText
     }

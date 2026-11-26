@@ -85,7 +85,7 @@ struct SubagentLineView: View {
 
     var body: some View {
         Button(action: open) {
-            ChildTaskLine(row: row, typeTag: line.typeTag, nameTag: line.nameTag, active: line.isActive,
+            ChildTaskLine(row: row, title: line.title, typeTag: line.typeTag, nameTag: line.nameTag, active: line.isActive,
                 rate: line.rateText, fresh: line.rateIsFresh, status: line.statusText, statusInk: statusInk, time: line.time, model: line.model)
         }
         .buttonStyle(.plain).disabled(!enabled)

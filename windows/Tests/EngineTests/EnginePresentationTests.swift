@@ -30,14 +30,16 @@ final class EnginePresentationTests: XCTestCase {
 
     func testSubagentLineWireCarriesSeparateTagsTitleAndShortModel() throws {
         var tasks = DemoScenario.subagentTasks(stage: .thinking, at: now)
-        tasks[1].subagentDisplay = SubagentDisplay(spawn: ["agent_path": "/parent/check_rows", "agent_role": "explorer",
-                                                           "agent_nickname": "Linnaeus"], header: [:])
+        tasks[1].subagentDisplay = SubagentDisplay(spawn: ["agent_path": "/parent/check_rows", "agent_role": "explorer"], header: [:])
         tasks[1].applyRuntime(["method": "metadata", "threadId": tasks[1].threadID!, "model": "gpt-6.2-sol", "at": now.timeIntervalSince1970])
         let wire = EnginePresentation(activities: tasks, requests: [], inbox: CompletionInbox(), hideProjects: false, at: now)
-        let line = try XCTUnwrap(wire.rows.first?.subagentLines?.first { $0.nameTag == "Linnaeus" })
+        let line = try XCTUnwrap(wire.rows.first?.subagentLines?.first { $0.typeTag == "Check rows" })
         var fields = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(line)) as? [String: Any])
-        XCTAssertEqual(fields["typeTag"] as? String, "explorer"); XCTAssertEqual(fields["nameTag"] as? String, "Linnaeus")
-        XCTAssertEqual(fields["title"] as? String, "check_rows"); XCTAssertEqual(fields["model"] as? String, "Sol 6.2")
+        XCTAssertEqual(fields["typeTag"] as? String, "Check rows"); XCTAssertEqual(fields["nameTag"] as? String, "explorer")
+        let expected = ActivityTaskRowPresentation.subagentLine(tasks[1], options: .init(), at: now)
+        XCTAssertEqual(fields["title"] as? String, expected.title, "A Codex subagent's line says what it is doing")
+        XCTAssertEqual(fields["model"] as? String, expected.model)
+        XCTAssertTrue((fields["model"] as? String ?? "").hasPrefix("Sol 6.2 "), "The model carries its reasoning effort")
         for key in ["typeTag", "nameTag", "title", "model", "statusText", "time"] { fields.removeValue(forKey: key) }
         let old = try JSONDecoder().decode(EngineSubagentLine.self, from: JSONSerialization.data(withJSONObject: fields))
         XCTAssertNil(old.typeTag); XCTAssertNil(old.nameTag); XCTAssertNil(old.model)
