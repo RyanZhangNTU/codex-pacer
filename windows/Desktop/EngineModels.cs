@@ -164,7 +164,18 @@ internal sealed record EngineTaskRow(string Id, string Provider, string Title, s
     string? ProgressState = null, double? ProgressFraction = null, bool? ProgressStale = null, string? ProgressText = null,
     string? ProgressMode = null, string? DelegatedText = null, IReadOnlyList<EngineTaskRow>? Delegations = null,
     string? ParentID = null, bool? CanStop = null, IReadOnlyList<IReadOnlyList<string>>? DetailLines = null,
-    string? DelegationsFolded = null);
+    string? DelegationsFolded = null,
+    // Its subagents as dots, every one, most urgent first (attention, running, failed, completed), and what
+    // they read aloud; a row draws as many as fit. Its subagent lines while it works, and the rest folded under them.
+    IReadOnlyList<string>? SubagentDots = null, string? SubagentDotsText = null,
+    IReadOnlyList<EngineSubagentLine>? SubagentLines = null, string? SubagentsFolded = null);
+/// One subagent under its task: its own row for the icon, ring and label, its state
+/// (running, approval, input, completed, failed, stopped, unknown), its speed while it writes,
+/// and its time or how it ended.
+internal sealed record EngineSubagentLine(EngineTaskRow Row, string State, string? RateText, bool RateIsFresh, string Detail, string AccessibilityText)
+{
+    internal bool IsActive => State is "running" or "approval" or "input";
+}
 internal sealed record EngineHeader(int ActiveCount, string? CoreSymbol, IReadOnlyDictionary<string, int> Orbit,
     string? Attention, string? Ending, string? EndingProvider, bool EndingIsCore, string? ActiveCountText = null,
     double? ProgressFraction = null, bool? ProgressLongStep = null, bool? ProgressStale = null,

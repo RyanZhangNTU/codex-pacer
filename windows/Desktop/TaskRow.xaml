@@ -30,7 +30,11 @@
    <Grid Grid.Column="2">
     <Grid.RowDefinitions><RowDefinition Height="18"/><RowDefinition Height="{Binding GapRow}"/><RowDefinition Height="{Binding DetailRow}"/></Grid.RowDefinitions>
     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="16"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-    <TextBlock Text="{Binding Value.Title}" FontSize="13" FontWeight="SemiBold" Foreground="{Binding TitleInk}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+    <!-- One line puts the subagent dots after the title, before the readings, as on the Mac. -->
+    <DockPanel>
+     <StackPanel x:Name="OneLineDots" DockPanel.Dock="Right" Orientation="Horizontal" Margin="8,0,0,0" VerticalAlignment="Center" Visibility="{Binding OneLineDotsVisible}"/>
+     <TextBlock Text="{Binding Value.Title}" FontSize="13" FontWeight="SemiBold" Foreground="{Binding TitleInk}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+    </DockPanel>
     <TextBlock Grid.Column="2" Text="{Binding Value.Status}" FontSize="11" FontWeight="Medium" Foreground="{Binding DetailInk}" VerticalAlignment="Center" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" Visibility="{Binding OneLineStatusVisible}"/>
     <TextBlock Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right" TextOptions.TextFormattingMode="Ideal" Visibility="{Binding RateLineVisible}">
      <Run Text="{Binding ShownRateText, Mode=OneWay}" FontSize="{Binding RateSize}" FontWeight="SemiBold" Foreground="{Binding RateInk}"/>
@@ -42,7 +46,9 @@
      <TextBlock Text="{Binding Value.Status}" FontSize="11" FontWeight="Medium" Foreground="{Binding DetailInk}" TextTrimming="CharacterEllipsis"/>
      <StackPanel Orientation="Horizontal" Margin="10,0,0,0" Visibility="{Binding SubagentsVisible}">
       <local:IconGlyph Symbol="person.2" Ink="{DynamicResource Island.Secondary}" Width="11" Height="11" VerticalAlignment="Center"/>
-      <TextBlock Text="{Binding Value.SubagentText}" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource Island.Secondary}" Margin="3,0,0,0"/>
+      <!-- A dot per subagent; Claude cloud workers without dots keep the count. -->
+      <TextBlock Text="{Binding Value.SubagentText}" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource Island.Secondary}" Margin="3,0,0,0" Visibility="{Binding SubagentCountVisible}"/>
+      <StackPanel x:Name="TwoLineDots" Orientation="Horizontal" Margin="4,0,0,0" VerticalAlignment="Center" Visibility="{Binding SubagentDotsVisible}"/>
      </StackPanel>
      <StackPanel Orientation="Horizontal" Margin="10,0,0,0" Visibility="{Binding SourceVisible}">
       <local:IconGlyph Symbol="{Binding SourceSymbol}" Ink="{DynamicResource Island.Secondary}" Width="11" Height="11" Margin="0,0,3,0" VerticalAlignment="Center" Visibility="{Binding SourceIconVisible}"/>
@@ -62,6 +68,12 @@
     </StackPanel>
    </Grid>
   </Grid>
+ </Border>
+ <!-- This task's subagents, built in code, on the same rail as its Codex runs. Clicking one opens this task. -->
+ <Border x:Name="SubagentRuns" Background="Transparent" Padding="22,0,6,4" Visibility="Collapsed">
+  <Border Padding="12,0,0,0" BorderThickness="1.5,0,0,0" BorderBrush="{DynamicResource Island.Tertiary}">
+   <StackPanel x:Name="Subagents"/>
+  </Border>
  </Border>
  <!-- Codex for Claude runs of this Claude task, built in code. Clicking one opens this task. -->
  <!-- Runs fills the row's width so the pointer anywhere below the task's own row is on the runs, not the task. -->

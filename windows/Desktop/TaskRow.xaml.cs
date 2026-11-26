@@ -33,7 +33,15 @@ public partial class TaskRow : Button
     internal static double RowHeight(EngineTaskRow value, PanelOptions? options)
     {
         int runs = value.Delegations?.Count ?? 0; bool folded = value.DelegationsFolded != null;
-        return RowHeight(options) + (runs == 0 && !folded ? 0 : runs * DelegationHeight + (folded ? FoldedHeight : 0) + DelegationRailBottom);
+        return RowHeight(options) + SubagentHeight(value, options)
+            + (runs == 0 && !folded ? 0 : runs * DelegationHeight + (folded ? FoldedHeight : 0) + DelegationRailBottom);
+    }
+    /// A task's subagent lines show with its subagents field, sized as its Codex runs.
+    internal static double SubagentHeight(EngineTaskRow value, PanelOptions? options)
+    {
+        if (!(options ?? PanelOptions.Default).Shows("subagents")) return 0;
+        int lines = value.SubagentLines?.Count ?? 0; bool folded = value.SubagentsFolded != null;
+        return lines == 0 && !folded ? 0 : lines * DelegationHeight + (folded ? FoldedHeight : 0) + DelegationRailBottom;
     }
     /// <param name="options">The panel's row style and fields; none draws every field on two lines.</param>
     /// <param name="settled">The first sight draws the icon's final state, as a row built while hidden does.</param>
@@ -46,17 +54,21 @@ public partial class TaskRow : Button
         var state = new TaskRowState(value, options);
         DataContext = state;
         Height = showsDelegations ? RowHeight(value, options) : RowHeight(options);
+        BuildSubagents(value, options); BuildDots(state);
         BuildDelegations(value, options);
         // The one-line row's icon draws the 28-point face at 22.
         if (state.OneLine) Icon.LayoutTransform = new ScaleTransform(22.0 / 28, 22.0 / 28);
         Background = PacerPalette.Hover; IsEnabled = false; Focusable = false;
         Click += (_, _) => { if (IsEnabled) open?.Invoke(); };
-        // The task highlights while the pointer is on its own row; over the Codex runs under it,
-        // only the run under the pointer lights up.
-        MouseEnter += (_, _) => { hovered = !Runs.IsMouseOver; UpdateHover(); };
+        // The task highlights while the pointer is on its own row; over the subagents or
+        // Codex runs under it, only the line under the pointer lights up.
+        MouseEnter += (_, _) => { hovered = !Runs.IsMouseOver && !SubagentRuns.IsMouseOver; UpdateHover(); };
         MouseLeave += (_, _) => { hovered = false; UpdateHover(); };
-        Runs.MouseEnter += (_, _) => { hovered = false; UpdateHover(); };
-        Runs.MouseLeave += (_, _) => { hovered = IsMouseOver; UpdateHover(); };
+        foreach (var lines in new[] { Runs, SubagentRuns })
+        {
+            lines.MouseEnter += (_, _) => { hovered = false; UpdateHover(); };
+            lines.MouseLeave += (_, _) => { hovered = IsMouseOver && !Runs.IsMouseOver && !SubagentRuns.IsMouseOver; UpdateHover(); };
+        }
         Unloaded += (_, _) => { hovered = false; hoverRevision++; hover?.Dispose(); hover = null; HoverProgress = 0; };
         Loaded += (_, _) => { ApplyAppearance(); if (!progressShown) { progressShown = true; ShowProgress(); } };
     }
@@ -82,6 +94,7 @@ public partial class TaskRow : Button
         var state = new TaskRowState(value, options);
         DataContext = state;
         Height = showsDelegations ? RowHeight(value, options) : RowHeight(options);
+        BuildSubagents(value, options); BuildDots(state);
         BuildDelegations(value, options);
         var before = previous.Value;
         if (progressShown && (before.Symbol != value.Symbol || before.Dimmed != value.Dimmed || before.ProgressState != value.ProgressState
@@ -95,14 +108,16 @@ public partial class TaskRow : Button
     {
         open = action; Focusable = action != null; UpdateEnabled();
         AutomationProperties.SetHelpText(this, help); animations = animate; UpdateHover(); Icon.SetMotion(animate);
-        foreach (var line in Delegations.Children.OfType<Grid>()) RefreshLineHighlight(line);
+        foreach (var line in Lines) RefreshLineHighlight(line);
     }
+    /// The subagent lines, then the Codex run lines, each with its folded line.
+    private IEnumerable<Grid> Lines => Subagents.Children.OfType<Grid>().Concat(Delegations.Children.OfType<Grid>());
     // Disabling the whole row also disables its Stop buttons.
     private void UpdateEnabled() => IsEnabled = open != null || StopButtons().Any();
     internal void SetAnimations(bool value)
     {
         animations = value; Icon.SetMotion(value); if (!value) UpdateHover();
-        foreach (var icon in Delegations.Children.OfType<Grid>().SelectMany(line => line.Children.OfType<TaskStatusIcon>())) icon.SetMotion(value);
+        foreach (var icon in Lines.SelectMany(line => line.Children.OfType<TaskStatusIcon>())) icon.SetMotion(value);
     }
     /// Stop on a running Codex for Claude run's line; the island sends the run's ID.
     internal void SetStopAction(Action<string>? action, string label) { stop = action; stopLabel = label; UpdateEnabled(); RefreshStopButtons(); }
@@ -190,6 +205,100 @@ public partial class TaskRow : Button
         }
         RefreshStopButtons();
     }
+    /// One line per subagent under the task while it works, on the same rail and
+    /// metrics as the Codex runs: its icon (state and progress ring), its label,
+    /// then its speed while it writes and its time, or how it ended. Running and
+    /// waiting ones first, then the most recently ended; the rest fold into one
+    /// quiet line under them. Clicking a line opens the task; no Stop, no hover card.
+    private void BuildSubagents(EngineTaskRow value, PanelOptions? options)
+    {
+        Subagents.Children.Clear();
+        bool shown = showsDelegations && (options ?? PanelOptions.Default).Shows("subagents");
+        var lines = shown ? value.SubagentLines : null;
+        string? folded = shown ? value.SubagentsFolded : null;
+        SubagentRuns.Visibility = lines is { Count: > 0 } || folded != null ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var subagent in lines ?? [])
+        {
+            var state = new TaskRowState(subagent.Row, options);
+            var line = new Grid { Height = DelegationHeight, Tag = subagent, Background = Brushes.Transparent };
+            foreach (var width in new[] { new GridLength(20), new GridLength(8), new GridLength(1, GridUnitType.Star), new GridLength(10), GridLength.Auto })
+                line.ColumnDefinitions.Add(new ColumnDefinition { Width = width });
+            var highlight = new Border { CornerRadius = new CornerRadius(8), Background = PacerPalette.Hover, Opacity = 0, IsHitTestVisible = false, Margin = new Thickness(-4, 0, 0, 0) };
+            Grid.SetColumnSpan(highlight, 5); line.Children.Add(highlight);
+            var icon = new TaskStatusIcon { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                LayoutTransform = new ScaleTransform(20.0 / 28, 20.0 / 28) };
+            line.Children.Add(icon);
+            // An ended subagent's label steps back.
+            var text = new TextBlock { Text = subagent.Row.Title, FontSize = 12, FontWeight = FontWeights.SemiBold,
+                Foreground = subagent.IsActive ? PacerPalette.Primary : PacerPalette.Secondary,
+                VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+            Grid.SetColumn(text, 2); line.Children.Add(text);
+            var trailing = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) };
+            if (subagent.RateText != null)
+            {
+                trailing.Inlines.Add(new System.Windows.Documents.Run(subagent.RateText) { FontSize = 11, FontWeight = FontWeights.SemiBold,
+                    Foreground = subagent.RateIsFresh ? PacerPalette.Primary : PacerPalette.Secondary });
+                trailing.Inlines.Add(new System.Windows.Documents.Run(subagent.Detail.Length == 0 ? " t/s" : " t/s · ") { FontSize = 10, FontWeight = FontWeights.Medium, Foreground = PacerPalette.Secondary });
+            }
+            // What needs the user, or a failure, takes its color; the rest stays secondary.
+            trailing.Inlines.Add(new System.Windows.Documents.Run(subagent.Detail) { FontSize = 10, FontWeight = FontWeights.Medium,
+                Foreground = subagent.State is "approval" or "input" ? PacerPalette.Attention : subagent.State == "failed" ? PacerPalette.Danger : PacerPalette.Secondary });
+            Grid.SetColumn(trailing, ReadingsColumn); line.Children.Add(trailing);
+            line.MouseEnter += (_, _) => RefreshLineHighlight(line);
+            line.MouseLeave += (_, _) => RefreshLineHighlight(line);
+            AutomationProperties.SetName(line, subagent.AccessibilityText);
+            Subagents.Children.Add(line);
+            icon.Show(subagent.Row, IconColor(state), false);
+            icon.SetMotion(animations);
+        }
+        if (folded != null) Subagents.Children.Add(FoldedLine(folded));
+    }
+    /// The task's subagents as dots after its state: lit in the service's color while
+    /// running, the attention color while one waits for the user, the danger color if
+    /// one failed, grey once done. The engine puts the most urgent first, so the dots a
+    /// crowded row folds into "+n" are done ones: 8 dots in a two-line row, 5 in one line.
+    private void BuildDots(TaskRowState state)
+    {
+        OneLineDots.Children.Clear(); TwoLineDots.Children.Clear();
+        if (!state.HasDots) return;
+        var person = new IconGlyph { Symbol = "person.2", Width = 11, Height = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 1, 0) };
+        person.SetResourceReference(IconGlyph.InkProperty, "Island.Secondary");
+        OneLineDots.Children.Add(person);
+        foreach (var (target, limit) in new[] { (OneLineDots, CompactDotLimit), (TwoLineDots, DotLimit) })
+        {
+            AutomationProperties.SetName(target, state.Value.SubagentDotsText ?? "");
+            var (shown, more) = Dots(state.Value, limit);
+            foreach (var dot in shown)
+            {
+                var mark = new System.Windows.Shapes.Ellipse { Width = 5, Height = 5, VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(target.Children.Count == 0 ? 0 : 3, 0, 0, 0) };
+                if (dot == "completed") mark.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "Island.Tertiary");
+                else mark.Fill = dot switch { "attention" => PacerPalette.Attention, "failed" => PacerPalette.Danger, _ => state.ProviderInk };
+                target.Children.Add(mark);
+            }
+            if (more > 0)
+            {
+                var label = new TextBlock { Text = "+" + more.ToString(CultureInfo.InvariantCulture), FontSize = 10, FontWeight = FontWeights.Medium,
+                    VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(3, 0, 0, 0) };
+                label.SetResourceReference(TextBlock.ForegroundProperty, "Island.Secondary");
+                target.Children.Add(label);
+            }
+        }
+    }
+    /// The dots a two-line row draws, and a one-line row, as the Mac's subagentDotLimit and compactSubagentDotLimit.
+    internal const int DotLimit = 8, CompactDotLimit = 5;
+    /// The dots a row of `limit` draws, and how many more it folds into "+n".
+    internal static (IReadOnlyList<string> Shown, int More) Dots(EngineTaskRow row, int limit)
+    {
+        var all = row.SubagentDots ?? [];
+        return (all.Take(limit).ToArray(), Math.Max(0, all.Count - limit));
+    }
+    /// The width of the dots and their count after the person glyph.
+    private static double DotsWidth(EngineTaskRow row, int limit, Func<string, double> text)
+    {
+        var (shown, more) = Dots(row, limit);
+        return shown.Count * 8 - 3 + (more > 0 ? 3 + text("+" + more.ToString(CultureInfo.InvariantCulture)) : 0);
+    }
     /// Marks the folded line among the run lines; read by the presentation checks.
     internal const string FoldedTag = "folded";
     /// The older ended runs as one quiet line: an ellipsis in the icon column and
@@ -273,13 +382,15 @@ public partial class TaskRow : Button
         var row = state.Value;
         double trailing = state.OneLineStatusVisible == Visibility.Visible ? Text(row.Status, 11, FontWeights.Medium)
             : Text(state.ShownRateText, state.RateSize, FontWeights.SemiBold) + Text(state.ShownRateUnit + state.ShownSeparator + state.ShownTurnTime, 11, FontWeights.Medium);
-        double title = Math.Min(200, Text(row.Title, 13, FontWeights.SemiBold)) + (trailing > 0 ? 16 + trailing : 0);
+        double Dots(int limit) => DotsWidth(row, limit, value => Text(value, 10, FontWeights.Medium));
+        double title = Math.Min(200, Text(row.Title, 13, FontWeights.SemiBold)) + (trailing > 0 ? 16 + trailing : 0)
+            + (state.OneLineDotsVisible == Visibility.Visible ? 8 + 12 + 3 + Dots(CompactDotLimit) : 0);
         if (state.OneLine) return 22 + 10 + 18 + title;
         double model = (state.ModelVisible == Visibility.Visible ? Text(row.Model, 11, FontWeights.Medium) : 0)
             + (state.EffortVisible == Visibility.Visible ? Text(row.Effort, 11, FontWeights.Medium) + 4 : 0)
             + (state.CostVisible == Visibility.Visible ? Text(row.Cost, 11, FontWeights.Medium) + (row.PeakCost ? 16 : 7) : 0);
         double detail = Text(row.Status, 11, FontWeights.Medium)
-            + (state.SubagentsVisible == Visibility.Visible ? 24 + Text(row.SubagentText ?? "—", 11, FontWeights.Medium) : 0)
+            + (state.SubagentsVisible != Visibility.Visible ? 0 : state.HasDots ? 10 + 11 + 4 + Dots(DotLimit) : 24 + Text(row.SubagentText ?? "—", 11, FontWeights.Medium))
             + (state.SourceVisible == Visibility.Visible ? 10 + Text(row.SourceLabel, 11, FontWeights.Medium) + (row.SourceKind == null ? 0 : 14) : 0)
             + (state.DelegatedVisible == Visibility.Visible ? 20 + Text(row.DelegatedText, 10, FontWeights.SemiBold) : 0);
         double runs = showsDelegations && row.DelegationsFolded != null ? 22 + 12 + 20 + 8 + Text(row.DelegationsFolded, 11, FontWeights.Medium) + 6 : 0;
@@ -287,6 +398,11 @@ public partial class TaskRow : Button
             runs = Math.Max(runs, 22 + 12 + 20 + 8 + Math.Min(220, Text(run.Title, 12, FontWeights.SemiBold))
                 + 10 + Text((run.RateText == null ? "" : run.RateText + " t/s · ") + (run.TurnTime == null ? "" : run.TurnTime + "  ") + run.Model
                     + (run.Effort == null ? "" : " " + run.Effort), 11, FontWeights.Medium) + 4 + 6);
+        bool subagents = showsDelegations && state.ShowsSubagents;
+        if (subagents && row.SubagentsFolded != null) runs = Math.Max(runs, 22 + 12 + 20 + 8 + Text(row.SubagentsFolded, 11, FontWeights.Medium) + 6);
+        foreach (var line in subagents ? row.SubagentLines ?? [] : [])
+            runs = Math.Max(runs, 22 + 12 + 20 + 8 + Math.Min(220, Text(line.Row.Title, 12, FontWeights.SemiBold))
+                + 10 + Text((line.RateText == null ? "" : line.RateText + " t/s · ") + line.Detail, 10, FontWeights.Medium) + 4 + 6);
         return Math.Max(runs, 28 + 10 + 18 + Math.Max(title, detail + (model > 0 ? 16 + model : 0)));
     }
 }
@@ -328,7 +444,15 @@ internal sealed class TaskRowState(EngineTaskRow value, PanelOptions? options = 
     public string RateUnit => Value.TokensPerSecond == null ? "" : " t/s";
     public string RateSeparator => Value.TurnTime != null && RateText != null ? " · " : "";
     public double ModelOpacity => Value.Dimmed ? 0.7 : 1;
-    public Visibility SubagentsVisible => Visible(Value.Subagents > 0 && choices.Shows("subagents"));
+    public bool ShowsSubagents => choices.Shows("subagents");
+    /// A dot per subagent of the current turn; Claude cloud workers come as a count only.
+    public bool HasDots => Value.SubagentDots is { Count: > 0 };
+    public Visibility SubagentsVisible => Visible((HasDots || Value.Subagents > 0) && ShowsSubagents);
+    public Visibility SubagentCountVisible => Visible(!HasDots);
+    public Visibility SubagentDotsVisible => Visible(HasDots);
+    /// A one-line row keeps the dots of a chosen subagents field, without the lines under it.
+    public Visibility OneLineDotsVisible => Visible(OneLine && HasDots && choices.RowFields.Contains("subagents"));
+    private bool DotsShown => OneLine ? OneLineDotsVisible == Visibility.Visible : HasDots && ShowsSubagents;
     public Visibility SourceVisible => Visible(Value.Source != null && choices.Shows("source"));
     public Visibility SourceIconVisible => Visible(Value.SourceKind != null);
     public Visibility CostVisible => Visible(Value.Cost != null && choices.Shows("cost"));
@@ -336,7 +460,8 @@ internal sealed class TaskRowState(EngineTaskRow value, PanelOptions? options = 
     public Visibility EffortVisible => Visible(Value.Effort != null && choices.Shows("model"));
     public string SourceSymbol => Value.SourceKind == "cloud" ? "cloud" : "server.rack";
 
-    public string AccessibleName => string.Join(", ", new[] { Value.Provider, Value.Title, Value.Status, Value.ProgressText, Value.Source,
+    public string AccessibleName => string.Join(", ", new[] { Value.Provider, Value.Title, Value.Status, Value.ProgressText,
+        DotsShown ? Value.SubagentDotsText : null, Value.Source,
         Value.Model, Value.Effort, RateText + RateUnit, Value.TurnTime, Value.Cost }.Where(s => !string.IsNullOrEmpty(s)));
     private static Visibility Visible(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
 }

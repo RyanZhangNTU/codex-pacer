@@ -81,7 +81,8 @@ public enum PacerEngine {
             allowsLiveClaudeWeb: !demo && !readOnly, claudeWebReference: claudeReference, claudeHookServices: hookServices,
             codexHookServices: demo || readOnly ? nil : .live(runtimeRoot: progressRoot),
             managesCodexProgress: !demo && !readOnly, managesDeepSeekProgress: !demo && !readOnly, managesLocalHarnessProgress: !demo && !readOnly,
-            codexProgressPaths: .init(root: progressRoot), allowsStorageRecovery: !readOnly)
+            codexProgressPaths: .init(root: progressRoot), allowsStorageRecovery: !readOnly,
+            demoSubagents: demo && CommandLine.arguments.contains("--demo-subagents"))
         await runtime.hello()
         let input = EngineInput()
         var framer = EngineFramer()
@@ -493,6 +494,8 @@ actor EngineRuntime {
     #endif
     private let output: @Sendable (Data) -> Void
     private let allowsStorageRecovery: Bool
+    /// The demo's Codex task works with three subagents, as the Mac's `--demo-subagents`.
+    private let demoSubagents: Bool
 
     init(demo: Bool, now: @escaping @Sendable () -> Date = { Date() },
          dismissalStore: CompletionDismissalStore? = .applicationDefault,
@@ -524,9 +527,10 @@ actor EngineRuntime {
          installationDetection: @escaping @Sendable () async -> ProviderInstallationDetection = {
              await Task.detached(priority: .utility) { ProviderInstallationDetection.detect() }.value
          },
-         output: @escaping @Sendable (Data) -> Void = { try? FileHandle.standardOutput.write(contentsOf: $0) }) {
+         output: @escaping @Sendable (Data) -> Void = { try? FileHandle.standardOutput.write(contentsOf: $0) },
+         demoSubagents: Bool = false) {
         self.demo = demo; self.now = now; self.output = output; self.quotaServices = quotaServices; self.desktopServices = desktopServices
-        self.allowsStorageRecovery = allowsStorageRecovery
+        self.allowsStorageRecovery = allowsStorageRecovery; self.demoSubagents = demo && demoSubagents
         self.sourceSettings = sourceSettings
         self.localHarnessDefinitions = localHarnessDefinitions
         self.balanceServices = balanceServices
@@ -2934,7 +2938,7 @@ actor EngineRuntime {
         }.map { $0.id + "|" + ($0.turnID ?? "") })
         let previousCodex = harnessActivities[.codex]
         if demo {
-            var rows = DemoScenario.tasks(stage: stage, at: date)
+            var rows = (demoSubagents ? DemoScenario.subagentTasks(stage: stage, at: date) : DemoScenario.tasks(stage: stage, at: date))
                 + [DemoScenario.claudeTask(stage: stage, at: date), DemoScenario.deepseekTask(stage: stage, at: date)]
                 + (enabled.contains(.workbuddy) ? [DemoScenario.workbuddyTask(stage: stage, at: date)] : [])
             var requests: [PendingAttentionRequest] = []
