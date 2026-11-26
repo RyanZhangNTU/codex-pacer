@@ -657,8 +657,8 @@ struct ClaudeActivityState: Sendable {
                   tools.allSatisfy({ ClaudeActivityRecord.identifier($0) != nil }) else { return }
             meter.modelBlock(id: requestID, messageID: messageID, outputTokens: output, toolIDs: tools, terminal: record["terminal"] as? Bool == true, at: date)
             observedMeters[key] = meter
-            if value.phase == .completed, let end = agentEnds[key], end.childTurn == meter.turnID {
-                settleAgentUsage(key, at: Date(timeIntervalSince1970: end.at))
+            if value.phase == .completed, agentEnds[key]?.childTurn == meter.turnID, let end = value.phaseChangedAt {
+                settleAgentUsage(key, at: end)
             }
             return
         }
@@ -761,9 +761,10 @@ struct ClaudeActivityState: Sendable {
         }
         let item = ClaudeActivityRecord.identifier(record["itemId"] as? String) ?? "event-" + String(Int(seconds * 1000))
         let earlierTurn = value.turnID, earlierStart = value.turnStartedAt
-        if value.endedBySubagentHook, value.turnID == turn {
+        let parentEnding = origin == "agentResult" || origin == "rootEnded"
+        if value.endedBySubagentHook, value.turnID == turn, !parentEnding {
             let laterWork = date > (value.phaseChangedAt ?? date) && ["thinking", "response", "responseDelta", "toolStart", "toolEnd", "approval", "input"].contains(kind)
-            let verifiedEnd = ["agentResult", "rootEnded"].contains(origin) || ["failure", "interrupt", "stopVerified"].contains(kind)
+            let verifiedEnd = ["failure", "interrupt", "stopVerified"].contains(kind)
             let laterStop = origin == "subagentHook" && date > (value.phaseChangedAt ?? date)
             if laterWork || verifiedEnd || laterStop { value.reopenSubagentStop(at: date) }
         }
@@ -839,9 +840,13 @@ struct ClaudeActivityState: Sendable {
             // wake; an interrupt or an error still ends it.
             if ["stop", "stopVerified"].contains(kind), value.currentBackgroundWait != nil { sessions[key] = value; return }
             let wasLive = [.running, .waitingForInput].contains(value.phase)
-            value.applyRuntime(event("turn/completed", ["status": kind == "failure" ? "failed" : kind == "interrupt" ? "interrupted" : "completed",
-                "subagentHook": origin == "subagentHook",
-                "confirmedAfterQuiet": origin == "sessionClosed" || origin == "rootEnded" && record["confirmedAfterQuiet"] as? Bool == true]))
+            if value.endedBySubagentHook, parentEnding {
+                value.confirmSubagentStop(failed: kind == "failure", interrupted: kind == "interrupt")
+            } else {
+                value.applyRuntime(event("turn/completed", ["status": kind == "failure" ? "failed" : kind == "interrupt" ? "interrupted" : "completed",
+                    "subagentHook": origin == "subagentHook",
+                    "confirmedAfterQuiet": origin == "sessionClosed" || origin == "rootEnded" && record["confirmedAfterQuiet"] as? Bool == true]))
+            }
             // Interrupting or failing the main thread's turn aborts its
             // foreground agents; Claude Code keeps the background ones running.
             if ["interrupt", "failure"].contains(kind), wasLive, value.parentThreadID == nil, value.phase == .interrupted {
@@ -855,7 +860,7 @@ struct ClaudeActivityState: Sendable {
             }
             if ["stop", "stopVerified", "subagentStop"].contains(kind), [.completed, .interrupted].contains(value.phase),
                let meter = observedMeters[key], meter.turnID == turn {
-                for sample in meter.settled(at: date) {
+                for sample in meter.settled(at: value.phaseChangedAt ?? date) {
                     if let update = SessionPerformanceUpdate(id: key, turnID: turn, response: sample, firstTokenLatency: nil, firstTokenReportedAt: nil) { update.apply(to: &value) }
                 }
                 if let update = SessionPerformanceUpdate(value) { metrics[key] = update }
@@ -931,11 +936,11 @@ struct ClaudeActivityState: Sendable {
             if agentsIdle[root].map({ start <= $0 }) == true { kind = "subagentStop" }
             // The process is gone. A run whose model had ended it is complete.
             else if closed, let stop = modelStops[key], stop.turn == turn { kind = stop.failed ? "failure" : "subagentStop" }
-            else if closed { kind = child.endedBySubagentHook ? "subagentStop" : "unavailable" }
+            else if closed { kind = "unavailable" }
             else if rootInterrupts[root].map({ start <= $0 }) == true,
                     agentLaunches[key].flatMap({ boundAgentCompletion($0, to: child) }) == nil { kind = "interrupt" }
             else { continue }
-            consumeRecord(["kind": kind, "origin": "rootEnded", "confirmedAfterQuiet": quiet, "sessionId": thread, "parentId": parent, "promptId": turn,
+            consumeRecord(["kind": child.endedBySubagentHook ? "subagentStop" : kind, "origin": "rootEnded", "confirmedAfterQuiet": quiet, "sessionId": thread, "parentId": parent, "promptId": turn,
                            "at": max(start, child.lastObserved?.timeIntervalSince1970 ?? start)], now: now, attaching: historical)
         }
     }

@@ -113,9 +113,13 @@ final class ExpandedPanelDisplayTests: XCTestCase {
         XCTAssertEqual(TaskRowView.height(.oneLine), 38)
         XCTAssertEqual(TaskRowView.height(.twoLine), 54)
 
-        func subagentWidth(_ description: String, type: String?) async throws -> CGFloat {
+        func subagentWidth(_ description: String, type: String?, name: String? = nil) async throws -> CGFloat {
             var child = DemoScenario.subagentTasks(stage: .thinking, at: now)[1]
-            child.subagentDisplay = SubagentDisplay(claudeType: type, description: description)
+            if let name, let type {
+                child.subagentDisplay = SubagentDisplay(spawn: ["agent_role": type, "agent_nickname": name, "agent_path": description], header: [:])
+            } else {
+                child.subagentDisplay = SubagentDisplay(claudeType: type, description: description)
+            }
             let line = ActivityTaskRowPresentation.subagentLine(child, options: .init(), at: now)
             return try await measure(SubagentList(lines: [line], enabled: true, open: {}))
         }
@@ -123,7 +127,12 @@ final class ExpandedPanelDisplayTests: XCTestCase {
         let tagged = try await subagentWidth("Trace", type: "Explore")
         let long = try await subagentWidth(String(repeating: "Wide ", count: 24), type: "Explore")
         XCTAssertGreaterThan(tagged, short); XCTAssertGreaterThan(long, tagged)
-        XCTAssertLessThanOrEqual(long - short, 220 - 48 + 1, "Tags share the measured label cap")
+        XCTAssertLessThanOrEqual(long - tagged, 220 - 48 + 1, "Only the title has the 220 pt probe cap")
+        let wideTag = String(repeating: "W", count: 48)
+        let plugin = try await subagentWidth("Trace", type: "pr-review-toolkit:silent-failure-hunter")
+        XCTAssertEqual(plugin - short, 120 + 4, accuracy: 1)
+        let both = try await subagentWidth("trace", type: wideTag, name: wideTag)
+        XCTAssertEqual(both - short, 2 * (120 + 4), accuracy: 1, "Each truncated tag and its gap add to the title minimum")
 
         let withButtons = try await measure(TaskPagerView(model: model, actions: true).header)
         let alone = try await measure(TaskPagerView(model: model, actions: false).header)
@@ -150,7 +159,7 @@ final class ExpandedPanelDisplayTests: XCTestCase {
     func testLineCompressesTitleBeforeDroppingModelThenTime() throws {
         // Distinct rendered heights identify which variant SwiftUI actually placed.
         for (width, height) in [(300, 21), (158, 21), (157, 22), (107, 23)] {
-            let view = TaskLineLayout(measuring: false) { model, time in
+            let view = TaskLineLayout(measuring: false, hasModel: true, hasTime: true) { model, time in
                 HStack(spacing: 0) {
                     Text(String(repeating: "long title ", count: 10)).lineLimit(1).frame(minWidth: 48, maxWidth: .infinity)
                     Color.blue.frame(width: 20) // speed
@@ -162,6 +171,36 @@ final class ExpandedPanelDisplayTests: XCTestCase {
             .frame(width: CGFloat(width)).fixedSize(horizontal: false, vertical: true)
             XCTAssertEqual(try XCTUnwrap(ImageRenderer(content: view).cgImage).height, height, "width \(width)")
         }
+    }
+
+    func testTwoLineRowFitsTimeAndModelIndependently() throws {
+        let id = "fixture-task"
+        var task = SessionActivity(id: id, sourceHost: String(repeating: "W", count: 16), sourceHostID: "fixture",
+                                   provider: .claude, sessionID: id)
+        task.applyRuntime(["method": "turn/started", "threadId": id, "turnId": "turn", "at": now.timeIntervalSince1970 - 90])
+        task.applyRuntime(["method": "metadata", "threadId": id, "model": "M", "at": now.timeIntervalSince1970])
+        let row = ActivityTaskRowPresentation(activity: task, unread: false, at: now)
+        func render(_ fields: Set<ExpandedPanelOptions.RowField>) throws -> Data {
+            var options = ExpandedPanelOptions(); options.rowFields = fields
+            let view = TaskRowView(presentation: row, group: nil, now: now, enabled: true, accent: .blue, options: options) {}
+            let lines = view.textLines(measuring: false).frame(width: 110).fixedSize(horizontal: false, vertical: true)
+            let image = try XCTUnwrap(ImageRenderer(content: lines).cgImage)
+            return try XCTUnwrap(image.dataProvider?.data as Data?)
+        }
+        // A mandatory source wider than line two still leaves time on line one.
+        let crowdedStatus = try render([.source, .turnTime, .model])
+        XCTAssertEqual(crowdedStatus, try render([.source, .turnTime]))
+        XCTAssertNotEqual(crowdedStatus, try render([.source]))
+        // The rate placeholder crowds time off line one. The short model fits on line two.
+        let crowdedRate = try render([.rate, .turnTime, .model])
+        XCTAssertEqual(crowdedRate, try render([.rate, .model]))
+        XCTAssertNotEqual(crowdedRate, try render([.rate]))
+    }
+
+    func testMinimumWidthOfAnEmptyLine() {
+        let host = NSHostingView(rootView: MinimumLineWidth { EmptyView() })
+        XCTAssertEqual(host.fittingSize, .zero)
+        host.layoutSubtreeIfNeeded()
     }
 
     func testSettingsPageSavesOnlyRealEditsAndSketchesPairedQuotas() {

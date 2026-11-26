@@ -84,6 +84,8 @@ final class ActivityTaskPresentationTests: XCTestCase {
         XCTAssertEqual(value.rows[0].phase, .running)
         XCTAssertEqual(value.rows[0].symbol, .thinking)
         XCTAssertEqual(value.rows[0].status, L10n.text("subagent.waiting_parent"), "Only its subagents are at work")
+        let bar = CompactBarContext(activities: activities, requests: [], completions: [], sources: [], now: now)
+        XCTAssertEqual(bar.statusText(.stage, language: .english), L10n.text("subagent.waiting_parent", language: .english))
         XCTAssertFalse(value.rows[0].unread)
         XCTAssertTrue(value.pendingCompletions.isEmpty)
         XCTAssertTrue(value.readableCompletions.isEmpty)
@@ -108,6 +110,47 @@ final class ActivityTaskPresentationTests: XCTestCase {
         let codex = DemoScenario.tasks(stage: .tool, at: now)
         XCTAssertNil(ActivityTaskRowPresentation.sourceName(codex[0], options: .init()))
         XCTAssertEqual(ActivityTaskRowPresentation.sourceName(codex[1], options: .init()), codex[1].sourceHost)
+    }
+
+    func testContinuingCodexTurnsKeepFinishedChildrenUntilAnIndependentRequest() throws {
+        let tasks = DemoScenario.subagentTasks(stage: .completed, at: now).dropFirst()
+        var root = DemoScenario.subagentTasks(stage: .thinking, at: now)[0]
+        func row() throws -> ActivityTaskRowPresentation {
+            try XCTUnwrap(ActivityTaskPresentation(activities: [root] + tasks, requests: [], inbox: CompletionInbox(), at: now).rows.first)
+        }
+        for index in 1...2 {
+            root.consumeLive(["method": "turn/started", "threadId": root.threadID!, "turnId": "wake-\(index)",
+                              "rootTurnId": "demo-turn", "at": now.timeIntervalSince1970 + Double(index)])
+            XCTAssertEqual(try row().subagentDotStates, [.completed, .completed, .completed])
+        }
+        root.consumeLive(["method": "turn/started", "threadId": root.threadID!, "turnId": "independent", "at": now.timeIntervalSince1970 + 3])
+        XCTAssertTrue(try row().subagentDotStates.isEmpty)
+    }
+
+    func testBackgroundWaitNamesRunningSubagentsInRowAndAllCompactModes() throws {
+        var codex = DemoScenario.subagentTasks(stage: .thinking, at: now)
+        codex[0].consumeLive(["method": "item/started", "itemType": "collabToolCall", "waitingForAgents": true,
+                              "itemId": "wait", "threadId": codex[0].threadID!, "turnId": "demo-turn", "at": now.timeIntervalSince1970])
+        var claude = DemoScenario.claudeTask(stage: .thinking, at: now)
+        claude.waitForBackground(kinds: ["shell", "subagent"], wakeups: 0, at: now)
+        var child = SessionActivity(id: "child", provider: .claude, sessionID: "child")
+        child.updateParent(claude.threadID)
+        child.applyRuntime(["method": "turn/started", "threadId": "child", "turnId": "turn", "at": now.timeIntervalSince1970])
+        for (tasks, running) in [(codex, 3), ([claude, child], 1), ([claude], 0)] {
+            let row = try XCTUnwrap(ActivityTaskPresentation(activities: tasks, requests: [], inbox: CompletionInbox(), at: now).rows.first)
+            XCTAssertEqual(row.status, L10n.text(running > 0 ? "subagent.waiting_parent" : "activity.background_wait"))
+            let bar = CompactBarContext(activities: tasks, requests: [], completions: [], sources: [], now: now)
+            guard running > 0 else {
+                let expected = L10n.text("activity.background_wait_compact", language: .english)
+                XCTAssertEqual(bar.headerStatusText(language: .english), expected)
+                for mode in [CompactComponentOptions.StatusShow.urgent, .stage, .count] { XCTAssertEqual(bar.statusText(mode, language: .english), expected) }
+                continue
+            }
+            // The default status counts the subagents at work; the stage says the task waits for them.
+            let count = String(format: L10n.text(running == 1 ? "activity.subagent_running" : "activity.subagents_running", language: .english), running)
+            XCTAssertEqual(bar.statusText(.urgent, language: .english), count)
+            XCTAssertEqual(bar.statusText(.stage, language: .english), L10n.text("subagent.waiting_parent", language: .english))
+        }
     }
 
     func testPaginationAndReadOnlyEndingDoNotChangeOtherRows() throws {
@@ -171,9 +214,12 @@ final class ActivityTaskPresentationTests: XCTestCase {
                                "at": now.addingTimeInterval(1).timeIntervalSince1970])
             return value
         }
-        let done = try XCTUnwrap(ActivityTaskPresentation(activities: ended, requests: [], inbox: CompletionInbox(), at: now.addingTimeInterval(2)).rows.first)
-        XCTAssertTrue(done.subagentLines.isEmpty); XCTAssertNil(done.foldedSubagents)
-        XCTAssertEqual(done.subagentDotStates, Array(repeating: .completed, count: 7))
+        for root in [activities[0], ended[0]] {
+            let tasks = [root] + ended.dropFirst()
+            let done = try XCTUnwrap(ActivityTaskPresentation(activities: tasks, requests: [], inbox: CompletionInbox(), at: now.addingTimeInterval(2)).rows.first)
+            XCTAssertTrue(done.subagentLines.isEmpty); XCTAssertNil(done.foldedSubagents)
+            XCTAssertEqual(done.subagentDotStates, Array(repeating: .completed, count: 7))
+        }
     }
 
     func testEndedLinesAreSelectedByEndTimeAndParentOnlyChildStaysGrey() throws {
@@ -185,7 +231,7 @@ final class ActivityTaskPresentationTests: XCTestCase {
         let projected = try XCTUnwrap(ActivityTaskGroup.make([parent]).first)
         let dot = ActivityTaskRowPresentation(activity: parent, group: projected, unread: false, at: now)
         XCTAssertNil(projected.members.first { $0.threadID == synthetic }?.turnStartedAt)
-        XCTAssertEqual(dot.subagentDotStates, [.completed]); XCTAssertEqual(dot.subagentLines.first?.state, .completed)
+        XCTAssertEqual(dot.subagentDotStates, [.completed]); XCTAssertTrue(dot.subagentLines.isEmpty)
         XCTAssertEqual(dot.subagentDotsAccessibility, L10n.text("subagent.dots_accessibility_singular", 1, 0))
         // The oldest start finishes last and a later start finishes first.
         for index in children.indices {
@@ -193,10 +239,13 @@ final class ActivityTaskPresentationTests: XCTestCase {
             children[index].consumeLive(["method": "turn/completed", "threadId": children[index].threadID!, "turnId": "demo-turn",
                                          "status": "interrupted", "at": at.timeIntervalSince1970])
         }
+        let active = "019a0000-0000-7000-8000-000000000701"
+        parent.consumeLive(["method": "subagents/updated", "turnId": "demo-turn", "threadId": parent.threadID!,
+                            "states": [synthetic: "completed", active: "running"], "at": now.addingTimeInterval(2).timeIntervalSince1970])
         let group = try XCTUnwrap(ActivityTaskGroup.make([parent] + children).first)
         let row = ActivityTaskRowPresentation(activity: parent, group: group, unread: false, at: now.addingTimeInterval(31))
-        XCTAssertEqual(Set(row.subagentLines.compactMap(\.row.activity.threadID)), Set([synthetic, children[0].threadID!, children[2].threadID!]))
-        XCTAssertEqual(row.foldedSubagents?.text, L10n.text("subagent.folded_ended_singular", 1))
+        XCTAssertEqual(Set(row.subagentLines.compactMap(\.row.activity.threadID)), Set([active, children[0].threadID!, children[2].threadID!]))
+        XCTAssertEqual(row.foldedSubagents?.text, L10n.text("subagent.folded_ended", 2))
     }
 
     func testFoldedSubagentsUseTheirOwnOutcomeAndCount() {
@@ -208,6 +257,31 @@ final class ActivityTaskPresentationTests: XCTestCase {
             XCTAssertEqual(Fold(active: 0, ended: count, failed: 0, stopped: 1).text, L10n.text("subagent.folded_ended" + suffix, count))
             XCTAssertEqual(Fold(active: 0, ended: count, failed: 1).text, L10n.text("subagent.folded_failed" + suffix, count, 1))
         }
+    }
+
+    func testCrowdedLinesKeepAttentionThenCurrentRequestBeforeOlderRunningChildren() throws {
+        let tasks = DemoScenario.subagentTasks(stage: .thinking, at: now)
+        let parent = tasks[0]
+        func child(_ index: Int, at offset: Double, flag: String? = nil) -> SessionActivity {
+            let id = String(format: "019a0000-0000-7000-8000-%012d", index)
+            var child = SessionActivity(id: id, sessionID: id)
+            child.updateParent(parent.threadID)
+            let at = now.timeIntervalSince1970 + offset
+            child.consumeLive(["method": "turn/started", "threadId": id, "turnId": "run", "at": at])
+            if let flag {
+                child.consumeLive(["method": "thread/status/changed", "threadId": id, "turnId": "run",
+                                   "status": "active", "flags": [flag], "at": at + 1])
+            }
+            return child
+        }
+        let previous = child(501, at: -90), approval = child(503, at: -4, flag: "waitingOnApproval")
+        let input = child(502, at: -2, flag: "waitingOnUserInput")
+        let row = try XCTUnwrap(ActivityTaskPresentation(activities: [input, previous, approval] + tasks,
+            requests: [], inbox: CompletionInbox(), at: now).rows.first)
+        XCTAssertEqual(row.subagentLines.map(\.state), [.approval, .input, .running])
+        XCTAssertEqual(row.subagentLines.map(\.row.activity.threadID), [approval.threadID, input.threadID, tasks[1].threadID])
+        XCTAssertEqual(row.subagentDotStates, [.attention, .attention] + Array(repeating: .running, count: 4))
+        XCTAssertEqual(row.foldedSubagents?.active, 3)
     }
 
     func testACrowdedRowKeepsWaitingAndRunningDotsAndFoldsDoneOnes() throws {

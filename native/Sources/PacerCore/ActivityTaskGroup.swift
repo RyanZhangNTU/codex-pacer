@@ -8,6 +8,9 @@ public struct ActivityTaskGroup: Sendable {
     public var runningSubagentCount: Int {
         members.filter { $0.id != primary.id && $0.phase == .running && !$0.isCodexDelegation }.count
     }
+    var waitingForSubagents: Bool {
+        (primary.phase != .running || primary.currentBackgroundWait != nil) && runningSubagentCount > 0
+    }
     /// One thread per Codex for Claude run this task started, oldest first.
     /// A run's sub-threads count with it, not on their own. A review run works
     /// in a sub-thread; that sub-thread is the run.

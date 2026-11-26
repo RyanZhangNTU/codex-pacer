@@ -6,14 +6,16 @@ import PacerCore
 /// ideal-width probe always measures the full variant.
 struct TaskLineLayout<Content: View>: View {
     let measuring: Bool
+    let hasModel: Bool
+    let hasTime: Bool
     @ViewBuilder var content: (_ model: Bool, _ time: Bool) -> Content
 
     var body: some View {
-        if measuring { content(true, true) }
+        if measuring || (!hasModel && !hasTime) { content(hasModel, hasTime) }
         else {
             ViewThatFits(in: .horizontal) {
-                MinimumLineWidth { content(true, true) }
-                MinimumLineWidth { content(false, true) }
+                if hasModel { MinimumLineWidth { content(true, hasTime) } }
+                if hasTime { MinimumLineWidth { content(false, true) } }
                 content(false, false)
             }
         }
@@ -22,13 +24,13 @@ struct TaskLineLayout<Content: View>: View {
 
 /// ViewThatFits normally asks for ideal widths. For its fit test only, ask
 /// the row how far it can shrink with its tags and readings at full size.
-private struct MinimumLineWidth: Layout {
+struct MinimumLineWidth: Layout {
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        subviews[0].sizeThatFits(.init(width: proposal.width ?? 0, height: proposal.height))
+        subviews.first?.sizeThatFits(.init(width: proposal.width ?? 0, height: proposal.height)) ?? .zero
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        subviews[0].place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(bounds.size))
+        subviews.first?.place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(bounds.size))
     }
 }
 
@@ -46,7 +48,8 @@ struct ChildTaskLine: View {
     let time: String?
     let model: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private static let labelCap: CGFloat = 220
+    private static let measuredTitleWidth: CGFloat = 220
+    private static let tagWidthLimit: CGFloat = 120
     private static let railInsets: CGFloat = IslandMetrics.rowInset + 13 + 12 + 6
 
     var body: some View {
@@ -70,7 +73,7 @@ struct ChildTaskLine: View {
                     .scaleEffect(20 / TaskStatusIconNSView.diameter)
                     .frame(width: 20, height: 20).accessibilityHidden(true)
             }
-            TaskLineLayout(measuring: measuring) { showModel, showTime in
+            TaskLineLayout(measuring: measuring, hasModel: model != nil, hasTime: time != nil) { showModel, showTime in
                 HStack(spacing: 8) {
                     HStack(spacing: 4) {
                         if let typeTag {
@@ -81,9 +84,8 @@ struct ChildTaskLine: View {
                         Text(row.title).font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(active ? PacerPalette.primary : PacerPalette.secondary)
                             .lineLimit(1).truncationMode(.tail)
-                            .frame(minWidth: 48, maxWidth: measuring ? nil : .infinity, alignment: .leading)
+                            .frame(minWidth: 48, maxWidth: measuring ? Self.measuredTitleWidth : .infinity, alignment: .leading)
                     }
-                    .frame(maxWidth: measuring ? Self.labelCap : .infinity, alignment: .leading)
                     HStack(alignment: .firstTextBaseline, spacing: 0) {
                         if let rate {
                             Text(rate + " t/s").fontWeight(.semibold)
@@ -110,7 +112,8 @@ struct ChildTaskLine: View {
 
     private func tag(_ text: String, ink: Color, fill: Color) -> some View {
         Text(text).font(.system(size: 10, weight: .semibold)).foregroundStyle(ink)
-            .padding(.horizontal, 6).frame(height: 15)
-            .background(fill, in: Capsule()).lineLimit(1).fixedSize()
+            .lineLimit(1).truncationMode(.middle)
+            .padding(.horizontal, 6).frame(maxWidth: Self.tagWidthLimit).frame(height: 15)
+            .background(fill, in: Capsule()).fixedSize()
     }
 }

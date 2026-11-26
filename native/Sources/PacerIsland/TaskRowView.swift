@@ -117,8 +117,9 @@ struct TaskRowView: View {
     /// Rows of one line are this tall; two-line rows take 54 points.
     static func height(_ style: ExpandedPanelOptions.RowStyle) -> CGFloat { style == .oneLine ? 38 : 54 }
     private var oneLine: Bool { options.rowStyle == .oneLine }
-    private var showsRateLine: Bool { options.shows(.rate) || (options.shows(.turnTime) && turnTime != nil) }
-    private var showsModelLine: Bool { options.shows(.model) || (options.shows(.cost) && cost != nil) }
+    private var showsRate: Bool { options.shows(.rate) && (rate != nil || activity.claudeCloud == nil) }
+    private var showsTime: Bool { options.shows(.turnTime) && turnTime != nil }
+    private var showsCost: Bool { options.shows(.cost) && cost != nil }
     /// A request for the user, a wait for an answer or a failure replaces the
     /// readings in a one-line row.
     private var statusLeads: Bool { attention != nil || phase == .waitingForInput || activity.turnFailed }
@@ -126,33 +127,34 @@ struct TaskRowView: View {
     @ViewBuilder private func rowContent(measuring: Bool) -> some View {
         HStack(spacing: oneLine ? 8 : 10) {
             statusIcon(measuring: measuring)
-            TaskLineLayout(measuring: measuring) { showModel, showTime in
-                if oneLine {
-                    HStack(spacing: 8) {
-                        title(measuring: measuring)
-                        if presentation.delegatedCount > 0 { DelegatedCountChip(text: presentation.delegatedCountText) }
-                        if showsSubagentDots {
-                            SubagentDotsView(presentation: presentation, limit: ActivityTaskRowPresentation.compactSubagentDotLimit)
-                        }
-                        if statusLeads {
-                            Text(status).font(.system(size: 11, weight: .medium)).foregroundStyle(detailColor).lineLimit(1).fixedSize()
-                        } else if showsRateLine { rateLine(showTime: showTime) }
+            textLines(measuring: measuring)
+        }
+        .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
+    }
+
+    func textLines(measuring: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            TaskLineLayout(measuring: measuring, hasModel: false, hasTime: showsTime && !(oneLine && statusLeads)) { _, showTime in
+                HStack(alignment: oneLine ? .center : .firstTextBaseline, spacing: oneLine ? 8 : 16) {
+                    title(measuring: measuring)
+                    if oneLine, presentation.delegatedCount > 0 { DelegatedCountChip(text: presentation.delegatedCountText) }
+                    if oneLine, showsSubagentDots {
+                        SubagentDotsView(presentation: presentation, limit: ActivityTaskRowPresentation.compactSubagentDotLimit)
                     }
-                } else {
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(alignment: .firstTextBaseline, spacing: 16) {
-                            title(measuring: measuring)
-                            if showsRateLine { rateLine(showTime: showTime) }
-                        }
-                        HStack(alignment: .firstTextBaseline, spacing: 16) {
-                            statusLine.frame(maxWidth: measuring ? nil : .infinity, alignment: .leading)
-                            if showsModelLine { modelLine(showModel: showModel) }
-                        }
+                    if oneLine, statusLeads {
+                        Text(status).font(.system(size: 11, weight: .medium)).foregroundStyle(detailColor).lineLimit(1).fixedSize()
+                    } else if showsRate || showTime { rateLine(showTime: showTime) }
+                }
+            }
+            if !oneLine {
+                TaskLineLayout(measuring: measuring, hasModel: options.shows(.model), hasTime: false) { showModel, _ in
+                    HStack(alignment: .firstTextBaseline, spacing: 16) {
+                        statusLine.frame(maxWidth: measuring ? nil : .infinity, alignment: .leading)
+                        if showsCost || showModel { modelLine(showModel: showModel) }
                     }
                 }
             }
         }
-        .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
     }
 
     private func title(measuring: Bool) -> some View {

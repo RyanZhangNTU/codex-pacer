@@ -82,8 +82,16 @@ final class ClaudeOutlivedChildTests: XCTestCase {
                   row("toolStart", 6, thread: child, ["itemId": "child-tool", "attention": "none"]),
                   row("toolStart", 6.5, thread: "foreground-child", ["itemId": "foreground-child-tool", "attention": "none"])], into: &state, batch: batch)
             XCTAssertEqual(ActivityTaskGroup.make(state.activities).first?.runningSubagentCount, 3, label)
+            read([row("subagentStart", 3, thread: "finished-child"), row("stopRequested", 5, thread: "finished-child")],
+                 into: &state, batch: batch)
+            XCTAssertEqual(activity(state, "finished-child")?.endedBySubagentHook, true, label)
             read([row(ending, 7, ["origin": "transcript"])], into: &state, batch: batch)
             XCTAssertEqual(activity(state, parent)?.phase, .interrupted, label)
+            let finished = try XCTUnwrap(activity(state, "finished-child"))
+            XCTAssertEqual(finished.phase, .completed, label)
+            XCTAssertFalse(finished.turnFailed)
+            XCTAssertFalse(finished.endedBySubagentHook)
+            XCTAssertEqual(finished.phaseChangedAt, now.addingTimeInterval(5), label)
             for (thread, last) in [(child, 6.0), ("foreground-child", 6.5)] {
                 let ended = try XCTUnwrap(activity(state, thread), label)
                 XCTAssertEqual(ended.phase, .interrupted, "\(thread), \(label)")

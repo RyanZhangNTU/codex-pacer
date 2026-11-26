@@ -958,6 +958,10 @@ final class ClaudeSubagentLifecycleTests: XCTestCase {
             }
             send("toolStart", to: &state, thread: child, at: 45)
             XCTAssertEqual(childPhase(), ending == "notification" ? .interrupted : .completed, ending)
+            let confirmed = try XCTUnwrap(state.activities.first { $0.threadID == child })
+            XCTAssertEqual(confirmed.turnFailed, ending == "notification")
+            XCTAssertEqual(confirmed.turnStartedAt, now.addingTimeInterval(2), ending)
+            XCTAssertEqual(confirmed.phaseChangedAt, now.addingTimeInterval(21), ending)
         }
     }
 

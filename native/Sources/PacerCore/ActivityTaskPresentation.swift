@@ -220,7 +220,7 @@ public struct ActivityTaskRowPresentation: Sendable {
     public func subagentDots(limit: Int) -> (shown: [SubagentDot], more: Int) {
         (Array(subagentDotStates.prefix(limit)), max(0, subagentDotStates.count - limit))
     }
-    /// Its subagents' lines while the task works: running and waiting ones first,
+    /// Its subagents' lines while any child is active: waiting then running ones,
     /// then the most recently ended, `subagentLineLimit` in all.
     public let subagentLines: [SubagentLine]
     /// The other subagents of the turn, folded into one line under them.
@@ -296,10 +296,16 @@ public struct ActivityTaskRowPresentation: Sendable {
     static func subagentMembers(_ group: ActivityTaskGroup?) -> [SessionActivity] {
         guard let group else { return [] }
         let start = group.primary.continuedRequestStart ?? group.primary.turnStartedAt ?? .distantPast
+        func current(_ member: SessionActivity) -> Bool {
+            (member.turnStartedAt ?? member.phaseChangedAt ?? .distantPast) >= start
+        }
         return group.members.filter { member in
             member.id != group.primary.id && !member.isCodexDelegation && !member.isInternalReview &&
-                ([.running, .waitingForInput].contains(member.phase) || (member.turnStartedAt ?? member.phaseChangedAt ?? .distantPast) >= start)
-        }.sorted { ($0.turnStartedAt ?? .distantFuture, $0.id) < ($1.turnStartedAt ?? .distantFuture, $1.id) }
+                ([.running, .waitingForInput].contains(member.phase) || current(member))
+        }.sorted {
+            if current($0) != current($1) { return current($0) }
+            return ($0.turnStartedAt ?? .distantFuture, $0.id) < ($1.turnStartedAt ?? .distantFuture, $1.id)
+        }
     }
     static func subagentLine(_ child: SessionActivity, options: TaskPresentationOptions, at now: Date) -> SubagentLine {
         let row = ActivityTaskRowPresentation(activity: child, unread: false, options: options, at: now)
@@ -361,10 +367,12 @@ public struct ActivityTaskRowPresentation: Sendable {
                 stopped: folded.filter { $0.codexDelegation?.status == .stopped }.count)
         } else { delegations = []; foldedDelegations = nil }
         let children = Self.subagentMembers(group).map { Self.subagentLine($0, options: options, at: now) }
-        // Stable: within each kind, the order the subagents started.
-        subagentDotStates = children.map(\.dot).enumerated().sorted { ($0.element.priority, $0.offset) < ($1.element.priority, $1.offset) }.map(\.element)
-        if group?.isRunning == true || group?.isWaiting == true {
-            let active = children.filter(\.isActive), ended = children.filter { !$0.isActive }
+        // Swift's stable sort keeps current-request members first within each priority.
+        let prioritized = children.sorted { $0.dot.priority < $1.dot.priority }
+        subagentDotStates = prioritized.map(\.dot)
+        let active = prioritized.filter(\.isActive)
+        if !active.isEmpty {
+            let ended = children.filter { !$0.isActive }
             let shownActive = Array(active.prefix(Self.subagentLineLimit))
             // The most recently ended, in the order they started.
             let byEnding = ended.sorted {
@@ -382,8 +390,10 @@ public struct ActivityTaskRowPresentation: Sendable {
         title = Self.title(activity, hideProjects: options.hideProjects)
         var text = phase == .completed ? activity.endingLabel : activity.detail(at: now)
         if let link = activity.codexDelegation { text = Self.delegationStatus(link, title: title, phase: phase, detail: text) }
-        if group?.isRunning == true, activity.phase != .running, !activity.turnFailed {
-            text = L10n.text(children.contains { $0.state == .running } ? "subagent.waiting_parent" : "activity.running_long")
+        if group?.waitingForSubagents == true {
+            text = L10n.text("subagent.waiting_parent")
+        } else if group?.isRunning == true, activity.phase != .running, !activity.turnFailed {
+            text = L10n.text("activity.running_long")
         }
         if let attention {
             if phase != .running { text = attention.label }

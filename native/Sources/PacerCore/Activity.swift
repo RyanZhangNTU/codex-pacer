@@ -142,7 +142,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     mutating func setCloudReplyRate(_ rate: OutputEstimate?) { cloudReplyRate = rate }
     public private(set) var phase: ActivityPhase = .unknown
     public private(set) var turnID: String?
-    /// Start of the Claude request when a background wake opened another turn.
+    /// Start of a request that spans multiple physical turns.
     var continuedRequestStart: Date?
     private(set) var endedBySubagentHook = false
     public private(set) var turnStartedAt: Date?
@@ -942,7 +942,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         let continues = !sameTurn && id != nil && verifiedRoot != nil && verifiedRoot == codexRootTurnID && !codexGoalExpired(at: date) &&
             [.running, .waitingForInput].contains(phase)
         let root = verifiedRoot ?? (sameTurn ? codexRootTurnID : id)
+        let requestStart = continuedRequestStart ?? turnStartedAt
         beginTurn(id, at: date, observed: observed)
+        if continues { continuedRequestStart = requestStart }
         codexRootTurnID = root
         codexGoal = continues || sameTurn ? goal : nil
         codexHeldEnding = nil
@@ -986,6 +988,14 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         guard endedBySubagentHook, let turnID, let threadID else { return }
         retiredTurns.removeAll { $0 == turnID }
         applyRuntime(["method": "turn/attached", "threadId": threadID, "turnId": turnID, "at": date.timeIntervalSince1970])
+    }
+
+    /// The parent confirms the outcome of the run that already ended at its hook.
+    mutating func confirmSubagentStop(failed: Bool, interrupted: Bool) {
+        guard endedBySubagentHook else { return }
+        endedBySubagentHook = false
+        turnFailed = failed
+        phase = failed || interrupted ? .interrupted : .completed
     }
 
     private mutating func retireTurn(_ id: String?) {

@@ -37,10 +37,8 @@ struct SubagentDotsView: View {
     }
 }
 
-/// A task's subagents, one line each, on a rail under its row while the task
-/// works: running and waiting ones first, then the most recently ended, three
-/// lines at most; the rest fold into one quiet line under them. Clicking a
-/// line opens the task, like its row.
+/// While a subagent runs or needs attention, the rail shows up to three children.
+/// The folded line counts the others. Clicking any line opens the task.
 struct SubagentList: View {
     let lines: [ActivityTaskRowPresentation.SubagentLine]
     var folded: ActivityTaskRowPresentation.FoldedSubagents? = nil
