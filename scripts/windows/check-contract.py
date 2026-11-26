@@ -303,6 +303,9 @@ def presentation_shards(workflow, program):
 def grouped_quota_contract(engine, desktop):
     fields = (
         (r"var\s+groupedQuota:\s*\[EngineGroupedQuota\]\?\s*=\s*nil", r"IReadOnlyList<EngineGroupedQuota>\?\s+GroupedQuota\s*=\s*null"),
+        (r"var\s+quotaGroups:\s*EngineQuotaGroups\?\s*=\s*nil", r"EngineQuotaGroups\?\s+QuotaGroups\s*=\s*null"),
+        (r"var\s+applicationInstalled:\s*Bool\?\s*=\s*nil", r"bool\?\s+ApplicationInstalled\s*=\s*null"),
+        (r"let\s+groupWeeks:\s*\[EngineQuotaHistory\.GroupWeek\]\?", r"IReadOnlyList<GroupWeek>\?\s+GroupWeeks\s*=\s*null"),
         (r"let\s+quota:\s*\[EngineQuota\]", r"IReadOnlyList<EngineQuota>\s+Quota\b"),
         (r"let\s+buckets:\s*\[Bucket\]", r"IReadOnlyList<EngineQuotaBucket>\s+Buckets\b"),
         (r"let\s+accountScope:\s*String\?", r"string\?\s+AccountScope\b"),
@@ -316,7 +319,8 @@ def grouped_quota_contract(engine, desktop):
 def check(root=ROOT):
     read = lambda name: json.loads((root / name).read_text(encoding="utf-8"))
     contract = read("windows/platform-contract.json")
-    grouped_quota_contract((root / "windows/EngineSupport/EngineProtocol.swift").read_text(encoding="utf-8"),
+    grouped_quota_contract((root / "windows/EngineSupport/EngineProtocol.swift").read_text(encoding="utf-8") +
+                          (root / "windows/EngineSupport/EngineQuotaDashboard.swift").read_text(encoding="utf-8"),
                           (root / "windows/Desktop/EngineModels.cs").read_text(encoding="utf-8"))
     core = root / "native/Sources/PacerCore"
     package_boundary((root / "Package.swift").read_text(encoding="utf-8"))

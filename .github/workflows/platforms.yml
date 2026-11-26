@@ -222,7 +222,7 @@ jobs:
             groups: settings,island,accessibility,panel,updates
             idle: true
           - shard: providers
-            groups: web,quota,harness,conversation,idle,display,host,responsive,pages,collapsed,recovery
+            groups: web,quota,harness,antigravity,conversation,idle,display,host,responsive,pages,collapsed,recovery
     defaults:
       run:
         shell: pwsh

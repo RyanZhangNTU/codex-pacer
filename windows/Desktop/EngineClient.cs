@@ -70,7 +70,7 @@ internal sealed class EngineClient : IAsyncDisposable
             () => { connectionClosed = true; job?.Dispose(); });
     }
 
-    internal async Task StartAsync(string executable, bool demo, string language, object? configuration = null, bool referenceFixture = false, bool claudeWebFixture = false, bool readOnlyDiagnostics = false, Guid? notificationQa = null, string? claudeRuntimeRoot = null, string? codexProgressRuntimeRoot = null, EngineCrashLog? crashLog = null, bool? addressGuard = null, bool demoSubagents = false)
+    internal async Task StartAsync(string executable, bool demo, string language, object? configuration = null, bool referenceFixture = false, bool claudeWebFixture = false, bool readOnlyDiagnostics = false, Guid? notificationQa = null, string? claudeRuntimeRoot = null, string? codexProgressRuntimeRoot = null, EngineCrashLog? crashLog = null, bool? addressGuard = null, bool demoSubagents = false, bool demoAntigravity = false)
     {
         if (process != null) throw new InvalidOperationException("Engine already started.");
         this.crashLog = crashLog;
@@ -89,6 +89,7 @@ internal sealed class EngineClient : IAsyncDisposable
         };
         if (demo) start.ArgumentList.Add("--demo");
         if (demo && demoSubagents) start.ArgumentList.Add("--demo-subagents");
+        if (demo && demoAntigravity) start.ArgumentList.Add("--demo-antigravity");
         if (referenceFixture) start.ArgumentList.Add("--reference-fixture");
         if (claudeWebFixture) start.ArgumentList.Add("--claude-web-fixture");
         if (readOnlyDiagnostics) start.ArgumentList.Add("--read-only-diagnostics");

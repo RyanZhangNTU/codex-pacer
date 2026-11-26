@@ -55,7 +55,7 @@ internal sealed class NativeCompactBar
     {
         compact = new { layout = preferences.CompactLayout, warnings = preferences.WarningKinds, language, providers,
             options = new { singleTask = preferences.CompactSingleTask, metric = preferences.CompactMetric,
-                codexWindow = preferences.CodexQuotaWindow, claudeWindow = preferences.ClaudeQuotaWindow,
+                codexWindow = preferences.CodexQuotaWindow, claudeWindow = preferences.ClaudeQuotaWindow, moduleWindows = preferences.ModuleWindows,
                 rings = new[] { preferences.QuotaRingOuter, preferences.QuotaRingInner } }, action, context, attached, strip,
             componentOptions = preferences.CompactComponentOptions, size = preferences.CompactBarSize }
     };

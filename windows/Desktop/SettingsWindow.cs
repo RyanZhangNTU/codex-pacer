@@ -176,6 +176,9 @@ internal sealed partial class SettingsWindow : Window
     private TextBlock Label(string text, double size = 13, FontWeight? weight = null)
         => new() { Text = text, FontSize = size, FontWeight = weight ?? FontWeights.Normal, VerticalAlignment = VerticalAlignment.Center };
     /// Modules that read account credits; before the first snapshot, the two WorkBuddy builds.
+    private string[] QuotaWindowModules() => new[] { "codex", "claude" }.Concat((engine?.LatestSnapshot?.Modules ?? [])
+        .Where(module => module.Local == true && module.Balance == "quotaWindows").Select(module => module.Provider)).ToArray();
+
     private string[] CreditModules()
     {
         var known = (engine?.LatestSnapshot?.Modules ?? []).Where(module => module.ReportsAccountCredits == true).Select(module => module.Provider).ToArray();

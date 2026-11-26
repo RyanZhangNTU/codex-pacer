@@ -23,7 +23,7 @@ internal static class Program
     // The groups "all" runs. CI splits them across parallel jobs, and the
     // platform contract checks that each one is in exactly one of them.
     internal static readonly string[] AllGroups = ["recovery", "responsive", "quota", "web", "host", "idle", "display", "accessibility",
-        "island", "conversation", "harness", "pages", "updates", "settings", "collapsed", "panel", "connection"];
+        "island", "conversation", "harness", "antigravity", "pages", "updates", "settings", "collapsed", "panel", "connection"];
     [STAThread]
     private static int Main(string[] args)
     {
@@ -119,6 +119,7 @@ internal static class Program
                     foreach (bool dark in new[] { false, true })
                     {
                         scenario = language + "/dark=" + dark;
+                        if (All("antigravity")) await Attempt(nameof(AntigravityPresentationChecks), () => AntigravityPresentationChecks.Run(language, dark, output));
                         if (Has("persistence"))
                         {
                             await Attempt(nameof(PersistentSettingsChecks), () => PersistentSettingsChecks.Run(language, dark, output, desktop ?? throw new ArgumentException("Supply the desktop executable for restart checks.")));

@@ -347,7 +347,7 @@ internal sealed partial class SettingsWindow
         // pace tick and dial, but not its block order or which blocks show.
         var panel = snapshot.ExpandedPanel;
         var choices = panel?.Options ?? PanelOptions.Default;
-        if (HarnessPane(provider) && HarnessModule(provider) is { } module)
+        if (HarnessPane(provider) && HarnessModule(provider) is { Balance: not "quotaWindows" } module)
         {
             if (module.ReportsAccountCredits == true)
                 content.Children.Add(HarnessAccountCard.Build(ui, provider, harnessAccounts?[provider],
@@ -367,6 +367,7 @@ internal sealed partial class SettingsWindow
             var help = snapshot.Sources.FirstOrDefault(source => source.Provider == provider && source.Transport == "app-server")?.Reason;
             FrameworkElement? status = reading.Status is { State: not "hidden" } connection
                 ? new QuotaConnectionView(provider, connection, ui, () => engine!.SendAsync("retryQuota", new { provider }), () => _ = NavigateAsync(provider)) : null;
+            status = QuotaConnectionView.WithGroup(reading, status);
             var gauge = panel?.Gauge(provider);
             FrameworkElement view = session.Current.ExpandedQuotaStyle == "classic" || !choices.QuotaDetails
                 ? new QuotaCell(provider, raw, snapshot.Wallet, help, reading, status, gauge, choices.PaceTick) { HorizontalAlignment = HorizontalAlignment.Left }
@@ -444,7 +445,7 @@ internal sealed partial class SettingsWindow
         var snapshot = engine?.LatestSnapshot;
         bool closed = providerConnectionClosed || engine?.IsConnectionClosed != false;
         var enabled = closed ? [] : EnabledProviders();
-        var quota = enabled.Where(value => value is "codex" or "claude").ToArray();
+        var quota = closed ? [] : (snapshot?.QuotaDashboard?.Providers ?? []).Where(value => value.Provider != "deepseek").Select(value => value.Provider).ToArray();
         string? provider = historyProvider != null && quota.Contains(historyProvider) ? historyProvider : quota.FirstOrDefault();
         var history = provider == null ? null : snapshot?.QuotaDashboard?.Providers.FirstOrDefault(value => value.Provider == provider)?.History;
         var week = enabled.Contains("deepseek") ? snapshot?.Wallet?.Solo?.Week : null;
@@ -478,14 +479,14 @@ internal sealed partial class SettingsWindow
                 var card = IslandCard(content, new Thickness(18, 16, 18, 16)); Identify(card, "settings.history." + module.Provider, title);
                 historyBody.Children.Add(card);
             }
-            if (enabled.Length == 0 && credits.Length == 0)
+            if (enabled.Length == 0 && quota.Length == 0 && credits.Length == 0)
             {
                 var none = Label(closed ? ui.Text("windows.connection.closed") : ui.Text("provider.none_enabled")); none.TextWrapping = TextWrapping.Wrap; none.Margin = new Thickness(0, 12, 0, 12);
                 historyBody.Children.Add(Card(Row(none, new Border())));
             }
         }
         if (closed) historyView?.ShowUnavailable(ui.Text("windows.connection.closed"));
-        else historyView?.Update(history);
+        else historyView?.Update(history, snapshot?.QuotaDashboard?.Providers.FirstOrDefault(value => value.Provider == provider)?.GroupWeeks);
         historyView?.SetInteractionEnabled(!closed && !busy && !session.RequiresRestart);
     }
 
@@ -521,7 +522,7 @@ internal sealed partial class SettingsWindow
             Grid.SetColumn(chips, 1); header.Children.Add(chips);
         }
         content.Children.Add(header);
-        historyView = new QuotaHistoryView(ui, provider == "claude" ? PacerPalette.Claude : PacerPalette.Codex, async () =>
+        historyView = new QuotaHistoryView(ui, PacerPalette.Provider(provider), async () =>
         { await sourceReady; if (!sourceClosed && engine != null) await engine.SendAsync("retryQuota", new { provider }); }, 0);
         content.Children.Add(historyView);
         var card = new Border { CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Padding = new Thickness(18, 16, 18, 16), Margin = new Thickness(0, 0, 0, 22), Child = content };

@@ -97,11 +97,13 @@ internal sealed record EngineModule(string Provider, string Mode, bool? Installe
     string? ProgressSetup = null, string? ProgressConnection = null, bool? ReportsAccountCredits = null,
     EngineModuleBrand? Brand = null, string? Website = null, string? Balance = null, bool? Prominent = null,
     bool? Local = null, DeepSeekWeekPresentation? Week = null, EngineModuleLaunch? Launch = null,
-    HarnessProgressGuide? ProgressGuide = null, EngineStatusRow? Monitoring = null, EngineStatusRow? Account = null)
+    HarnessProgressGuide? ProgressGuide = null, EngineStatusRow? Monitoring = null, EngineStatusRow? Account = null,
+    EngineQuotaGroups? QuotaGroups = null, bool? ApplicationInstalled = null)
 {
     /// Found on this computer or turned on explicitly. Older engines send
     /// nothing, so their modules stay listed.
     internal bool IsProminent => Prominent ?? true;
+    internal bool? HasApplication => ApplicationInstalled ?? Installed;
 }
 /// A row of a module page's Status card, worded by Core: state, tone
 /// (`positive`, `neutral`, `attention`), text, a line under it and one action.
@@ -110,7 +112,9 @@ internal sealed record EngineStatusRow(string State, string Tone, string Text, s
 internal sealed record HarnessProgressGuide(string Stage, string Chip, string Tone, IReadOnlyList<HarnessProgressStep> Steps,
     string? Line, string? Action, string? ActionTitle, bool Attention, string? Summary, bool Waiting, string Info,
     string? WaitingText = null, string? Picture = null, string? FloatTitle = null, string? FloatNext = null);
-internal sealed record HarnessProgressStep(string Title, string State);
+internal sealed record HarnessProgressStep(string Title, string State, string? CopyText = null);
+internal sealed record EngineGroupOption(string Id, string Label);
+internal sealed record EngineQuotaGroups(string DefaultsKey, string Title, IReadOnlyList<EngineGroupOption> Options, string Selected);
 internal sealed record EngineModuleBrand(string Dark, string Light, double AccentLift, double AccentLuminance);
 internal sealed record EngineModuleLaunch(string Scheme, string Publisher, IReadOnlyList<string> Executables, string? ConnectorsPath);
 internal sealed record HarnessUsage(int? ContextUsed, int? ContextCapacity, double? SessionCredits, double MeasuredAt);
@@ -124,7 +128,8 @@ internal sealed record LegacyQuotaWindow(string Id, string Label, double? Remain
     double? PacePercent, string ValueText, string Countdown, string ResetDate, string PaceText, string AccessibilityLabel);
 internal sealed record DashboardLayout(string Kind, IReadOnlyList<DashboardSlot> Slots, int? Columns = null);
 internal sealed record DashboardSlot(string Provider, string? Period, bool IdentifiesProvider, string Id, string Title);
-internal sealed record DashboardProvider(string Provider, DashboardReading FiveHour, DashboardReading Weekly, QuotaConnectionStatus? Status = null, QuotaHistoryPresentation? History = null);
+internal sealed record DashboardProvider(string Provider, DashboardReading FiveHour, DashboardReading Weekly, QuotaConnectionStatus? Status = null, QuotaHistoryPresentation? History = null, IReadOnlyList<GroupWeek>? GroupWeeks = null);
+internal sealed record GroupWeek(string Id, string Title, string Remaining, QuotaChartPresentation? Chart);
 internal sealed record QuotaHistoryPresentation(string Title, string? SourceText, string FreshnessText, bool NotUpdated, string? ErrorText, string? Placeholder,
     QuotaChartPresentation? Chart, IReadOnlyList<LegacyQuotaBucket> Buckets, QuotaAccountPresentation? Account, string? Warning, string RefreshTitle, bool Refreshing);
 internal sealed record QuotaAccountPresentation(string Context, string ResetText, bool ExpirySoon, string ExpiryDescription,

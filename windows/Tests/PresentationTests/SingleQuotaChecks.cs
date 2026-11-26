@@ -24,15 +24,17 @@ internal static class SingleQuotaChecks
                 CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo(language);
                 await using var engine = new EngineClient(); EngineSnapshot? latest = null;
                 engine.Snapshot += value => latest = value;
-                var window = new IslandWindow(engine, true, language == "zh-Hans", animationOverride: false) { IsHitTestVisible = false };
+                var window = new IslandWindow(engine, true, language == "zh-Hans", animationOverride: false,
+                    screenGeometry: PresentationWait.ReferenceScreen) { IsHitTestVisible = false };
+                window.ApplyPreferences(new DesktopPreferences { IslandAppearance = "classic", ShowInFullscreen = true });
                 try
                 {
                     window.Show(); await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, referenceFixture: true);
-                    window.Reveal(); await window.WaitForPresentationAsync();
+                    await PresentationWait.RevealReferencePanelAsync(window, engine);
                     var slots = (Grid)window.FindName("QuotaSlots");
                     var (capsule, extra) = PresentationWait.ResetCapsule(window);
                     Check(capsule != null && slots.Children.Count == 3 && window.LogicalTarget.Height == 438 + extra,
-                        "The existing multi-provider reference layout must retain its original height, plus Codex's reset capsule");
+                        $"Expected three quota cells and height 438 + {extra} with the reset capsule. Got {slots.Children.Count} cells, capsule={capsule != null}, target={window.LogicalTarget}");
                     // As on the Mac, the capsule sits in Codex's own column under its caption, centered on the ring.
                     var column = capsule!.Parent as QuotaCell;
                     double middle = column == null ? double.NaN : capsule.TransformToAncestor(column).TransformBounds(new Rect(capsule.RenderSize)) is var bounds

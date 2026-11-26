@@ -10,6 +10,7 @@ struct EngineQuotaDashboard: Codable, Equatable {
         let weekly: QuotaDashboardPresentation.Reading
         let status: QuotaConnectionPresentation?
         let history: QuotaHistoryPresentation?
+        let groupWeeks: [EngineQuotaHistory.GroupWeek]?
     }
     let schemaVersion: Int
     let split: QuotaDashboardPresentation.Layout
@@ -19,7 +20,7 @@ struct EngineQuotaDashboard: Codable, Equatable {
 
     init(enabled: Set<AgentProvider>, snapshots: [AgentProvider: QuotaSnapshot], failed: Set<AgentProvider> = [],
          refreshing: Set<AgentProvider> = [], sourceText: [AgentProvider: String] = [:], errorText: [AgentProvider: String] = [:],
-         history: [AgentProvider: QuotaHistoryPresentation] = [:], at now: Date) {
+         history: [AgentProvider: QuotaHistoryPresentation] = [:], groupWeeks: [AgentProvider: [EngineQuotaHistory.GroupWeek]] = [:], at now: Date) {
         schemaVersion = 1
         let ordered = HarnessRegistry.descriptors.filter { $0.hasQuotaDisplay && enabled.contains($0.id) }.map(\.id)
         let displayed = HarnessRegistry.descriptors.filter { ($0.hasQuotaDisplay || $0.reportsAccountCredits) && enabled.contains($0.id) }.map(\.id)
@@ -40,7 +41,7 @@ struct EngineQuotaDashboard: Codable, Equatable {
             }
             return Provider(provider: provider, fiveHour: reading(.fiveHour), weekly: reading(.weekly),
                 status: provider == .deepseek ? nil : QuotaConnectionPresentation(provider: provider,
-                    snapshot: snapshots[provider], error: errorText[provider], refreshing: refreshing.contains(provider)), history: history[provider])
+                    snapshot: snapshots[provider], error: errorText[provider], refreshing: refreshing.contains(provider)), history: history[provider], groupWeeks: groupWeeks[provider])
         }
     }
 }

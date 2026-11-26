@@ -85,7 +85,9 @@ public enum PacerEngine {
             codexHookServices: demo || readOnly ? nil : .live(runtimeRoot: progressRoot),
             managesCodexProgress: !demo && !readOnly, managesDeepSeekProgress: !demo && !readOnly, managesLocalHarnessProgress: !demo && !readOnly,
             codexProgressPaths: .init(root: progressRoot), allowsStorageRecovery: !readOnly,
-            demoSubagents: demo && CommandLine.arguments.contains("--demo-subagents"))
+            antigravityAppInstalled: { WindowsAntigravityInstallation.shared.resolve() != nil },
+            demoSubagents: demo && CommandLine.arguments.contains("--demo-subagents"),
+            demoAntigravity: demo && CommandLine.arguments.contains("--demo-antigravity"))
         await runtime.hello()
         let input = EngineInput()
         var framer = EngineFramer()
@@ -354,6 +356,8 @@ actor EngineRuntime {
     private var installation: ProviderInstallationDetection?
     private var lastInstallationDetection = Date.distantPast
     private let detectInstallation: @Sendable () async -> ProviderInstallationDetection
+    private let antigravityAppInstalled: (@Sendable () -> Bool)?
+    private var detectedAntigravityApp: Bool?
     private var codexHome: URL
     private var usesCustomCodexHome = false
     private let defaultCodexHome: URL
@@ -508,6 +512,7 @@ actor EngineRuntime {
     private let allowsStorageRecovery: Bool
     /// The demo's Codex task works with three subagents, as the Mac's `--demo-subagents`.
     private let demoSubagents: Bool
+    private let demoAntigravity: Bool
 
     init(demo: Bool, now: @escaping @Sendable () -> Date = { Date() },
          dismissalStore: CompletionDismissalStore? = .applicationDefault,
@@ -542,10 +547,12 @@ actor EngineRuntime {
              await Task.detached(priority: .utility) { ProviderInstallationDetection.detect() }.value
          },
          output: @escaping @Sendable (Data) -> Void = { try? FileHandle.standardOutput.write(contentsOf: $0) },
-         demoSubagents: Bool = false) {
+         antigravityAppInstalled: (@Sendable () -> Bool)? = nil,
+         demoSubagents: Bool = false, demoAntigravity: Bool = false) {
         self.antigravityHost = antigravityHost; self.localQuotaDirectory = localQuotaDirectory
         self.demo = demo; self.now = now; self.output = output; self.quotaServices = quotaServices; self.desktopServices = desktopServices
         self.allowsStorageRecovery = allowsStorageRecovery; self.demoSubagents = demo && demoSubagents
+        self.demoAntigravity = demo && demoAntigravity
         self.sourceSettings = sourceSettings
         self.localHarnessDefinitions = localHarnessDefinitions
         self.balanceServices = balanceServices
@@ -565,6 +572,7 @@ actor EngineRuntime {
         self.managesDeepSeekProgress = managesDeepSeekProgress
         self.managesLocalHarnessProgress = managesLocalHarnessProgress
         self.detectInstallation = installationDetection
+        self.antigravityAppInstalled = antigravityAppInstalled
         self.activityState = ActivityApplicationState(inbox: CompletionInbox(dismissalStore: demo ? nil : dismissalStore))
         self.notificationRegistry = .init(store: notificationStore, now: now())
         #if os(Windows)
@@ -893,7 +901,7 @@ actor EngineRuntime {
             guard home.utf8.count <= 32768, !home.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
                 failure(id: command.id, code: "invalidCommand"); return true
             }
-            let fallback = local.map { $0.defaultHome() } ?? (provider == .claude ? defaultClaudeHome : defaultDeepseekHome), isDemo = demo
+            let fallback = local.map { demo ? $0.defaultHome(userHome: defaultCodexHome.deletingLastPathComponent()) : $0.defaultHome() } ?? (provider == .claude ? defaultClaudeHome : defaultDeepseekHome), isDemo = demo
             let report = await Task.detached(priority: .utility) {
                 EngineProviderHomeReport.inspect(provider: provider, home: home, fallback: fallback, demo: isDemo)
             }.value
@@ -1020,6 +1028,7 @@ actor EngineRuntime {
             if demo { publish(notices: [], force: true) }
             else if provider == .codex, let quotaMonitor { await quotaMonitor.refreshIfDue(expanded: expanded, force: true) }
             else if provider == .claude, let claudeQuotaMonitor { _ = await claudeQuotaMonitor.refreshIfDue(expanded: expanded, force: true) }
+            else if localQuotaCoordinators[provider] != nil { refreshLocalQuota(provider, force: true) }
             else { failure(id: command.id, code: "unavailable"); return true }
         case "snoozeDeepSeekSpike":
             guard initialized else { failure(id: command.id, code: "unavailable"); return true }
@@ -1131,7 +1140,10 @@ actor EngineRuntime {
     }
 
     private func configure(_ parameters: EngineCommand.Parameters?) async throws -> ApplicationLifecycleCoordinator.Plan {
-        let parameters = parameters ?? EngineCommand.Parameters()
+        var parameters = parameters ?? EngineCommand.Parameters()
+        if demoAntigravity, clientSupportsHarnessModules, !initialized, parameters.providerModes == nil, parameters.enabledProviders == nil {
+            parameters.providerModes = [:]
+        }
         // Validate the entire update before replacing any source state.
         // Omitted/null retains a source for protocol-1 callers; an empty
         // override explicitly restores the inherited/default source.
@@ -1197,11 +1209,18 @@ actor EngineRuntime {
             }
         }
         var detected = installation
+        var foundApp = detectedAntigravityApp
         if parameters.providerModes != nil {
             let previous = generation
             // The demo's computer has the three original apps; WorkBuddy shows in
             // the demo once turned on, so the reference scenes stay as they were.
-            if demo { detected = .init(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true) } else { lastInstallationDetection = now(); detected = withCustomHomes(await detectInstallation(), selectedHomes ?? harnessHomeOverrides) }
+            if demo {
+                detected = .init(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true, additional: demoAntigravity ? [.antigravity] : [])
+                foundApp = demoAntigravity
+            } else {
+                lastInstallationDetection = now()
+                (detected, foundApp) = await detectModules(homes: selectedHomes ?? harnessHomeOverrides)
+            }
             guard generation == previous else { throw EngineCommand.Failure.invalid }
         }
         let selectedProviders = explicitProviders ?? (parameters.providerModes == nil ? nil :
@@ -1254,7 +1273,7 @@ actor EngineRuntime {
         }
         // A moved data folder resets its monitor through the lifecycle plan below.
         if let selectedHomes { harnessHomeOverrides = selectedHomes }
-        moduleSettings = updatedSettings; installation = detected
+        moduleSettings = updatedSettings; installation = detected; detectedAntigravityApp = foundApp
         if parameters.providerModes != nil { moduleConfigurationActive = true }
         else if explicitProviders != nil { moduleConfigurationActive = false }
         if let selectedProviders {
@@ -1350,8 +1369,9 @@ actor EngineRuntime {
     }
 
     private func localHarnessHome(_ definition: LocalHarnessDefinition) -> URL {
-        harnessHomeOverrides[definition.descriptor.id] ??
-            definition.resolveHome(override: WindowsEnvironment.value(definition.homeEnvironmentKey, in: ProcessInfo.processInfo.environment),
+        if let override = harnessHomeOverrides[definition.descriptor.id] { return override }
+        if demo { return definition.defaultHome(userHome: defaultCodexHome.deletingLastPathComponent()) }
+        return definition.resolveHome(override: WindowsEnvironment.value(definition.homeEnvironmentKey, in: ProcessInfo.processInfo.environment),
                 isAbsolute: WindowsCodexExecutableDiscovery.absolute)
     }
 
@@ -1561,7 +1581,13 @@ actor EngineRuntime {
             module.brand = .init(registered.brand); module.website = registered.website
             module.balance = registered.balance?.rawValue
         }
+        if provider == .antigravity { module.applicationInstalled = detectedAntigravityApp }
         module.prominent = moduleLibrary.entries.first { $0.provider == provider }?.prominent
+        if let groups = descriptor?.quotaGroups {
+            module.quotaGroups = .init(defaultsKey: groups.defaultsKey, title: L10n.text(groups.labelPrefix + ".group"),
+                options: groups.ids.map { .init(id: $0, label: groups.name($0)) },
+                selected: groups.selection(in: localQuota[provider]?.snapshot, saved: harnessQuotaGroups[groups.defaultsKey]))
+        }
         if let descriptor, descriptor.progressConnector {
             let state = localProgressStatuses[provider]
             module.progressGuide = HarnessProgressGuide(setup: state?.setup, connection: state?.connection, reported: state?.reported ?? false,
@@ -1619,6 +1645,14 @@ actor EngineRuntime {
 
     /// A data folder chosen in Settings counts as an installation once it
     /// holds the app's data.
+    private func detectModules(homes: [AgentProvider: URL]) async -> (ProviderInstallationDetection, Bool?) {
+        let modules = withCustomHomes(await detectInstallation(), homes)
+        guard modules.isInstalled(.antigravity) else { return (modules, false) }
+        // A data directory enables monitoring even after the desktop app has been removed.
+        guard let check = antigravityAppInstalled else { return (modules, nil) }
+        return (modules, await Task.detached(priority: .utility) { check() }.value)
+    }
+
     private func withCustomHomes(_ detection: ProviderInstallationDetection, _ homes: [AgentProvider: URL]) -> ProviderInstallationDetection {
         let custom = homes.filter { localHarnesses.definition(for: $0.key)?.hasLocalData(home: $0.value) == true }.keys
         return custom.isEmpty ? detection : .init(installed: detection.installed.union(custom))
@@ -2229,9 +2263,9 @@ actor EngineRuntime {
            now().timeIntervalSince(lastInstallationDetection) >= 600 {
             let previous = generation
             lastInstallationDetection = now()
-            let detected = withCustomHomes(await detectInstallation(), harnessHomeOverrides)
+            let (detected, foundApp) = await detectModules(homes: harnessHomeOverrides)
             guard active, generation == previous, !Task.isCancelled else { return }
-            installation = detected
+            installation = detected; detectedAntigravityApp = foundApp
             let next = moduleSettings.enabledProviders(detection: detected, supported: supportedProviders)
             if next != enabled {
                 for provider in enabled.subtracting(next) { inbox.remove(provider: provider) }
@@ -3044,6 +3078,16 @@ actor EngineRuntime {
                 let cloud = DemoScenario.claudeCloud(stage: stage, at: date)
                 rows += cloud.activities; requests = cloud.attention
             }
+            if demoAntigravity, enabled.contains(.antigravity) {
+                var sample = DemoScenario.antigravityTasks(at: date)
+                sample.scope = "demo-antigravity"
+                rows += sample.activities; requests += sample.requests
+                harnessActivities.replace(.antigravity, with: sample)
+                let reading = DemoScenario.antigravityQuota(at: date)
+                localQuota[.antigravity] = reading
+                localQuotaHistory[.antigravity, default: .init()].receive(snapshot: reading.snapshot, history: reading.history, warning: nil)
+                localProgressStatuses[.antigravity] = disabledHarnessProgress.contains(.antigravity) ? nil : .init(.configured)
+            }
             demoActivity = HarnessActivity(activities: rows, requests: requests)
             quota = Dictionary(uniqueKeysWithValues: [AgentProvider.codex, .claude].compactMap { provider in
                 DemoScenario.quota(provider, at: date).last.map { (provider, $0) }
@@ -3398,14 +3442,16 @@ actor EngineRuntime {
             history[.claude] = claudeHistory.presentation(provider: .claude, snapshot: snapshots[.claude], weekly: weekly,
                 error: quotaErrors[.claude], refreshing: refreshing, now: date)
         }
+        var groupWeeks: [AgentProvider: [EngineQuotaHistory.GroupWeek]] = [:]
         for (provider, state) in localQuota where enabled.contains(provider) {
+            if let full = state.snapshot { groupWeeks[provider] = localQuotaHistory[provider]?.groupWeeks(provider: provider, snapshot: full, at: date) }
             let weekly = QuotaDashboardPresentation.Reading(provider: provider, period: .weekly, snapshot: snapshots[provider],
                 failed: state.error != nil, refreshing: state.refreshing, now: date)
             history[provider] = localQuotaHistory[provider]?.presentation(provider: provider, snapshot: state.snapshot, weekly: weekly,
                 error: state.error, refreshing: state.refreshing, now: date)
         }
         let dashboard = EngineQuotaDashboard(enabled: enabled, snapshots: snapshots,
-            failed: failedProviders, refreshing: refreshingProviders, sourceText: sourceTexts, errorText: quotaErrors, history: history, at: date)
+            failed: failedProviders, refreshing: refreshingProviders, sourceText: sourceTexts, errorText: quotaErrors, history: history, groupWeeks: groupWeeks, at: date)
         if projectionReady {
             #if os(Windows)
             let codexDefaultProfile = demo || WindowsActivityNavigation.isDefaultProfile(codexHome, provider: .codex)
@@ -3693,7 +3739,7 @@ actor EngineRuntime {
         case .deepseek:
             fields += [deepseekSettings.selection.rawValue, DeepSeekAuthMode.detect(home: deepseekHome)?.rawValue ?? ""]
         default:
-            let local = scope == "quota" && localQuotaSources[provider] != nil
+            let local = scope == "quota" && provider.quotaGroups != nil
             guard let source = local ? localQuota[provider]?.snapshot?.accountScope : harnessActivities[provider]?.scope else { return nil }
             fields.append(source)
         }
@@ -3718,12 +3764,19 @@ actor EngineRuntime {
         }
         let observed = notificationActivities.first { requested == $0.id || notice.id.hasPrefix($0.id + ":") }?.provider
         let fallback = supportedProviders.first { notice.id.hasPrefix($0.rawValue + ":") }
-        let provider = entry?.target.provider ?? request?.provider ?? observed ?? fallback ??
+        let provider = notice.taskProvider ?? entry?.target.provider ?? request?.provider ?? observed ?? fallback ??
             (notice.category?.hasPrefix("deepseek.") == true ? .deepseek : .codex)
         let deepseek = provider == .deepseek
         let scope = entry?.target.sourceHostID == DurableActivityCatalog.hostID ? DurableActivityCatalog.hostID
             : entry?.target.claudeCloud != nil ? "cloud" : deepseek ? "wallet" : notice.kind == .lowQuota ? "quota" : "local"
         guard let source = notificationSource(provider, scope: scope) else { value.actions = []; return value }
+        if provider == .antigravity {
+            let kind = "openAntigravity"
+            let action = EngineNotice.Action(kind: kind, title: L10n.text("activity.open_app", provider.displayName),
+                reference: notificationRegistry.issue(kind: kind, provider: provider, source: source, scope: scope, target: nil, now: date))
+            value.defaultAction = action; value.actions = [action]
+            return value
+        }
         let target = entry.map(EngineNotificationRegistry.target)
         // Allowing Pacer in Codex starts on Codex's page in Settings, as on the Mac.
         let kind = target != nil ? "openTask" : notice.id == "codex:hooks-approval" ? "openCodexSettings"

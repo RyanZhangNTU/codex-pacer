@@ -243,10 +243,10 @@ internal sealed partial class SettingsWindow
         tasks.Children.Add(Link("settings.hide_projects", "main.panel.in_general", "panel.link.hide_projects", "general"));
         panelInspectorPanels["tasks"] = tasks; body.Children.Add(tasks);
 
-        foreach (string provider in new[] { "codex", "claude" }.Concat(CreditModules()))
+        foreach (string provider in QuotaWindowModules().Concat(CreditModules()))
         {
             var quota = new StackPanel();
-            bool account = provider is not ("codex" or "claude");
+            bool account = CreditModules().Contains(provider);
             if (!account)
                 quota.Children.Add(Stacked(provider + "Periods", "main.panel.periods", PanelSegmentChoices(provider + "Periods", "main.panel.periods",
                     [("both", "main.panel.periods_both"), ("weekly", "main.panel.periods_weekly"), ("fiveHour", "main.panel.periods_five")],
@@ -406,6 +406,8 @@ internal sealed partial class SettingsWindow
         if (panelEditor == null || activePane != "expandedPanel") return;
         var projection = ReadPanel();
         if (projection == null) { panelEditor.IsEnabled = false; return; }
+        if (QuotaWindowModules().Any(id => !panelInspectorPanels.ContainsKey(id)))
+        { RebuildPane("expandedPanel"); RefreshValues(); return; }
         panelProjection = projection; panelEditor.IsEnabled = !busy && !session.RequiresRestart;
         var preferences = session.Current; var options = projection.Options;
         var catalog = projection.Catalog.ToDictionary(value => value.Id);
@@ -470,9 +472,9 @@ internal sealed partial class SettingsWindow
         }
         panelPreview?.Update(options);
         panelRetention!.SelectedValue = preferences.RetentionMinutes;
-        foreach (string provider in new[] { "codex", "claude" }.Concat(CreditModules()))
+        foreach (string provider in QuotaWindowModules().Concat(CreditModules()))
         {
-            if (provider is not ("codex" or "claude")) Pick(provider + ".center", preferences.Credits(provider).Center);
+            if (CreditModules().Contains(provider)) Pick(provider + ".center", preferences.Credits(provider).Center);
             Pick(provider + "Periods", options.Periods(provider)); Pick(provider + ".style", preferences.ExpandedQuotaStyle);
             Pick(provider + ".arrange", options.QuotaArrange); Flip(provider + ".details", options.QuotaDetails); Flip(provider + ".paceTick", options.PaceTick);
         }
@@ -581,7 +583,7 @@ internal sealed partial class SettingsWindow
         return id switch
         {
             "tasks" => ui.Text("main.panel.page_size") + " " + options.PageSize + " · " + ui.Text(options.OneLine ? "main.panel.row_one" : "main.panel.row_two"),
-            "codex" or "claude" => ui.Text(options.Periods(id) switch { "weekly" => "main.panel.periods_weekly", "fiveHour" => "main.panel.periods_five", _ => "main.panel.periods_both" }),
+            "codex" or "claude" or "antigravity" => ui.Text(options.Periods(id) switch { "weekly" => "main.panel.periods_weekly", "fiveHour" => "main.panel.periods_five", _ => "main.panel.periods_both" }),
             "deepseek" => Both("main.panel.dial", ui.Text(options.DeepseekDial == "day" ? "main.panel.dial_day" : "main.panel.dial_budget")),
             "deepseekSpend" => Both("main.panel.spend_tasks", ui.Text("main.panel.spend_count").Replace("%ld", count, StringComparison.Ordinal)),
             "deepseekWeek" => Both("main.panel.week_line", ui.Text(options.WeekLine ? "main.panel.show" : "main.panel.hide")),

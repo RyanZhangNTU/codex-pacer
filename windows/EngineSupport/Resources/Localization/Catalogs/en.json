@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "e97c2cfe6c29e615972d3ea07d6aea3e0173277cc7ae4f578361bd91eb4efddf",
-    "windows/EngineSupport/Resources/Localization/en.json": "9c5c3afa9978273c9160fabc0506c301ea0cb77b9090d382d0ec78e963927bff"
+    "windows/EngineSupport/Resources/Localization/en.json": "b9bb6daf2c98610918c01231ba783f2c2dda0ce340518608aa63f1ac2f97cf9a"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -1922,6 +1922,7 @@
     "windows.pages.copy_failed": "Windows couldn't copy the link. Try again.",
     "windows.pages.open_failed": "Windows couldn't open the link. Try again in your browser.",
     "windows.platform.unsupported": "Codex Pacer requires Windows 10 build 19041 or later.",
+    "windows.progress.copy_failed": "Windows couldn\u2019t copy the server name. Try again.",
     "windows.provider.detected": "Detected on this PC",
     "windows.provider.local": "This PC",
     "windows.provider.not_detected": "Not detected on this PC",

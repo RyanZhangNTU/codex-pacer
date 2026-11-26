@@ -34,6 +34,9 @@ internal sealed partial class SettingsWindow
     private StackPanel? harnessCreditsBlock;
     private string harnessCreditsKey = "";
     private Button? harnessAccountSignIn, harnessAccountOptions;
+    private TextBlock? harnessQuotaAccount, harnessQuotaUsage;
+    private Button? harnessOpenApp, harnessQuotaRefresh;
+    private ComboBox? harnessGroup;
 
     private void ClearHarnessPage()
     {
@@ -46,6 +49,7 @@ internal sealed partial class SettingsWindow
         harnessProgressChip = null; harnessProgressChipText = harnessProgressInfo = null; harnessProgressBody = null; harnessProgressKey = "";
         harnessAccountState = harnessAccountHelp = null; harnessCreditsBlock = null; harnessCreditsKey = "";
         harnessAccountSignIn = harnessAccountOptions = null;
+        harnessQuotaAccount = harnessQuotaUsage = null; harnessOpenApp = harnessQuotaRefresh = null; harnessGroup = null;
     }
 
     private void BuildHarnessPage(string provider)
@@ -73,10 +77,51 @@ internal sealed partial class SettingsWindow
             rows.Add(harnessUsageRow);
             harnessCreditsBlock = new StackPanel(); Identify(harnessCreditsBlock, id + ".credits_block", ui.Text("harness.credits"));
         }
+        if (descriptor.QuotaGroups != null)
+        {
+            StackPanel Actions(TextBlock label, Button button)
+            {
+                var actions = new StackPanel { Orientation = Orientation.Horizontal };
+                label.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+                label.VerticalAlignment = VerticalAlignment.Center; label.Margin = new Thickness(0, 0, 8, 0);
+                actions.Children.Add(label); actions.Children.Add(button); return actions;
+            }
+            harnessQuotaAccount = Label("", 12.5); harnessQuotaUsage = Label("", 12.5);
+            string open = HarnessAccountCard.Fields(ui, "activity.open_app", descriptor.DisplayName ?? provider);
+            harnessOpenApp = new Button { Content = open }; Identify(harnessOpenApp, id + ".open", open);
+            harnessOpenApp.Click += async (_, _) =>
+            {
+                if (!demo && !await WindowsConversationApplication.OpenApplicationAsync(provider))
+                    ShowIssueText(HarnessAccountCard.Fields(ui, "progress_guide.plugin.open_failed", descriptor.DisplayName ?? provider));
+            };
+            harnessQuotaRefresh = new Button { Content = ui.Text("common.refresh") };
+            Identify(harnessQuotaRefresh, id + ".refresh", ui.Text("common.refresh"));
+            harnessQuotaRefresh.Click += async (_, _) =>
+            {
+                try { await client.SendAsync("retryQuota", new { provider }); }
+                catch (Exception error) when (error is System.IO.IOException or OperationCanceledException or InvalidOperationException)
+                { ShowIssue("windows.connection.refresh_failed"); }
+            };
+            rows.Add(InfoRow(ui.Text("provider.account"), Actions(harnessQuotaAccount, harnessOpenApp), id: id + ".account"));
+            rows.Add(InfoRow(ui.Text("provider.usage"), Actions(harnessQuotaUsage, harnessQuotaRefresh), id: id + ".usage"));
+        }
         harnessSections.Children.Add(SectionTitle(ui.Text("main.section.status")));
         harnessSections.Children.Add(Card(rows.ToArray()));
 
         var display = new List<UIElement>();
+        if (descriptor.QuotaGroups is { } groups)
+        {
+            var choice = harnessGroup = new ComboBox { SelectedValuePath = "Tag", MinWidth = 120 };
+            foreach (var item in groups.Options) choice.Items.Add(new ComboBoxItem { Tag = item.Id, Content = item.Label });
+            choice.SelectedValue = groups.Selected; Identify(choice, id + ".group", groups.Title); editors.Add(choice);
+            choice.SelectionChanged += async (_, _) =>
+            {
+                if (synchronizing || busy || activePane != provider || choice.SelectedValue is not string selected ||
+                    selected == HarnessModule(provider)?.QuotaGroups?.Selected) return;
+                await Change(p => p with { HarnessQuotaGroups = new(p.HarnessQuotaGroups) { [groups.DefaultsKey] = selected } });
+            };
+            display.Add(InfoRow(groups.Title, choice, id: id + ".quota_group"));
+        }
         if (descriptor.HasTaskProgress == true) display.Add(BuildHarnessProgressRow(client, provider, id, descriptor));
         if (descriptor.ReportsAccountCredits == true || descriptor.ReportsSessionUsage == true)
         {
@@ -98,6 +143,13 @@ internal sealed partial class SettingsWindow
         {
             harnessSections.Children.Add(SectionTitle(ui.Text("provider.usage_settings")));
             harnessSections.Children.Add(Card(harnessCreditsBlock));
+        }
+        if (descriptor.QuotaGroups != null && Uri.TryCreate(descriptor.Website, UriKind.Absolute, out var website) && website.Scheme == Uri.UriSchemeHttps)
+        {
+            var link = new Button { Content = website.Host, Style = (Style)FindResource("SettingsLink"), HorizontalAlignment = HorizontalAlignment.Left };
+            Identify(link, id + ".website", website.Host);
+            link.Click += (_, _) => { if (!SettingsPagePolicy.OpenWebsite(website, guideLinkLauncher)) ShowIssue("windows.pages.open_failed"); };
+            harnessSections.Children.Add(link);
         }
         if (descriptor.Local == true) harnessSections.Children.Add(Card(ProviderHomeEditor(provider)));
     }
@@ -205,6 +257,9 @@ internal sealed partial class SettingsWindow
             };
             return button;
         }
+        string? waitingText = guide!.WaitingText;
+        if (waitingText == null && guide.Waiting && HarnessModule(provider)?.Launch?.ConnectorsPath != null)
+            waitingText = ui.Text("progress_guide.waiting");
         UIElement ActionRow()
         {
             var row = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
@@ -217,12 +272,12 @@ internal sealed partial class SettingsWindow
                 Identify(note, id + ".progress_prompt", note.Text); row.Children.Add(note);
             }
             if (Action() is { } button) row.Children.Add(button);
-            if (guide!.Waiting)
+            if (waitingText != null)
             {
                 var waiting = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
                 var glyph = new IconGlyph { Symbol = "clock", Width = 13, Height = 13, Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center };
                 glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
-                var text = Label(guide.WaitingText ?? ui.Text("progress_guide.waiting"), 12); text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+                var text = Label(waitingText, 12); text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
                 text.VerticalAlignment = VerticalAlignment.Center;
                 waiting.Children.Add(glyph); waiting.Children.Add(text);
                 Identify(waiting, id + ".progress_waiting", text.Text);
@@ -267,7 +322,15 @@ internal sealed partial class SettingsWindow
                 var art = picture == "trust" ? TrustPicture(provider) : CustomConnectorPicture();
                 art.Margin = new Thickness(0, 8, 0, 0); body.Children.Add(art);
             }
-            if (step.State == "current" && (guide.Action != null || guide.Waiting)) body.Children.Add(ActionRow());
+            if (step.State == "current" && (guide.Action != null || waitingText != null)) body.Children.Add(ActionRow());
+            if (step.CopyText is { Length: > 0 } server)
+            {
+                string label = ui.Text("progress_guide.plugin.copy");
+                var copy = new Button { Content = label, VerticalAlignment = VerticalAlignment.Top };
+                Identify(copy, id + ".progress_copy", label + ", " + server);
+                copy.Click += (_, _) => { try { Clipboard.SetText(server); } catch (System.Runtime.InteropServices.COMException) { ShowIssue("windows.progress.copy_failed"); } };
+                Grid.SetColumn(copy, 2); line.Children.Add(copy);
+            }
             line.Children.Add(body);
             Identify(line, id + ".progress_step" + index, step.Title);
             AutomationProperties.SetItemStatus(line, ui.Text("progress_guide.state." + step.State));
@@ -647,6 +710,17 @@ internal sealed partial class SettingsWindow
         harnessOff!.Visibility = !closed && !module.Enabled ? Visibility.Visible : Visibility.Collapsed;
         harnessSections!.Visibility = closed || module.Enabled ? Visibility.Visible : Visibility.Collapsed;
         RefreshHarnessAccount(editable && module.Enabled);
+        if (harnessGroup != null && module.QuotaGroups is { } groups)
+        {
+            var snapshot = engine?.LatestSnapshot;
+            var reading = snapshot?.QuotaDashboard?.Providers.FirstOrDefault(value => value.Provider == module.Provider);
+            var full = snapshot?.GroupedQuota?.FirstOrDefault(value => value.Provider == module.Provider);
+            harnessQuotaAccount!.Text = full?.AccountScope != null ? ui.Text("harness.account.signed_in") : "";
+            harnessQuotaUsage!.Text = reading?.GroupWeeks?.FirstOrDefault(value => value.Id == groups.Selected)?.Remaining ?? "—";
+            harnessOpenApp!.IsEnabled = editable && !demo && module.HasApplication == true;
+            harnessQuotaRefresh!.IsEnabled = editable && module.Enabled && reading?.History?.Refreshing != true;
+            harnessGroup.IsEnabled = editable; harnessGroup.SelectedValue = groups.Selected;
+        }
         bool progressOn = !session.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal);
         if (harnessProgress != null)
         {
@@ -662,7 +736,7 @@ internal sealed partial class SettingsWindow
         RefreshHarnessProgressGuide(module.Provider, guide, editable);
         if (harnessProgressPoll != null)
         {
-            bool poll = guide is { Waiting: true } && progressOn && !demo;
+            bool poll = guide is { Waiting: true } && (progressOn || guide.Stage == "removalPending") && !demo;
             if (poll && !harnessProgressPoll.IsEnabled) harnessProgressPoll.Start();
             else if (!poll) harnessProgressPoll.Stop();
         }

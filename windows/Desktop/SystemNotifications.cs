@@ -24,14 +24,14 @@ internal interface ISystemNotifications : IDisposable
 internal static class NotificationPayload
 {
     internal static string Tag(string id) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id))).Substring(0, 16);
-    internal static bool IsAction(string value) => value is "showIsland" or "openTask" or "snoozeSpike" or "topUp" or "openHarness" or "openCodexSettings";
+    internal static bool IsAction(string value) => value is "showIsland" or "openTask" or "snoozeSpike" or "topUp" or "openHarness" or "openAntigravity" or "openCodexSettings";
     internal static bool IsReference(string? value) => value is { Length: 32 } && System.Linq.Enumerable.All(value, c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
     internal static string Argument(string action, string reference) => IsAction(action) && IsReference(reference)
         ? "pacer=2&action=" + action + "&ref=" + reference : "pacer=2";
     internal static string? ParseAction(string? value)
     {
         if (value == null || value.Length > 128) return null;
-        foreach (string action in new[] { "showIsland", "openTask", "snoozeSpike", "topUp", "openHarness", "openCodexSettings" })
+        foreach (string action in new[] { "showIsland", "openTask", "snoozeSpike", "topUp", "openHarness", "openAntigravity", "openCodexSettings" })
         {
             string prefix = "pacer=2&action=" + action + "&ref=";
             if (value.StartsWith(prefix, StringComparison.Ordinal) && IsReference(value[prefix.Length..])) return action;

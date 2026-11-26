@@ -50,7 +50,7 @@ internal sealed partial class SettingsWindow
         if (modulesFound == null || modulesMissing == null) return;
         var modules = LibraryModules();
         // Rebuild only when a module moves between the sections; states repaint in place.
-        string key = string.Join("|", modules.Select(module => module.Provider + ":" + module.IsProminent));
+        string key = string.Join("|", modules.Select(module => module.Provider + ":" + module.IsProminent + ":" + module.HasApplication));
         if (key != moduleLibraryKey)
         {
             moduleLibraryKey = key;
@@ -109,7 +109,7 @@ internal sealed partial class SettingsWindow
         var cell = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
         cell.Children.Add(tile.Root);
         // A service that isn't here links to where to get it.
-        if (!module.IsProminent && Uri.TryCreate(module.Website, UriKind.Absolute, out var site) && site.Scheme == Uri.UriSchemeHttps)
+        if (module.HasApplication == false && Uri.TryCreate(module.Website, UriKind.Absolute, out var site) && site.Scheme == Uri.UriSchemeHttps)
         {
             string label = ui.Text("modules.get").Replace("%@", name, StringComparison.Ordinal);
             var get = new Button { Content = label, Style = (Style)FindResource("SettingsLink"), HorizontalAlignment = HorizontalAlignment.Left,

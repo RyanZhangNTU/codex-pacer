@@ -11,6 +11,7 @@
   "windows.accessibility.scroll.pageDown": "Page Down",
   "windows.accessibility.scroll.position": "Scroll Position",
   "windows.pages.open_failed": "Windows couldn't open the link. Try again in your browser.",
+  "windows.progress.copy_failed": "Windows couldn’t copy the server name. Try again.",
   "windows.pages.copy_failed": "Windows couldn't copy the link. Try again.",
   "windows.settings.read_failed": "Settings could not be read. Defaults are in use and project names are hidden.",
   "windows.show_island": "Show",

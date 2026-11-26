@@ -240,6 +240,8 @@ struct EngineModule: Codable, Equatable {
     var monitoring: EngineStatusRow? = nil
     /// Codex's Account row, read from its quota (`CodexAccountState`).
     var account: EngineStatusRow? = nil
+    var applicationInstalled: Bool? = nil
+    var quotaGroups: EngineQuotaGroups? = nil
 }
 
 /// One Status row as Core words it: its state, tone (`positive`, `neutral`,
@@ -266,6 +268,13 @@ struct EngineStatusRow: Codable, Equatable, Sendable {
         tone = account.tone.rawValue; text = account.text; detail = account.detail
         action = account == .signedOut && opensCodex ? "openCodex" : nil
     }
+}
+
+struct EngineQuotaGroups: Codable, Equatable {
+    struct Option: Codable, Equatable { let id: String, label: String }
+    let defaultsKey: String, title: String
+    let options: [Option]
+    let selected: String
 }
 
 struct EngineModuleLaunch: Codable, Equatable {

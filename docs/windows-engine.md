@@ -50,7 +50,7 @@ Antigravity 2.35.2 installs an unsigned Electron application and an unsigned lan
 
 Antigravity leaves old hub files behind on Windows. The engine lists up to 4096 directory entries and checks the 32 most recently modified hub candidates. Exactly one of those candidates must pass verification. Its file must have one link and belong to the current user. Before sending a request, the engine verifies the process user, image path, creation time and ownership of the IPv4 loopback listener. Each WinHTTP POST connects directly to that listener and has two seconds to finish, including reading the bounded, uncompressed response.
 
-The `quota` projection follows the group saved in `harnessQuotaGroups` under the descriptor's defaults key. Gemini is the default. The optional `groupedQuota` snapshot, History and quota alerts cover both groups. Restart Antigravity to load its Pacer plugin. If its reporter still holds the plugin directory open during removal, the engine retries each minute and when the desktop reports that Antigravity has exited.
+The `quota` projection follows the group saved in `harnessQuotaGroups` under the descriptor's defaults key. Gemini is the default. The optional `groupedQuota` snapshot and quota alerts cover both groups. The desktop uses `modules[].quotaGroups` for the picker and `quotaDashboard.providers[].groupWeeks` for each weekly reading and its available history. `applicationInstalled` tells the desktop whether it can offer Open Antigravity or Get when only the data folder remains. Restart Antigravity to load its Pacer plugin. If its reporter still holds the plugin directory open during removal, the engine retries each minute and when the desktop reports that Antigravity has exited.
 
 ## WorkBuddy
 

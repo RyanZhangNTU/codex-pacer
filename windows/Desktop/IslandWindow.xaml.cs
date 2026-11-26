@@ -282,15 +282,18 @@ public partial class IslandWindow : Window
     }
     internal async Task WaitForPresentationAsync()
     {
-        await ShellProjection.WhenIdleAsync();
-        await Dispatcher.Yield(DispatcherPriority.ContextIdle);
         var timeout = Stopwatch.StartNew();
-        while (displayRefreshPending || rendering || renderCallback || !lastFrame.Finished || !VisibleSizeMatches(destination.Width, destination.Height))
+        do
         {
-            if (timeout.Elapsed > TimeSpan.FromSeconds(5)) throw new TimeoutException("The synthetic window did not settle.");
+            // Rendering a queued snapshot can request a compact projection and retarget the window.
+            await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            await ShellProjection.WhenIdleAsync();
+            await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            if (Volatile.Read(ref queuedSnapshot) == null && !displayRefreshPending && !rendering && !renderCallback &&
+                lastFrame.Finished && VisibleSizeMatches(destination.Width, destination.Height)) return;
             await Task.Delay(25);
-        }
-        await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+        } while (timeout.Elapsed < TimeSpan.FromSeconds(20));
+        throw new TimeoutException($"The synthetic window did not settle. Visible={IsVisible}, fullscreenSuppressed={FullscreenSuppressed}, {PresentationDiagnostics}");
     }
     internal bool VisibleSizeMatches(double width, double height)
     {
@@ -943,9 +946,14 @@ public partial class IslandWindow : Window
             else if (current.WebAvailable && canConnectDeepSeekWeb?.Invoke() == true) DeepSeekWebSignInRequested?.Invoke(current.Context);
         };
     }
-    private FrameworkElement? QuotaStatus(DashboardProvider? provider) => provider?.Status is QuotaConnectionStatus status
-        ? new QuotaConnectionView(provider.Provider, status, ui, provider.Provider is "codex" or "claude" ? () => RetryProviderQuota(provider.Provider) : null,
-            provider.Provider is "codex" or "claude" ? () => { DismissForSettings(); ProviderSettingsRequested?.Invoke(provider.Provider); } : null) : null;
+    private FrameworkElement? QuotaStatus(DashboardProvider? provider)
+    {
+        if (provider == null) return null;
+        var status = provider.Status is { State: not "hidden" } connection
+            ? new QuotaConnectionView(provider.Provider, connection, ui, () => RetryProviderQuota(provider.Provider),
+                () => { DismissForSettings(); ProviderSettingsRequested?.Invoke(provider.Provider); }) : null;
+        return QuotaConnectionView.WithGroup(provider, status);
+    }
     private async Task RetryProviderQuota(string provider)
     {
         try { await engine.SendAsync("retryQuota", new { provider }); }

@@ -35,7 +35,7 @@ public partial class App : Application
     private UiText? ui;
     private bool demo;
     /// The demo's Codex task works with three subagents, as the Mac's `--demo-subagents`.
-    private bool demoSubagents;
+    private bool demoSubagents, demoAntigravity;
     private string? demoPreferencesFile;
     private Guid? demoPreferencesScope;
     private bool? demoDark;
@@ -73,6 +73,7 @@ public partial class App : Application
         }
         demo = e.Args.Contains("--demo");
         demoSubagents = demo && e.Args.Contains("--demo-subagents");
+        demoAntigravity = demo && e.Args.Contains("--demo-antigravity");
         int themeIndex = Array.IndexOf(e.Args, "--theme");
         if (themeIndex >= 0)
         {
@@ -110,9 +111,9 @@ public partial class App : Application
         if (providersIndex >= 0)
         {
             if (!demo || providersIndex + 1 >= e.Args.Length) throw new ArgumentException("Provider fixtures require demo mode.");
-            string[] known = ["codex", "claude", "deepseek", "workbuddy", "workbuddy-ai"];
+            string[] known = ["codex", "claude", "deepseek", "workbuddy", "workbuddy-ai", "antigravity"];
             string[] providers = e.Args[providersIndex + 1] == "all" ? ["codex", "claude", "deepseek"] : e.Args[providersIndex + 1].Split(',');
-            if (providers.Length is < 1 or > 5 || providers.Distinct().Count() != providers.Length || providers.Any(value => !known.Contains(value)))
+            if (providers.Length < 1 || providers.Length > known.Length || providers.Distinct().Count() != providers.Length || providers.Any(value => !known.Contains(value)))
                 throw new ArgumentException("Unknown demo providers.");
             preferences = preferences with { ProviderModes = known.ToDictionary(provider => provider, provider => providers.Contains(provider) ? "enabled" : "disabled") };
         }
@@ -132,9 +133,8 @@ public partial class App : Application
         int paneIndex = Array.IndexOf(e.Args, "--settings-pane");
         if (paneIndex >= 0)
         {
-            if (!demo || !captureSettings || paneIndex + 1 >= e.Args.Length || e.Args[paneIndex + 1] is not ("overview" or "history" or "general" or "appearance" or "collapsed" or "expandedPanel" or "codex" or "claude" or "deepseek" or "modules" or "harness.workbuddy" or "harness.workbuddy-ai" or "notifications" or "reminders" or "remote" or "about" or "support"))
+            if (!demo || !captureSettings || paneIndex + 1 >= e.Args.Length || e.Args[paneIndex + 1] is not ("overview" or "history" or "general" or "appearance" or "collapsed" or "expandedPanel" or "codex" or "claude" or "deepseek" or "modules" or "harness.workbuddy" or "harness.workbuddy-ai" or "harness.antigravity" or "notifications" or "reminders" or "remote" or "about" or "support"))
                 throw new ArgumentException("Settings pane fixtures require a supported demo preview.");
-            preferences = preferences with { LastSettingsPane = e.Args[paneIndex + 1] };
         }
         if (capture >= 0 && (!demo || capture + 1 >= e.Args.Length || !Path.IsPathFullyQualified(e.Args[capture + 1])))
             throw new ArgumentException("Preview capture requires demo mode and an absolute output path.");
@@ -191,6 +191,7 @@ public partial class App : Application
             (preferences, preferencesUnavailable) = preferencesStore.Load(migrateOptIns: !demo);
             if (positionIndex < 0) position = Array.IndexOf(positions, preferences.Position);
         }
+        if (paneIndex >= 0) preferences = preferences with { LastSettingsPane = e.Args[paneIndex + 1] };
         string language = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh" ? "zh-Hans" : "en";
         if (preferencesStore != null && preferences.Language != "system") language = preferences.Language;
         int languageIndex = Array.IndexOf(e.Args, "--language");
@@ -302,7 +303,8 @@ public partial class App : Application
                     !await applications.OpenConversationAsync(plan, context => engine.QueryAsync<bool>("activateActivityHost", new { context }))) return false;
                 await engine.SendAsync("completeActivityOpen", new { context = link.Context }); return true;
             },
-            provider => { Dispatcher.Invoke(() => OpenProviderSettings(provider)); return true; });
+            provider => { Dispatcher.Invoke(() => OpenProviderSettings(provider)); return true; },
+            () => WindowsConversationApplication.OpenApplicationAsync("antigravity"));
         notifications = new NotificationSession(settingsSession,
             demo ? new DemoSystemNotifications() : new WindowsSystemNotifications(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico")),
             action => Dispatcher.InvokeAsync(action), action => _ = notificationActions.HandleReferenceAsync(action), demo, () => applications.CanOpenHarness);
@@ -356,7 +358,7 @@ public partial class App : Application
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException) { }
             await engine.StartAsync(executable, demo, language, configuration: preferences.EngineConfiguration(), referenceFixture: referenceFixture,
-                claudeRuntimeRoot: runtimeRoot, codexProgressRuntimeRoot: codexProgressRuntimeRoot, crashLog: crashLog, demoSubagents: demoSubagents);
+                claudeRuntimeRoot: runtimeRoot, codexProgressRuntimeRoot: codexProgressRuntimeRoot, crashLog: crashLog, demoSubagents: demoSubagents, demoAntigravity: demoAntigravity);
             ShellProjection.Ready();
             engineReady.TrySetResult();
             engineReadyTicks = Environment.TickCount64;
@@ -456,6 +458,7 @@ public partial class App : Application
             start.ArgumentList.Add("--demo"); start.ArgumentList.Add("--language");
             start.ArgumentList.Add(preferences.Language == "system" ? (CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh" ? "zh-Hans" : "en") : preferences.Language);
             if (demoSubagents) start.ArgumentList.Add("--demo-subagents");
+            if (demoAntigravity) start.ArgumentList.Add("--demo-antigravity");
         }
         if (demoPreferencesFile != null)
         {

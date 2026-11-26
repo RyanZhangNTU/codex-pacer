@@ -36,6 +36,7 @@ The Composition bridge (`windows/Native/CompositionBackdrop`) builds with the Vi
 ```
 
 - Repeat with `--language zh-Hans` and `--theme dark` (a demo-only override). Check hover expansion, click to pin, Esc and opening Settings.
+- Add `--demo-antigravity` to an isolated demo to show Antigravity as installed, with a parent task, a subagent, a pending approval, a completed task and both quota groups.
 - `--demo-subagents` (with `--demo`) gives the Codex task three subagents, as on the Mac, to check the dots and the lines under the task.
 - `--demo --reference-fixture --activation-qa <unique-guid>` isolates a run from an existing instance. Close only the instance you started.
 - `--demo-preferences <absolute path>` (with `--reference-fixture` and a preview capture or an `--activation-qa` scope) keeps a synthetic preference file across demo launches; the production path is refused.
