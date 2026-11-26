@@ -27,7 +27,8 @@
   <Grid VerticalAlignment="Center">
    <Grid.ColumnDefinitions><ColumnDefinition Width="{Binding IconColumn}"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
    <local:TaskStatusIcon x:Name="Icon" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-   <Grid Grid.Column="2">
+   <!-- A narrow row shrinks its title first, then drops the model, then the time, as the Mac's TaskLineLayout; see FitReadings. -->
+   <Grid x:Name="Lines" Grid.Column="2">
     <Grid.RowDefinitions><RowDefinition Height="18"/><RowDefinition Height="{Binding GapRow}"/><RowDefinition Height="{Binding DetailRow}"/></Grid.RowDefinitions>
     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="16"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
     <!-- One line puts the subagent dots after the title, before the readings, as on the Mac. -->
@@ -39,8 +40,8 @@
     <TextBlock Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right" TextOptions.TextFormattingMode="Ideal" Visibility="{Binding RateLineVisible}">
      <Run Text="{Binding ShownRateText, Mode=OneWay}" FontSize="{Binding RateSize}" FontWeight="SemiBold" Foreground="{Binding RateInk}"/>
      <Run Text="{Binding ShownRateUnit, Mode=OneWay}" FontSize="10" FontWeight="Medium" Foreground="{DynamicResource Island.Tertiary}"/>
-     <Run Text="{Binding ShownSeparator, Mode=OneWay}" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource Island.Tertiary}"/>
-     <Run Text="{Binding ShownTurnTime, Mode=OneWay}" FontSize="11" FontWeight="Medium" Foreground="{Binding DurationInk}"/>
+     <Run x:Name="TimeSeparator" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource Island.Tertiary}"/>
+     <Run x:Name="TimeRun" FontSize="11" FontWeight="Medium" Foreground="{Binding DurationInk}"/>
     </TextBlock>
     <StackPanel Grid.Row="2" Orientation="Horizontal" VerticalAlignment="Center" Visibility="{Binding SecondLineVisible}">
      <TextBlock Text="{Binding Value.Status}" FontSize="11" FontWeight="Medium" Foreground="{Binding DetailInk}" TextTrimming="CharacterEllipsis"/>
@@ -63,8 +64,8 @@
       <Ellipse Fill="{DynamicResource Island.Attention}" Width="5" Height="5" Margin="0,0,4,0" VerticalAlignment="Center" Visibility="{Binding PeakVisible}"/>
       <TextBlock Text="{Binding Value.Cost}" Foreground="{DynamicResource Island.Soft}" FontSize="11" FontWeight="Medium"/>
      </StackPanel>
-     <TextBlock Text="{Binding Value.Model}" Foreground="{Binding ProviderInk}" FontSize="11" FontWeight="Medium" Visibility="{Binding ModelVisible}"/>
-     <TextBlock Text="{Binding Value.Effort}" Foreground="{Binding ProviderInk}" Opacity="0.62" FontSize="11" FontWeight="Medium" Margin="4,0,0,0" Visibility="{Binding EffortVisible}"/>
+     <TextBlock x:Name="ModelText" Text="{Binding Value.Model}" Foreground="{Binding ProviderInk}" FontSize="11" FontWeight="Medium"/>
+     <TextBlock x:Name="EffortText" Text="{Binding Value.Effort}" Foreground="{Binding ProviderInk}" Opacity="0.62" FontSize="11" FontWeight="Medium" Margin="4,0,0,0"/>
     </StackPanel>
    </Grid>
   </Grid>

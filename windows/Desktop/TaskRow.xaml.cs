@@ -56,6 +56,8 @@ public partial class TaskRow : Button
         Height = showsDelegations ? RowHeight(value, options) : RowHeight(options);
         BuildSubagents(value, options); BuildDots(state);
         BuildDelegations(value, options);
+        FitReadings();
+        Lines.SizeChanged += (_, args) => { if (args.WidthChanged) FitReadings(); };
         // The one-line row's icon draws the 28-point face at 22.
         if (state.OneLine) Icon.LayoutTransform = new ScaleTransform(22.0 / 28, 22.0 / 28);
         Background = PacerPalette.Hover; IsEnabled = false; Focusable = false;
@@ -96,6 +98,7 @@ public partial class TaskRow : Button
         Height = showsDelegations ? RowHeight(value, options) : RowHeight(options);
         BuildSubagents(value, options); BuildDots(state);
         BuildDelegations(value, options);
+        FitReadings();
         var before = previous.Value;
         if (progressShown && (before.Symbol != value.Symbol || before.Dimmed != value.Dimmed || before.ProgressState != value.ProgressState
             || before.ProgressMode != value.ProgressMode || before.ProgressFraction != value.ProgressFraction || before.ProgressStale != value.ProgressStale
@@ -108,16 +111,16 @@ public partial class TaskRow : Button
     {
         open = action; Focusable = action != null; UpdateEnabled();
         AutomationProperties.SetHelpText(this, help); animations = animate; UpdateHover(); Icon.SetMotion(animate);
-        foreach (var line in Lines) RefreshLineHighlight(line);
+        foreach (var line in ChildLines) RefreshLineHighlight(line);
     }
     /// The subagent lines, then the Codex run lines, each with its folded line.
-    private IEnumerable<Grid> Lines => Subagents.Children.OfType<Grid>().Concat(Delegations.Children.OfType<Grid>());
+    private IEnumerable<Grid> ChildLines => Subagents.Children.OfType<Grid>().Concat(Delegations.Children.OfType<Grid>());
     // Disabling the whole row also disables its Stop buttons.
     private void UpdateEnabled() => IsEnabled = open != null || StopButtons().Any();
     internal void SetAnimations(bool value)
     {
         animations = value; Icon.SetMotion(value); if (!value) UpdateHover();
-        foreach (var icon in Lines.SelectMany(line => line.Children.OfType<TaskStatusIcon>())) icon.SetMotion(value);
+        foreach (var icon in ChildLines.SelectMany(line => line.Children.OfType<TaskStatusIcon>())) icon.SetMotion(value);
     }
     /// Stop on a running Codex for Claude run's line; the island sends the run's ID.
     internal void SetStopAction(Action<string>? action, string label) { stop = action; stopLabel = label; UpdateEnabled(); RefreshStopButtons(); }
@@ -130,11 +133,10 @@ public partial class TaskRow : Button
                 bool shown = stop != null && run.CanStop == true && line.IsMouseOver;
                 button.Visibility = shown ? Visibility.Visible : Visibility.Hidden;
                 // No room is kept for Stop: it lies over the line's end, and the readings fade out beneath it.
-                if (line.Children.OfType<TextBlock>().FirstOrDefault(text => Grid.GetColumn(text) == ReadingsColumn) is { } readings)
+                if (line.Children.OfType<TaskLinePanel>().FirstOrDefault()?.ShownReadings is { } readings)
                     readings.OpacityMask = shown ? FadeUnderStop(readings.ActualWidth) : null;
             }
     }
-    private const int ReadingsColumn = 4;
     /// Opaque up to a little before Stop, clear under it.
     private static Brush? FadeUnderStop(double width)
     {
@@ -148,13 +150,71 @@ public partial class TaskRow : Button
     /// Whether a run line's Stop shows, and whether its readings fade under it; read by the presentation checks.
     internal static (bool Stop, bool Faded) StopState(Grid line) =>
         (line.Children.OfType<Button>().FirstOrDefault()?.Visibility == Visibility.Visible,
-         line.Children.OfType<TextBlock>().FirstOrDefault(text => Grid.GetColumn(text) == ReadingsColumn)?.OpacityMask != null);
-    /// One line per run: its icon (state and progress ring), Claude's label,
-    /// speed and time, model and effort, always on the line; no hover card.
-    /// Screen readers get the run's details as help text. Clicking the line
-    /// opens the Claude task, like the row. Every running run and the most
-    /// recent ended ones show; the older ended runs fold into one short line
-    /// above them that says how many, and how many failed.
+         line.Children.OfType<TaskLinePanel>().FirstOrDefault()?.ShownReadings.OpacityMask != null);
+    /// One line under a task, shared by its subagents and its Codex for Claude runs, as
+    /// the Mac's ChildTaskLine: the icon (state and progress ring), the type and name
+    /// tags, the title, then the speed, state, time and model, joined by " · ". A
+    /// narrow line shrinks the title first, then drops the model, then the time.
+    private (Grid Line, TaskStatusIcon Icon) ChildLine(EngineTaskRow row, object tag, string? typeTag, string? nameTag, string title,
+        bool active, string? rate, bool fresh, string? status, Brush? statusInk, string? time, string? model)
+    {
+        var line = new Grid { Height = DelegationHeight, Tag = tag, Background = Brushes.Transparent };
+        // Icon, gap, content; Stop has no column of its own and lies over the readings' end on hover.
+        foreach (var width in new[] { new GridLength(20), new GridLength(8), new GridLength(1, GridUnitType.Star) })
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = width });
+        // The line's own highlight, a smaller rounded fill than the task's, as on the Mac.
+        var highlight = new Border { CornerRadius = new CornerRadius(8), Background = PacerPalette.Hover, Opacity = 0, IsHitTestVisible = false, Margin = new Thickness(-4, 0, 0, 0) };
+        Grid.SetColumnSpan(highlight, 3); line.Children.Add(highlight);
+        var icon = new TaskStatusIcon { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+            LayoutTransform = new ScaleTransform(20.0 / 28, 20.0 / 28) };
+        line.Children.Add(icon);
+        StackPanel? tags = null;
+        if (typeTag != null || nameTag != null)
+        {
+            tags = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            // The type takes the service's color while running and steps back once ended; the name always stays quiet.
+            var tint = active ? PacerPalette.Provider(row.Provider) : PacerPalette.Secondary;
+            if (typeTag != null) tags.Children.Add(LineTag(typeTag, tint, tint is SolidColorBrush solid ? PacerPalette.Ink(solid.Color.R, solid.Color.G, solid.Color.B, 41) : PacerPalette.Hover));
+            if (nameTag != null)
+            {
+                var name = LineTag(nameTag, PacerPalette.Secondary, null);
+                if (tags.Children.Count > 0) name.Margin = new Thickness(TaskLinePanel.TagGap, 0, 0, 0);
+                tags.Children.Add(name);
+            }
+        }
+        var label = new TextBlock { Text = title, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = active ? PacerPalette.Primary : PacerPalette.Secondary,
+            VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+        TextBlock Readings(bool showModel, bool showTime)
+        {
+            var text = new TextBlock { FontSize = 11, FontWeight = FontWeights.Medium, Foreground = PacerPalette.Secondary, VerticalAlignment = VerticalAlignment.Center };
+            bool any = false;
+            void Add(string value, Brush ink, bool strong = false) =>
+                text.Inlines.Add(new System.Windows.Documents.Run(value) { Foreground = ink, FontWeight = strong ? FontWeights.SemiBold : FontWeights.Medium });
+            if (rate != null) { Add(rate + " t/s", active && fresh ? PacerPalette.Primary : PacerPalette.Secondary, strong: true); any = true; }
+            if (status != null) { Add(status, statusInk ?? PacerPalette.Secondary); any = true; }
+            if (showTime && time != null) { if (any) Add(" · ", PacerPalette.Secondary); Add(time, PacerPalette.Secondary); any = true; }
+            if (showModel && model != null) { if (any) Add(" · ", PacerPalette.Secondary); Add(model, active ? PacerPalette.Provider(row.Provider) : PacerPalette.Secondary); }
+            return text;
+        }
+        var content = new TaskLinePanel(tags, label, [Readings(true, true), Readings(false, true), Readings(false, false)]) { Margin = new Thickness(0, 0, 4, 0) };
+        Grid.SetColumn(content, 2); line.Children.Add(content);
+        line.MouseEnter += (_, _) => RefreshLineHighlight(line);
+        line.MouseLeave += (_, _) => RefreshLineHighlight(line);
+        return (line, icon);
+    }
+    /// A type or name on a child line: 10-point semibold in a 15-point capsule.
+    private static Border LineTag(string text, Brush ink, Brush? fill)
+    {
+        var tag = new Border { Height = 15, CornerRadius = new CornerRadius(7.5), Padding = new Thickness(6, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock { Text = text, FontSize = 10, FontWeight = FontWeights.SemiBold, Foreground = ink, VerticalAlignment = VerticalAlignment.Center } };
+        if (fill != null) tag.Background = fill; else tag.SetResourceReference(Border.BackgroundProperty, "Island.Overlay05");
+        return tag;
+    }
+    /// One line per run: its mode as a tag, Claude's label, then speed, time and
+    /// model with effort; no hover card. Screen readers get the run's details as
+    /// help text. Clicking the line opens the Claude task, like the row. Every
+    /// running run and the most recent ended ones show; the older ended runs fold
+    /// into one short line above them that says how many, and how many failed.
     private void BuildDelegations(EngineTaskRow value, PanelOptions? options)
     {
         Delegations.Children.Clear();
@@ -166,36 +226,12 @@ public partial class TaskRow : Button
         foreach (var run in runs)
         {
             var state = new TaskRowState(run, options);
-            var line = new Grid { Height = DelegationHeight, Tag = run, Background = Brushes.Transparent };
-            // Icon, gap, label, gap, readings; Stop has no column of its own and lies over the readings' end on hover.
-            foreach (var width in new[] { new GridLength(20), new GridLength(8), new GridLength(1, GridUnitType.Star), new GridLength(10), GridLength.Auto })
-                line.ColumnDefinitions.Add(new ColumnDefinition { Width = width });
-            // The line's own highlight, a smaller rounded fill than the task's, as on the Mac.
-            var highlight = new Border { CornerRadius = new CornerRadius(8), Background = PacerPalette.Hover, Opacity = 0, IsHitTestVisible = false, Margin = new Thickness(-4, 0, 0, 0) };
-            Grid.SetColumnSpan(highlight, 5); line.Children.Add(highlight);
-            var icon = new TaskStatusIcon { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
-                LayoutTransform = new ScaleTransform(20.0 / 28, 20.0 / 28) };
-            line.Children.Add(icon);
-            var text = new TextBlock { Text = run.Title, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = state.TitleInk,
-                VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
-            Grid.SetColumn(text, 2); line.Children.Add(text);
-            var trailing = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Opacity = state.ModelOpacity, Margin = new Thickness(0, 0, 4, 0) };
-            // Speed, time, model and effort, as on a task row's two lines.
-            if (run.RateText != null)
-            {
-                trailing.Inlines.Add(new System.Windows.Documents.Run(run.RateText) { FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = state.RateInk });
-                trailing.Inlines.Add(new System.Windows.Documents.Run(" t/s" + (run.TurnTime != null ? " · " : "  ")) { FontSize = 10, FontWeight = FontWeights.Medium, Foreground = PacerPalette.Secondary });
-            }
-            if (run.TurnTime != null)
-                trailing.Inlines.Add(new System.Windows.Documents.Run(run.TurnTime + "  ") { FontSize = 11, FontWeight = FontWeights.Medium, Foreground = state.DurationInk });
-            trailing.Inlines.Add(new System.Windows.Documents.Run(run.Model) { FontSize = 11, FontWeight = FontWeights.Medium, Foreground = state.ProviderInk });
-            if (run.Effort != null)
-                trailing.Inlines.Add(new System.Windows.Documents.Run(" " + run.Effort) { FontSize = 11, FontWeight = FontWeights.Medium, Foreground = state.ProviderInk });
-            Grid.SetColumn(trailing, ReadingsColumn); line.Children.Add(trailing);
+            var (line, icon) = ChildLine(run, run, run.ModeTag, null, run.Title, RunActive(run), run.RateText, run.RateIsFresh, null, null, run.TurnTime,
+                run.Model + (run.Effort != null ? " " + run.Effort : ""));
             var button = StopButton(run); button.Margin = new Thickness(0, 0, 2, 0);
-            Grid.SetColumn(button, 2); Grid.SetColumnSpan(button, 3); line.Children.Add(button);
-            line.MouseEnter += (_, _) => { RefreshStopButtons(); RefreshLineHighlight(line); };
-            line.MouseLeave += (_, _) => { RefreshStopButtons(); RefreshLineHighlight(line); };
+            Grid.SetColumn(button, 2); line.Children.Add(button);
+            line.MouseEnter += (_, _) => RefreshStopButtons();
+            line.MouseLeave += (_, _) => RefreshStopButtons();
             AutomationProperties.SetName(line, state.AccessibleName);
             if (run.DetailLines is { Count: > 0 } lines)
                 AutomationProperties.SetHelpText(line, string.Join(", ", lines.Where(pair => pair.Count == 2).Select(pair => pair[0] + " " + pair[1])));
@@ -205,11 +241,16 @@ public partial class TaskRow : Button
         }
         RefreshStopButtons();
     }
+    /// Whether a Codex for Claude run still works, as Core's isRunningDelegation.
+    private static bool RunActive(EngineTaskRow run) => !run.Dimmed && run.Phase is not ("completed" or "interrupted");
+    /// What needs the user, or a failure, keeps its color after the line ends; the rest stays secondary.
+    private static Brush? SubagentStatusInk(EngineSubagentLine line) =>
+        line.State is "approval" or "input" ? PacerPalette.Attention : line.State == "failed" ? PacerPalette.Danger : null;
     /// One line per subagent under the task while it works, on the same rail and
-    /// metrics as the Codex runs: its icon (state and progress ring), its label,
-    /// then its speed while it writes and its time, or how it ended. Running and
-    /// waiting ones first, then the most recently ended; the rest fold into one
-    /// quiet line under them. Clicking a line opens the task; no Stop, no hover card.
+    /// layout as the Codex runs: its type and name as tags, its title, then its
+    /// speed while it writes, its state, time and model. Running and waiting ones
+    /// first, then the most recently ended; the rest fold into one quiet line under
+    /// them. Clicking a line opens the task; no Stop, no hover card.
     private void BuildSubagents(EngineTaskRow value, PanelOptions? options)
     {
         Subagents.Children.Clear();
@@ -220,32 +261,8 @@ public partial class TaskRow : Button
         foreach (var subagent in lines ?? [])
         {
             var state = new TaskRowState(subagent.Row, options);
-            var line = new Grid { Height = DelegationHeight, Tag = subagent, Background = Brushes.Transparent };
-            foreach (var width in new[] { new GridLength(20), new GridLength(8), new GridLength(1, GridUnitType.Star), new GridLength(10), GridLength.Auto })
-                line.ColumnDefinitions.Add(new ColumnDefinition { Width = width });
-            var highlight = new Border { CornerRadius = new CornerRadius(8), Background = PacerPalette.Hover, Opacity = 0, IsHitTestVisible = false, Margin = new Thickness(-4, 0, 0, 0) };
-            Grid.SetColumnSpan(highlight, 5); line.Children.Add(highlight);
-            var icon = new TaskStatusIcon { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
-                LayoutTransform = new ScaleTransform(20.0 / 28, 20.0 / 28) };
-            line.Children.Add(icon);
-            // An ended subagent's label steps back.
-            var text = new TextBlock { Text = subagent.Row.Title, FontSize = 12, FontWeight = FontWeights.SemiBold,
-                Foreground = subagent.IsActive ? PacerPalette.Primary : PacerPalette.Secondary,
-                VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
-            Grid.SetColumn(text, 2); line.Children.Add(text);
-            var trailing = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) };
-            if (subagent.RateText != null)
-            {
-                trailing.Inlines.Add(new System.Windows.Documents.Run(subagent.RateText) { FontSize = 11, FontWeight = FontWeights.SemiBold,
-                    Foreground = subagent.RateIsFresh ? PacerPalette.Primary : PacerPalette.Secondary });
-                trailing.Inlines.Add(new System.Windows.Documents.Run(subagent.Detail.Length == 0 ? " t/s" : " t/s · ") { FontSize = 10, FontWeight = FontWeights.Medium, Foreground = PacerPalette.Secondary });
-            }
-            // What needs the user, or a failure, takes its color; the rest stays secondary.
-            trailing.Inlines.Add(new System.Windows.Documents.Run(subagent.Detail) { FontSize = 10, FontWeight = FontWeights.Medium,
-                Foreground = subagent.State is "approval" or "input" ? PacerPalette.Attention : subagent.State == "failed" ? PacerPalette.Danger : PacerPalette.Secondary });
-            Grid.SetColumn(trailing, ReadingsColumn); line.Children.Add(trailing);
-            line.MouseEnter += (_, _) => RefreshLineHighlight(line);
-            line.MouseLeave += (_, _) => RefreshLineHighlight(line);
+            var (line, icon) = ChildLine(subagent.Row, subagent, subagent.TypeTag, subagent.NameTag, subagent.Title ?? subagent.Row.Title, subagent.IsActive,
+                subagent.RateText, subagent.RateIsFresh, subagent.StatusText, SubagentStatusInk(subagent), subagent.Time, subagent.Model);
             AutomationProperties.SetName(line, subagent.AccessibilityText);
             Subagents.Children.Add(line);
             icon.Show(subagent.Row, IconColor(state), false);
@@ -372,13 +389,51 @@ public partial class TaskRow : Button
     }
     private IEnumerable<Button> StopButtons() => stop == null ? [] : Delegations.Children.OfType<Grid>()
         .Where(line => line.Tag is EngineTaskRow { CanStop: true }).SelectMany(line => line.Children.OfType<Button>());
+    private double Measure(string? value, double size, FontWeight weight) => string.IsNullOrEmpty(value) ? 0 :
+        new FormattedText(value, PacerFonts.Culture(this), FlowDirection.LeftToRight,
+            new Typeface(FontFamily, FontStyles.Normal, weight, FontStretches.Normal), size, Brushes.White,
+            VisualTreeHelper.GetDpi(this).PixelsPerDip).WidthIncludingTrailingWhitespace;
+    /// The readings the task's own line keeps: 0 all, 1 without the model, 2 without the time either.
+    internal int ReadingsLevel { get; private set; }
+    /// A narrow row shrinks its title first, down to 48 points, as the Mac's TaskLineLayout;
+    /// past that the model goes, then the time, and the speed stays.
+    private void FitReadings()
+    {
+        var state = (TaskRowState)DataContext;
+        double width = Lines.ActualWidth;
+        int level = 0;
+        if (width > 0)
+        {
+            var row = state.Value;
+            double Text(string? value, double size, FontWeight weight) => Measure(value, size, weight);
+            double title = Math.Min(TaskLinePanel.TitleMinimum, Text(row.Title, 13, FontWeights.SemiBold))
+                + (state.OneLineDotsVisible == Visibility.Visible ? 8 + 12 + 3 + DotsWidth(row, CompactDotLimit, value => Text(value, 10, FontWeights.Medium)) : 0);
+            double Rate(bool time) => state.OneLineStatusVisible == Visibility.Visible ? Text(row.Status, 11, FontWeights.Medium)
+                : Text(state.ShownRateText, state.RateSize, FontWeights.SemiBold) + Text(state.ShownRateUnit, 10, FontWeights.Medium)
+                    + (time ? Text(state.ShownSeparator + state.ShownTurnTime, 11, FontWeights.Medium) : 0);
+            double Model(bool model) => (state.CostVisible == Visibility.Visible ? Text(row.Cost, 11, FontWeights.Medium) + 7 + (row.PeakCost ? 9 : 0) : 0)
+                + (model && state.ModelVisible == Visibility.Visible
+                    ? Text(row.Model, 11, FontWeights.Medium) + (state.EffortVisible == Visibility.Visible ? 4 + Text(row.Effort, 11, FontWeights.Medium) : 0) : 0);
+            double status = Math.Min(TaskLinePanel.TitleMinimum, Text(row.Status, 11, FontWeights.Medium));
+            bool Fits(bool model, bool time) => width - 16 - Rate(time) >= title - 0.5 && (state.OneLine || width - 16 - Model(model) >= status - 0.5);
+            level = Fits(true, true) ? 0 : Fits(false, true) ? 1 : 2;
+        }
+        ReadingsLevel = level;
+        TimeSeparator.Text = level < 2 ? state.ShownSeparator : "";
+        TimeRun.Text = level < 2 ? state.ShownTurnTime : null;
+        ModelText.Visibility = level == 0 && state.ModelVisible == Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;
+        EffortText.Visibility = level == 0 && state.EffortVisible == Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;
+    }
+    /// What a child line's readings read in full: speed or state, then time and model.
+    private static string ChildReadings(string? rate, string? status, string? time, string? model)
+    {
+        string head = (rate != null ? rate + " t/s" : "") + (status ?? "");
+        return string.Join(" · ", new[] { head, time, model }.Where(part => !string.IsNullOrEmpty(part)));
+    }
     internal double IdealWidth()
     {
         var state = (TaskRowState)DataContext;
-        double Text(string? value, double size, FontWeight weight) => string.IsNullOrEmpty(value) ? 0 :
-            new FormattedText(value, PacerFonts.Culture(this), FlowDirection.LeftToRight,
-                new Typeface(FontFamily, FontStyles.Normal, weight, FontStretches.Normal), size, Brushes.White,
-                VisualTreeHelper.GetDpi(this).PixelsPerDip).WidthIncludingTrailingWhitespace;
+        double Text(string? value, double size, FontWeight weight) => Measure(value, size, weight);
         var row = state.Value;
         double trailing = state.OneLineStatusVisible == Visibility.Visible ? Text(row.Status, 11, FontWeights.Medium)
             : Text(state.ShownRateText, state.RateSize, FontWeights.SemiBold) + Text(state.ShownRateUnit + state.ShownSeparator + state.ShownTurnTime, 11, FontWeights.Medium);
@@ -393,16 +448,20 @@ public partial class TaskRow : Button
             + (state.SubagentsVisible != Visibility.Visible ? 0 : state.HasDots ? 10 + 11 + 4 + Dots(DotLimit) : 24 + Text(row.SubagentText ?? "—", 11, FontWeights.Medium))
             + (state.SourceVisible == Visibility.Visible ? 10 + Text(row.SourceLabel, 11, FontWeights.Medium) + (row.SourceKind == null ? 0 : 14) : 0)
             + (state.DelegatedVisible == Visibility.Visible ? 20 + Text(row.DelegatedText, 10, FontWeights.SemiBold) : 0);
+        // A child line widens the panel up to its tags and title at 220 points, and its full readings, as the Mac's ChildTaskLine.
+        double Tag(string? value) => value == null ? 0 : Text(value, 10, FontWeights.SemiBold) + 12;
+        double Child(string? typeTag, string? nameTag, string title, string readings) => 22 + 12 + 20 + 8
+            + Math.Min(220, Tag(typeTag) + Tag(nameTag) + (typeTag != null && nameTag != null ? TaskLinePanel.TagGap : 0)
+                + (typeTag != null || nameTag != null ? TaskLinePanel.TagGap : 0) + Text(title, 12, FontWeights.SemiBold))
+            + (readings.Length > 0 ? TaskLinePanel.Gap + Text(readings, 11, FontWeights.Medium) : 0) + 4 + 6;
         double runs = showsDelegations && row.DelegationsFolded != null ? 22 + 12 + 20 + 8 + Text(row.DelegationsFolded, 11, FontWeights.Medium) + 6 : 0;
         foreach (var run in showsDelegations ? row.Delegations ?? [] : [])
-            runs = Math.Max(runs, 22 + 12 + 20 + 8 + Math.Min(220, Text(run.Title, 12, FontWeights.SemiBold))
-                + 10 + Text((run.RateText == null ? "" : run.RateText + " t/s · ") + (run.TurnTime == null ? "" : run.TurnTime + "  ") + run.Model
-                    + (run.Effort == null ? "" : " " + run.Effort), 11, FontWeights.Medium) + 4 + 6);
+            runs = Math.Max(runs, Child(run.ModeTag, null, run.Title,
+                ChildReadings(run.RateText, null, run.TurnTime, run.Model + (run.Effort == null ? "" : " " + run.Effort))));
         bool subagents = showsDelegations && state.ShowsSubagents;
         if (subagents && row.SubagentsFolded != null) runs = Math.Max(runs, 22 + 12 + 20 + 8 + Text(row.SubagentsFolded, 11, FontWeights.Medium) + 6);
         foreach (var line in subagents ? row.SubagentLines ?? [] : [])
-            runs = Math.Max(runs, 22 + 12 + 20 + 8 + Math.Min(220, Text(line.Row.Title, 12, FontWeights.SemiBold))
-                + 10 + Text((line.RateText == null ? "" : line.RateText + " t/s · ") + line.Detail, 10, FontWeights.Medium) + 4 + 6);
+            runs = Math.Max(runs, Child(line.TypeTag, line.NameTag, line.Title ?? line.Row.Title, ChildReadings(line.RateText, line.StatusText, line.Time, line.Model)));
         return Math.Max(runs, 28 + 10 + 18 + Math.Max(title, detail + (model > 0 ? 16 + model : 0)));
     }
 }

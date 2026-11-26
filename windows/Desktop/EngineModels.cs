@@ -168,11 +168,15 @@ internal sealed record EngineTaskRow(string Id, string Provider, string Title, s
     // Its subagents as dots, every one, most urgent first (attention, running, failed, completed), and what
     // they read aloud; a row draws as many as fit. Its subagent lines while it works, and the rest folded under them.
     IReadOnlyList<string>? SubagentDots = null, string? SubagentDotsText = null,
-    IReadOnlyList<EngineSubagentLine>? SubagentLines = null, string? SubagentsFolded = null);
-/// One subagent under its task: its own row for the icon, ring and label, its state
+    IReadOnlyList<EngineSubagentLine>? SubagentLines = null, string? SubagentsFolded = null,
+    // On a Codex for Claude run's row: its mode as a tag (task, review, follow-up).
+    string? ModeTag = null);
+/// One subagent under its task: its own row for the icon and ring, its state
 /// (running, approval, input, completed, failed, stopped, unknown), its speed while it writes,
-/// and its time or how it ended.
-internal sealed record EngineSubagentLine(EngineTaskRow Row, string State, string? RateText, bool RateIsFresh, string Detail, string AccessibilityText)
+/// and its time or how it ended. Its line shows its type and name as tags, its title,
+/// then its speed, state, time and model.
+internal sealed record EngineSubagentLine(EngineTaskRow Row, string State, string? RateText, bool RateIsFresh, string Detail, string AccessibilityText,
+    string? TypeTag = null, string? NameTag = null, string? Title = null, string? Model = null, string? StatusText = null, string? Time = null)
 {
     internal bool IsActive => State is "running" or "approval" or "input";
 }

@@ -14,20 +14,30 @@ using CodexPacer.Windows;
 
 /// A task's subagents, from a synthetic row: one dot each after its state in the
 /// engine's order, 8 in a two-line row and 5 in one line with "+n" for the rest;
-/// up to three lines on a rail under the task with the rest folded below them,
-/// counted in its height; a one-line row keeps the dots without the lines, and
-/// Claude cloud workers without dots keep their count.
+/// up to three lines on a rail under the task, laid out as the Codex runs (type and
+/// name tags, title, then speed, state, time and model), with the rest folded below
+/// them and counted in its height. A narrow line shrinks its title to 48 points
+/// first and then drops the model, then the time; the task row does the same. A
+/// one-line row keeps the dots without the lines, and Claude cloud workers without
+/// dots keep their count.
 internal static class SubagentRowChecks
 {
     internal static async Task Run(string output)
     {
+        // The variant chosen: the fullest whose readings fit beside the tags and the shortest title.
+        Check(TaskLinePanel.Choose(500, 40, 200, [150, 100, 60]) == 0 && TaskLinePanel.Choose(246, 40, 200, [150, 100, 60]) == 0
+            && TaskLinePanel.Choose(245, 40, 200, [150, 100, 60]) == 1 && TaskLinePanel.Choose(195, 40, 200, [150, 100, 60]) == 2
+            && TaskLinePanel.Choose(100, 40, 200, [150, 100, 60]) == 2 && TaskLinePanel.Choose(188, 0, 30, [150, 100, 60]) == 0,
+            "Readings drop the model, then the time, only once the title is at its minimum");
+
         EngineTaskRow Child(string id, string title, string phase, bool failed = false) =>
             new(id, "codex", title, phase, null, null, null, phase, "sparkle", null, "Sol 6.1", "high", null, false, null, "1:00", 0, false, failed, false, null, false);
-        var running = new EngineSubagentLine(Child("sub-run", "worker · Add network tests", "running"), "running", "24.1", true, "3m", "worker · Add network tests, 24.1 t/s, 3m");
-        var approval = new EngineSubagentLine(Child("sub-wait", "general-purpose · Run migrations", "waitingForInput"), "approval", null, false, "Waiting for approval · Bash",
-            "general-purpose · Run migrations, Waiting for approval · Bash");
-        var failed = new EngineSubagentLine(Child("sub-fail", "Explore · Search old docs", "completed", failed: true), "failed", null, false, "Failed · 30s",
-            "Explore · Search old docs, Failed · 30s");
+        var approval = new EngineSubagentLine(Child("sub-wait", "Run migrations", "waitingForInput"), "approval", null, false, "", "Run migrations, Waiting for approval · Bash",
+            Title: "Run migrations", Model: "Sonnet 5.5", StatusText: "Waiting for approval · Bash", Time: "2m");
+        var running = new EngineSubagentLine(Child("sub-run", "Add network tests", "running"), "running", "24.1", true, "", "worker Linnaeus, Add network tests, 24.1 t/s, 3m",
+            TypeTag: "worker", NameTag: "Linnaeus", Title: "Add network tests", Model: "Sol 6.1", Time: "3m");
+        var failed = new EngineSubagentLine(Child("sub-fail", "Search old docs", "completed", failed: true), "failed", null, false, "", "Explore, Search old docs, Failed, 30s",
+            TypeTag: "Explore", Title: "Search old docs", Model: "Haiku 5.5", StatusText: "Failed", Time: "30s");
         string[] dots = ["attention", "running", "running", "failed", .. Enumerable.Repeat("completed", 8)];
         var parent = new EngineTaskRow("codex-parent", "codex", "Rename the API", "Waiting for subagents", null, null, null, "running", "sparkle", null,
             "Sol 6.1", "high", 96.4, true, null, "7:00", 0, false, false, false, null, false, RateText: "96.4",
@@ -52,25 +62,33 @@ internal static class SubagentRowChecks
             Check(((TaskRowState)row.DataContext).AccessibleName.Contains("12 subagents, 2 running"), "Screen readers hear how many subagents and how many run");
             // Lines: three on the rail in the engine's order, the folded one last, as on the Mac.
             var lines = row.Subagents.Children.OfType<Grid>().ToList();
-            string Text(Grid line) => string.Join(" ", line.Children.OfType<TextBlock>().Select(text =>
-                text.Inlines.Count > 0 ? string.Concat(text.Inlines.OfType<System.Windows.Documents.Run>().Select(run => run.Text)) : text.Text));
+            TaskLinePanel Content(Grid line) => line.Children.OfType<TaskLinePanel>().Single();
+            List<System.Windows.Documents.Run> Runs(Grid line) => ((TextBlock)Content(line).ShownReadings).Inlines.OfType<System.Windows.Documents.Run>().ToList();
+            string Readings(Grid line) => string.Concat(Runs(line).Select(run => run.Text));
+            TextBlock Title(Grid line) => (TextBlock)Content(line).Title;
+            List<TextBlock> Tags(Grid line) => SelfAndDescendants(Content(line)).OfType<Border>().Select(tag => (TextBlock)tag.Child).ToList();
             Check(row.SubagentRuns.Visibility == Visibility.Visible && lines.Count == 4 && lines.Take(3).All(line => line.Tag is EngineSubagentLine)
-                && lines[3].Tag as string == TaskRow.FoldedTag && Text(lines[3]).Contains("9 more done"), "Three subagent lines, then the folded line under them");
+                && lines[3].Tag as string == TaskRow.FoldedTag && lines[3].Children.OfType<TextBlock>().Single().Text == "9 more done",
+                "Three subagent lines, then the folded line under them");
             Check(lines.Take(3).All(line => Math.Abs(line.ActualHeight - TaskRow.DelegationHeight) < 0.5)
                 && Math.Abs(lines[3].ActualHeight - TaskRow.FoldedHeight) < 0.5, "Subagent lines take the Codex runs' heights");
-            Check(Text(lines[1]).Contains("24.1") && Text(lines[1]).Contains("t/s · 3m") && Text(lines[0]).Contains("Waiting for approval · Bash")
-                && !Text(lines[0]).Contains("t/s"), "A writing subagent shows its speed and time; one waiting shows only its state");
-            System.Windows.Documents.Run Detail(Grid line) => line.Children.OfType<TextBlock>().Single(text => Grid.GetColumn(text) == 4).Inlines
-                .OfType<System.Windows.Documents.Run>().Last();
-            TextBlock Title(Grid line) => line.Children.OfType<TextBlock>().Single(text => Grid.GetColumn(text) == 2);
-            Check(Detail(lines[0]).Foreground == PacerPalette.Attention && Detail(lines[2]).Foreground == PacerPalette.Danger
-                && Detail(lines[1]).Foreground == PacerPalette.Secondary, "What needs the user and a failure take their colors");
-            Check(Title(lines[1]).Foreground == PacerPalette.Primary && Title(lines[2]).Foreground == PacerPalette.Secondary, "An ended subagent's label steps back");
+            Check(Readings(lines[1]) == "24.1 t/s · 3m · Sol 6.1" && Readings(lines[0]) == "Waiting for approval · Bash · 2m · Sonnet 5.5"
+                && Readings(lines[2]) == "Failed · 30s · Haiku 5.5", "Speed or state, then time and model, joined by dots");
+            Check(Runs(lines[1])[0].Foreground == PacerPalette.Primary && Runs(lines[1])[^1].Foreground == PacerPalette.Provider("codex")
+                && Runs(lines[0])[0].Foreground == PacerPalette.Attention && Runs(lines[2])[0].Foreground == PacerPalette.Danger
+                && Runs(lines[2])[^1].Foreground == PacerPalette.Secondary, "Fresh speed, waiting and failed states and the running model take their colors");
+            Check(Title(lines[1]).Text == "Add network tests" && Title(lines[1]).Foreground == PacerPalette.Primary && Title(lines[2]).Foreground == PacerPalette.Secondary,
+                "The title comes from the line, and an ended subagent's title steps back");
+            Check(Tags(lines[0]).Count == 0 && Tags(lines[1]).Select(tag => tag.Text).SequenceEqual(["worker", "Linnaeus"])
+                && Tags(lines[1])[0].Foreground == PacerPalette.Provider("codex") && Tags(lines[1])[1].Foreground == PacerPalette.Secondary
+                && Tags(lines[2]).Single().Foreground == PacerPalette.Secondary,
+                "The type tag takes the service's color while running and steps back once ended; the name tag stays quiet");
             Check(!lines.SelectMany(SelfAndDescendants).OfType<Button>().Any() && !lines.SelectMany(SelfAndDescendants).OfType<FrameworkElement>().Any(value => value.ToolTip != null),
                 "A subagent line has no Stop and no hover popup");
             Check(AutomationProperties.GetName(lines[1]) == running.AccessibilityText, "Each subagent line is named for screen readers");
             double lined = TaskRow.TwoLineHeight + 3 * TaskRow.DelegationHeight + TaskRow.FoldedHeight + TaskRow.DelegationRailBottom;
             Check(Math.Abs(TaskRow.RowHeight(parent, null) - lined) < 0.5 && Math.Abs(row.ActualHeight - lined) < 0.5, "The row's height counts its subagent lines");
+            Check(row.ReadingsLevel == 0 && row.ModelText.Visibility == Visibility.Visible, "A wide row keeps all its readings");
             // The task and its subagent lines are separate targets.
             row.SetOpenAction(() => { }, "Open", false);
             MouseEventArgs Pointer(RoutedEvent kind) => new(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = kind };
@@ -92,6 +110,22 @@ internal static class SubagentRowChecks
                 await PresentationWait.UntilAsync(() => next.IsLoaded, "The rebuilt task row must be in the visual tree");
                 window.UpdateLayout(); return next;
             }
+            // Narrow: each line keeps its tags whole and its title at 48 points or more, and drops readings from the end.
+            window.Width = 330; row = await Shown(parent, null);
+            var narrow = row.Subagents.Children.OfType<Grid>().Take(3).ToList();
+            Check(narrow.Any(line => Content(line).Chosen > 0) && narrow.All(line => Title(line).ActualWidth >= TaskLinePanel.TitleMinimum - 0.5)
+                && narrow.All(line => SelfAndDescendants(Content(line)).OfType<Border>().All(tag => Math.Abs(tag.ActualWidth + tag.Margin.Left + tag.Margin.Right - tag.DesiredSize.Width) < 0.5))
+                && narrow.All(line => Math.Abs(Content(line).ShownReadings.ActualWidth - Content(line).ShownReadings.DesiredSize.Width) < 0.5),
+                "A narrow line shrinks its title to its minimum, keeps tags and readings whole, and drops the model before the time");
+            Check(narrow.Where(line => Content(line).Chosen == 1).All(line => !Readings(line).Contains("Sol") && !Readings(line).Contains("Sonnet") && !Readings(line).Contains("Haiku"))
+                && narrow.Where(line => Content(line).Chosen == 2).All(line => Readings(line) is "24.1 t/s" or "Waiting for approval · Bash" or "Failed"),
+                "The model goes first, then the time; the speed or state stays");
+            // The task row itself: at this width it drops the model, then the time.
+            window.Width = 200; row = await Shown(parent with { SubagentLines = null, SubagentsFolded = null }, null);
+            Check(row.ReadingsLevel == 2 && row.ModelText.Visibility == Visibility.Collapsed && string.IsNullOrEmpty(row.TimeRun.Text),
+                "A narrow task row keeps its speed and drops the model and the time");
+            window.Width = 460;
+
             // Without the subagents field: no dots, no lines, no height for them.
             var hidden = PanelOptions.Default with { RowFields = ["rate", "turnTime", "model"] };
             row = await Shown(parent, hidden);
@@ -113,7 +147,8 @@ internal static class SubagentRowChecks
             var state = (TaskRowState)row.DataContext;
             Check(state.SubagentsVisible == Visibility.Visible && state.SubagentCountVisible == Visibility.Visible && state.SubagentDotsVisible == Visibility.Collapsed
                 && row.TwoLineDots.Children.Count == 0 && TaskRow.RowHeight(workers, null) == TaskRow.TwoLineHeight, "Workers without dots keep their count");
-            Console.WriteLine("PASS subagent rows: ordered dots with +n (8 / 5), colored lines with the folded line under them, height, one-line dots only, worker count");
+            Console.WriteLine("PASS subagent rows: ordered dots with +n (8 / 5), tagged lines with speed · time · model and the folded line, "
+                + "narrow lines and rows dropping model then time, height, one-line dots only, worker count");
         }
         finally { window.Close(); }
     }
