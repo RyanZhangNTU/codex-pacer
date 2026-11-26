@@ -48,6 +48,13 @@ internal static class PreferencesCodec
         var root = JsonNode.Parse(bytes, documentOptions: new() { MaxDepth = 32 }) as JsonObject ?? throw new JsonException();
         int version = root["schemaVersion"]?.GetValue<int>() ?? throw new JsonException();
         if (version is not (1 or Version)) throw new JsonException();
+        if (root.ContainsKey("sshHostsOff"))
+        {
+            var ids = (root["sshHostsOff"] as JsonArray ?? new JsonArray()).OfType<JsonValue>()
+                .Select(item => item.TryGetValue<string>(out var id) ? id : null).Where(DesktopPreferences.ValidSSHHostId)
+                .Distinct(StringComparer.Ordinal).Take(DesktopPreferences.MaximumOffHosts);
+            root["sshHostsOff"] = JsonSerializer.SerializeToNode(ids);
+        }
         DesktopPreferences value;
         if (version == 1)
         {

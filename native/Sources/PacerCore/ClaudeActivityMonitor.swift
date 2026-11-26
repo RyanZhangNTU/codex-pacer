@@ -40,6 +40,7 @@ public actor ClaudeActivityMonitor {
     }
     private var connections: [String: Connection] = [:]
     private var disconnected: [String: ClaudeActivityState] = [:]
+    private var targetRevision = 0
     private var wanted: [String: RemoteActivityTarget] = [:]
     private var retry: [String: Date] = [:]
     /// Polled separately, published with everything else. It outlives this
@@ -62,6 +63,7 @@ public actor ClaudeActivityMonitor {
     public func start(home: URL, remoteTargets: [RemoteActivityTarget] = [], refreshPolicy: ActivityRefreshPolicy = .collapsed,
                       retryingRemoteSources: Set<String> = [], update: @escaping Update) async {
         // A (re)start always delivers: the host may have cleared its copy.
+        let revision = targetRevision
         callback = update; policy = refreshPolicy; lastPublication = nil
         if self.home != home {
             stopLocal(); self.home = home; localReader.reset(); local = ClaudeActivityState()
@@ -79,17 +81,22 @@ public actor ClaudeActivityMonitor {
                 }
             }
         }
-        await updateRemoteTargets(remoteTargets, retrying: retryingRemoteSources)
+        // A host switch during the initial local read already supplied the newer list.
+        if revision == targetRevision { await updateRemoteTargets(remoteTargets, retrying: retryingRemoteSources) }
         updateRefreshPolicy(refreshPolicy); await publish()
     }
     /// Reconcile discovery/settings without replacing healthy local/SSH state.
     public func updateRemoteTargets(_ remoteTargets: [RemoteActivityTarget], retrying: Set<String> = []) async {
+        guard home != nil else { return }
+        targetRevision &+= 1
         wanted = Dictionary(remoteTargets.prefix(maximumRemoteTargets).filter { target in
             makeSSHArguments(target) != nil
         }.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
         let before = Set(connections.keys).union(disconnected.keys)
         for (id, connection) in connections where wanted[id] != connection.target { stopRemote(id); disconnected.removeValue(forKey: id) }
         for id in Array(disconnected.keys) where wanted[id] == nil { disconnected.removeValue(forKey: id); retry.removeValue(forKey: id) }
+        retry = retry.filter { wanted[$0.key] != nil }
+        failureCounts = failureCounts.filter { wanted[$0.key] != nil }
         for id in retrying where wanted[id] != nil && connections[id] == nil { retry.removeValue(forKey: id); failureCounts[id] = nil }
         let started = await connectWanted()
         // Periodic reconciliation is common; publish only an actual change.

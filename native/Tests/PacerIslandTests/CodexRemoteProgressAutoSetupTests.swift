@@ -53,6 +53,11 @@ final class CodexRemoteProgressAutoSetupTests: XCTestCase {
 
     func testRemoteRunCarriesTheRingAndRecordsItsDigest() async throws {
         let fixture = try fixture(), model = fixture.model
+        model.setSSHHost(fixture.target.id, monitored: false)
+        let skipped = await model.configureCodexRemoteProgress(target: fixture.target)
+        XCTAssertNil(skipped)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("fixture.command").path))
+        model.setSSHHost(fixture.target.id, monitored: true)
         let on = await model.configureCodexRemoteProgress(target: fixture.target)
         XCTAssertEqual(on, CodexRemoteProgressSetup.Status(configured: true, conflict: false))
         var request = try fixture.request()

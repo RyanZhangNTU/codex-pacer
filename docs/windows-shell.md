@@ -154,6 +154,7 @@ Preferences live in `%LOCALAPPDATA%\CodexPacer\preferences-v1.json`; keep the fi
 | Task progress rings | `codexProgressRing`, `claudeProgressRing`, `deepseekProgressRing` | on |
 | Privacy and visible tasks | `hideProjects`, `showAppButtons`, `showEmbeddedCodexSessions`, `showEmbeddedClaudeSessions`, `showClaudeCloudProjects` | off, then on |
 | Remote sources | `monitorSSH`, `monitorDurable`, `monitorWSL` (Windows only); `monitorRemoteControl` is retired and ignored | on, off (see Dot), off |
+| SSH hosts with monitoring off | `sshHostsOff`, up to 64 stable host IDs in a JSON string array, newest first | `[]` |
 | Retention and page | `completedRetentionMinutes`, `settingsPane` | `30`, `overview` |
 | Source overrides | `codexExecutable`, `codexHome`, `claudeHome`, `deepseekHome`, `claudeWebOrganizationID` | empty |
 | Modules | `providerModule.codex`, `providerModule.claude`, `providerModule.deepseek` | `automatic` |

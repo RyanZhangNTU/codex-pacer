@@ -198,6 +198,16 @@ internal sealed record DesktopPreferences
     public Dictionary<string, HarnessCreditsChoice> HarnessCredits { get; init; } = new();
     internal HarnessCreditsChoice Credits(string provider) => HarnessCredits.TryGetValue(provider, out var choice) ? choice : HarnessCreditsChoice.Default;
     public bool MonitorSSH { get; init; } = true;
+    public string[] SshHostsOff { get; init; } = [];
+    internal const int MaximumOffHosts = 64;
+    internal static bool ValidSSHHostId(string? id) => id is { Length: <= 154 } &&
+        System.Text.RegularExpressions.Regex.IsMatch(id, @"\Aremote-ssh-(?:discovered|codex-managed):[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z");
+    internal DesktopPreferences SetSSHHost(string id, bool monitored)
+    {
+        if (!ValidSSHHostId(id)) return this;
+        var others = SshHostsOff.Where(previous => previous != id);
+        return this with { SshHostsOff = (monitored ? others : others.Prepend(id)).Take(MaximumOffHosts).ToArray() };
+    }
     public bool AutomaticUpdates { get; init; } = true;
     public int RetentionMinutes { get; init; } = 30;
     public string CodexExecutable { get; init; } = "";
@@ -246,6 +256,8 @@ internal sealed record DesktopPreferences
         && (ClaudeOrganization == "" || ClaudeOrganization is { Length: 36 } && Guid.TryParseExact(ClaudeOrganization, "D", out _))
         && ProviderModes is { Count: >= 3 and <= 128 }
         && LegacyProviders.All(ProviderModes.ContainsKey)
+        && SshHostsOff is { Length: <= MaximumOffHosts } && SshHostsOff.All(ValidSSHHostId)
+        && SshHostsOff.Distinct(StringComparer.Ordinal).Count() == SshHostsOff.Length
         && ProviderModes.All(pair => ValidProviderId(pair.Key) && ValidProviderMode(pair.Value))
         && ValidModuleList(DisabledHarnessProgress, legacy: false) && ValidModuleList(HiddenTurnCredits, legacy: true)
         && HarnessHomes is { Count: <= 128 } && HarnessHomes.All(pair => ValidProviderId(pair.Key) && !IsLegacyProvider(pair.Key) && ValidPath(pair.Value))
@@ -340,6 +352,7 @@ internal sealed record DesktopPreferences
                 expiryReminder = pair.Value.ExpiryReminder, expiryDays = pair.Value.ExpiryDays
             }),
             monitorSSH = MonitorSSH,
+            sshHostsOff = SshHostsOff,
             deepseekSettings = new { mode = DeepSeekMode, daily = DeepSeekDailyBudget, weekly = DeepSeekWeeklyBudget,
                 ringPeriod = DeepSeekRingPeriod, speedSource = DeepSeekSpeedSource, showsTurnCost = DeepSeekShowsTurnCost, balanceSource = DeepSeekBalanceSource },
             // The reminders that follow the bar's warnings notify only while it shows them. Only this

@@ -122,8 +122,9 @@ enum PacerMain {
         }
         let monitor = ClaudeActivityMonitor()
         let codexHome = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex")
-        let targets = args.contains("--desktop-only") ? [] : await RemoteActivityTarget.claudeConfigured(codexHome: codexHome, claudeHome: home)
-        await monitor.start(home: home, remoteTargets: targets) { values, statuses, requests, performance in
+        let targets = args.contains("--desktop-only") || !monitorSSH ? [] : await ClaudeSSHDiscovery.shared.discovered(
+            codexHome: codexHome, claudeHome: home, userHome: FileManager.default.homeDirectoryForCurrentUser)
+        await monitor.start(home: home, remoteTargets: SSHHostMonitoring(defaults: .standard).monitored(targets)) { values, statuses, requests, performance in
             let groups = ActivityTaskGroup.make(values), now = Date()
             let summary: [String: Any] = ["connectedSources": statuses.values.filter(\.connected).count,
                 "runningTasks": groups.filter(\.isRunning).count, "waitingTasks": groups.filter(\.isWaiting).count,
@@ -172,6 +173,8 @@ enum PacerMain {
            let text = String(data: bytes, encoding: .utf8) { print(text) }
     }
 
+    private static var monitorSSH: Bool { UserDefaults.standard.object(forKey: "monitorSSH") as? Bool ?? true }
+
     private static func diagnoseEvents() async {
         let home = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex")
         let monitor = RealtimeActivityMonitor()
@@ -184,7 +187,7 @@ enum PacerMain {
         let lastRow = await reader.lastHookRow
         print("Codex hook spool: \(lastRow.map { "last event \(Int(Date().timeIntervalSince($0)))s ago" } ?? "no events")")
         print("Local Codex tasks followed: \(local.activities.count)")
-        await monitor.start(home: home) { _ in }
+        await monitor.start(home: home, includeSSH: monitorSSH, sshMonitoring: SSHHostMonitoring(defaults: .standard)) { _ in }
         try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
         let statuses = await monitor.statuses()
         for (source, status) in statuses.sorted(by: { $0.key < $1.key }) {
@@ -225,7 +228,7 @@ enum PacerMain {
             print("Internal review tasks included: \(overview.activities.filter(\.isInternalReview).count)")
             print("Fresh aggregate output rate available: \(overview.tokensPerSecond != nil)")
             let remote = RealtimeActivityMonitor()
-            await remote.start(home: home) { _ in }
+            await remote.start(home: home, includeSSH: monitorSSH, sshMonitoring: SSHHostMonitoring(defaults: .standard)) { _ in }
             try? await Task.sleep(nanoseconds: 5_000_000_000)
             let remoteActivities = await remote.activities()
             let combined = ActivityOverview(activities: local.activities + remoteActivities, at: Date())

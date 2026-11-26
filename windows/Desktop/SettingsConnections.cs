@@ -115,27 +115,44 @@ internal sealed partial class SettingsWindow
         connectionTitle.Text = summary; AutomationProperties.SetName(connectionTitle, summary);
         // The header line stays secondary, as the Mac's page subtitle; problems show on their rows.
         connectionTitle.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
-        string content = JsonSerializer.Serialize(new { page, snapshot?.Sources, snapshot?.ClaudeRemoteSetups, available });
+        string content = JsonSerializer.Serialize(new { page, snapshot?.Sources, snapshot?.ClaudeRemoteSetups, session.Current.MonitorSSH, session.Current.SshHostsOff, available });
         if (content == connectionContent) return;
         connectionContent = content; connectionActions.Clear();
         connectionHosts.Children.Clear(); connectionWslHosts.Children.Clear();
         if (page == null) return;
         foreach (var host in page.Hosts)
         {
-            var details = new StackPanel(); var modules = new WrapPanel(); details.Children.Add(modules);
+            bool ssh = host.Kind == "SSH";
+            if (ssh && !session.Current.MonitorSSH) continue;
+            bool monitored = !ssh || !session.Current.SshHostsOff.Contains(host.Id, StringComparer.Ordinal);
+            var details = new StackPanel();
             var actions = new StackPanel { Orientation = Orientation.Horizontal };
-            foreach (var module in host.Modules)
+            if (!monitored) details.Children.Add(Detail(ui.Text("connections.host.not_monitored")));
+            else
             {
-                var line = StatusLine(ProviderName(module.Provider) + " " + module.Label + (module.SessionsText.Length > 0 ? " · " + module.SessionsText : ""), module.Tone);
-                line.Margin = new Thickness(0, 0, 14, 0); modules.Children.Add(line);
-                QuotaLines(module, snapshot, details); actions.Children.Add(ModuleActions(module, snapshot, available, ""));
+                var modules = new WrapPanel(); details.Children.Add(modules);
+                foreach (var module in host.Modules)
+                {
+                    var line = StatusLine(ProviderName(module.Provider) + " " + module.Label + (module.SessionsText.Length > 0 ? " · " + module.SessionsText : ""), module.Tone);
+                    line.Margin = new Thickness(0, 0, 14, 0); modules.Children.Add(line);
+                    QuotaLines(module, snapshot, details); actions.Children.Add(ModuleActions(module, snapshot, available, ""));
+                }
             }
             // A host whose connection keeps failing has its own Retry, in place of the page-wide one.
-            if (host.Modules.Any(module => module.State == "retrying" && !module.RetrySetup))
+            if (monitored && host.Modules.Any(module => module.State == "retrying" && !module.RetrySetup))
             {
                 var retry = ConnectionButton(ui.Text("connections.retry"), "settings.connections.retry." + host.Id, available && page.State != "disabled");
                 retry.Click += async (_, _) => await RunConnectionAction(async () => { if (engine != null) await engine.SendAsync("refreshTaskSources"); });
                 actions.Children.Add(retry);
+            }
+            if (ssh)
+            {
+                var toggle = new CheckBox { Style = (Style)FindResource("SettingsSwitch"), IsChecked = monitored,
+                    IsEnabled = available, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
+                Identify(toggle, "settings.connections.monitor." + host.Id,
+                    ui.Text("connections.host.monitor").Replace("%@", host.Name, StringComparison.Ordinal));
+                BindToggle(toggle, (p, value) => p.SetSSHHost(host.Id, value));
+                actions.Children.Add(toggle);
             }
             var tiles = new StackPanel { Orientation = Orientation.Horizontal, Width = 42 };
             foreach (var module in host.Modules.DistinctBy(value => value.Provider))

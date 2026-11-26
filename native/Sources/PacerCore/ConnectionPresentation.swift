@@ -29,7 +29,7 @@ public struct ConnectionSource: Equatable, Identifiable {
     }
 
     static func isValidSSHSourceID(_ id: String, prefix: String) -> Bool {
-        guard id.hasPrefix(prefix) else { return false }
+        guard id.utf8.count <= prefix.utf8.count + 129, id.hasPrefix(prefix) else { return false }
         return String(id.dropFirst(prefix.count)).range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#,
             options: .regularExpression) != nil
     }
@@ -59,10 +59,10 @@ public struct ConnectionSource: Equatable, Identifiable {
     /// without the provider is paused rather than failed. Codex SSH hosts that
     /// could not start are listed as retrying even without a stream status.
     public static func sources(statuses: [AgentProvider: [String: RuntimeStreamStatus]], unavailableSSH: [String],
-                        names: [String: String]) -> [ConnectionSource] {
+                        names: [String: String], monitoring: SSHHostMonitoring = .init()) -> [ConnectionSource] {
         var result: [ConnectionSource] = []
         for (provider, byKey) in statuses {
-            for (key, status) in byKey {
+            for (key, status) in byKey where !monitoring.offIDs.contains(key) {
                 let state: State = status.connected ? .connected :
                     key.hasPrefix(wslPrefix) && status.remoteHostOnline == false ? .offline :
                     status.sourceAvailable == false ? .paused : .retrying
@@ -84,7 +84,7 @@ public struct ConnectionSource: Equatable, Identifiable {
             }
         }
         let listed = Set(result.filter { $0.provider == .codex }.map(\.key))
-        for key in Set(unavailableSSH.map(unavailableSSHSourceID)).subtracting(listed) {
+        for key in Set(unavailableSSH.map(unavailableSSHSourceID)).subtracting(listed).subtracting(monitoring.offIDs) {
             result.append(.init(provider: .codex, key: key, name: sshName(key, displayName: names[key]),
                 kind: L10n.text("connections.kind.ssh"), state: .retrying, sessions: 0))
         }
@@ -106,7 +106,7 @@ public struct ConnectionSource: Equatable, Identifiable {
 public struct SSHHost: Equatable, Identifiable {
     public enum State: Int, Comparable, Sendable {
         /// Ordered so problems sort first.
-        case setupFailed, retrying, configuring, waiting, paused, connected
+        case setupFailed, retrying, configuring, waiting, paused, connected, queued, notMonitored
         public static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
         public var isProblem: Bool { self == .setupFailed || self == .retrying }
     }
@@ -122,6 +122,7 @@ public struct SSHHost: Equatable, Identifiable {
     /// Why Claude's request speeds on this host are estimated, while connected
     /// and no exact span has arrived; `.none` hides the note.
     public var claudeTelemetryNote: ClaudeTelemetryConflict = .none
+    public var monitored: Bool { modules.first?.state != .notMonitored }
     public var claudeSetupFailed: Bool { modules.contains { $0.provider == .claude && $0.state == .setupFailed } }
 
     /// `codex`/`claude` are nil for a disabled module. Claude setup runs by
@@ -130,23 +131,32 @@ public struct SSHHost: Equatable, Identifiable {
                       claude: [String: RuntimeStreamStatus]?, claudeAliases: [String], claudeIDs: [String: String] = [:],
                       configured: Set<String>,
                       configuring: Set<String>, failed: Set<String>, names: [String: String] = [:],
-                      telemetryConflicts: [String: ClaudeTelemetryConflict] = [:]) -> [SSHHost] {
+                      telemetryConflicts: [String: ClaudeTelemetryConflict] = [:], codexTargets: [RemoteActivityTarget] = [],
+                      monitoring: SSHHostMonitoring = .init()) -> [SSHHost] {
         let prefix = ConnectionSource.sshPrefix
         var modules: [String: [Module]] = [:], notes: [String: ClaudeTelemetryConflict] = [:]
+        let off = Set(monitoring.offIDs)
+        let discoveredCodex = Dictionary(codexTargets.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
         if let codex {
-            let ids = Set(codex.keys.filter(ConnectionSource.isSSHSourceID) + unavailableCodex.map(ConnectionSource.unavailableSSHSourceID))
+            let unavailable = Set(unavailableCodex.map(ConnectionSource.unavailableSSHSourceID))
+            let ids = Set(codex.keys.filter(ConnectionSource.isSSHSourceID)).union(unavailable).subtracting(off).union(discoveredCodex.keys)
+            let selected = Set(monitoring.monitored(codexTargets).map(\.id))
             for id in ids {
                 let status = codex[id]
-                let state: State = status?.connected == true ? .connected : status?.sourceAvailable == false ? .paused : .retrying
+                let state: State = off.contains(id) ? .notMonitored :
+                    discoveredCodex[id] != nil && !selected.contains(id) ? .queued :
+                    status?.connected == true ? .connected : status?.sourceAvailable == false ? .paused :
+                    status != nil || unavailable.contains(id) ? .retrying : .waiting
                 modules[id, default: []].append(.init(provider: .codex, state: state, sessions: state == .connected ? status?.attachedThreads ?? 0 : 0))
             }
         }
         if let claude {
+            let selected = Set(monitoring.monitored(claudeAliases.map { claudeIDs[$0] ?? prefix + $0 }, id: \.self))
             for alias in Set(claudeAliases) {
                 // A host added in Desktop keeps its Desktop ID, so Claude joins the Codex row.
                 let id = claudeIDs[alias] ?? prefix + alias
                 let status = claude[id]
-                let state: State = configuring.contains(alias) ? .configuring :
+                let state: State = off.contains(id) ? .notMonitored : !selected.contains(id) ? .queued : configuring.contains(alias) ? .configuring :
                     status?.sourceAvailable == false ? .paused :
                     status?.hasConnectionFailure == true ? .retrying :
                     failed.contains(alias) ? .setupFailed :
@@ -160,7 +170,7 @@ public struct SSHHost: Equatable, Identifiable {
             let discovered = id.hasPrefix(prefix)
             let alias = discovered ? String(id.dropFirst(prefix.count)) : claudeAlias[id] ?? String(id.dropFirst(ConnectionSource.managedSSHPrefix.count))
             let displayName = discovered ? names[alias] : codex?[id]?.sourceName ?? names[id] ?? claudeAlias[id].flatMap { names[$0] }
-            var host = SSHHost(id: id, alias: alias, name: ConnectionSource.sshName(id, displayName: displayName),
+            var host = SSHHost(id: id, alias: alias, name: ConnectionSource.sshName(id, displayName: displayName ?? discoveredCodex[id]),
                 modules: values.sorted { $0.provider == .codex && $1.provider != .codex })
             host.claudeTelemetryNote = notes[id] ?? .none
             return host
@@ -204,28 +214,24 @@ public struct ConnectionSummary: Equatable {
             }
             entries[source.id] = (state, source.sessions)
         }
+        func setEntry(_ id: String, _ state: SSHHost.State, sessions: Int) {
+            let value: EntryState
+            switch state {
+            case .setupFailed, .retrying: value = .retrying
+            case .configuring, .waiting: value = .connecting
+            case .paused: value = .paused
+            case .connected: value = .connected
+            case .notMonitored, .queued: entries.removeValue(forKey: id); return
+            }
+            entries[id] = (value, state == .connected ? sessions : 0)
+        }
         for host in hosts {
             for module in host.modules where enabled.contains(module.provider) {
-                let id = module.provider.rawValue + ":" + host.id
-                let state: EntryState = switch module.state {
-                case .setupFailed, .retrying: .retrying
-                case .configuring, .waiting: .connecting
-                case .paused: .paused
-                case .connected: .connected
-                }
-                entries[id] = (state, module.sessions)
+                setEntry(module.provider.rawValue + ":" + host.id, module.state, sessions: module.sessions)
             }
         }
-        for (id, state) in overrides where entries[id] != nil {
-            let value: EntryState = switch state {
-            case .setupFailed, .retrying: .retrying
-            case .configuring, .waiting: .connecting
-            case .paused: .paused
-            case .connected: .connected
-            }
-            let sessions: Int
-            if case .connected = value { sessions = entries[id]?.sessions ?? 0 } else { sessions = 0 }
-            entries[id] = (value, sessions)
+        for (id, state) in overrides {
+            if let entry = entries[id] { setEntry(id, state, sessions: entry.sessions) }
         }
         let checking = entries.isEmpty && !hostsOnly
         // Every enabled module has a local source. One module publishing first

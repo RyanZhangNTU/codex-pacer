@@ -29,6 +29,10 @@ public actor ClaudeSSHDiscovery {
     }
 
     public func configured(codexHome: URL, claudeHome: URL, userHome: URL, desktopFile: URL? = nil) async -> [RemoteActivityTarget] {
+        return SSHHostMonitoring().monitored(await discovered(codexHome: codexHome, claudeHome: claudeHome, userHome: userHome, desktopFile: desktopFile))
+    }
+
+    public func discovered(codexHome: URL, claudeHome: URL, userHome: URL, desktopFile: URL? = nil) async -> [RemoteActivityTarget] {
         let codex = RemoteActivityTarget.claudeCodexTargets(home: codexHome)
         let desktopFile = desktopFile ?? userHome.appendingPathComponent("Library/Application Support/Claude/ssh_configs.json")
         let settingsFile = claudeHome.appendingPathComponent("settings.json")
@@ -53,7 +57,6 @@ public actor ClaudeSSHDiscovery {
                 if result[index].sshIdentityFile == nil { result[index].sshIdentityFile = config.identity }
                 continue
             }
-            guard result.count < 8 else { continue }
             let simple = config.port == nil && config.identity == nil &&
                 config.host.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil
             let alias = simple ? config.host : "claude-" + digest(key)
@@ -105,7 +108,7 @@ public actor ClaudeSSHDiscovery {
         } else {
             route = await resolve(host, port)
             guard !Task.isCancelled else { return "" }
-            if routes.count >= 64 { routes.removeAll() }
+            if routes.count >= 128 { routes.removeAll() }
             routes[key] = .init(route: route, at: now, signature: signature)
         }
         if let route { return [route.hostname, route.user, String(route.port)].joined(separator: "\u{0}") }

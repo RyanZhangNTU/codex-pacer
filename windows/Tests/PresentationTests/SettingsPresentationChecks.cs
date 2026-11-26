@@ -220,6 +220,17 @@ internal static class SettingsPresentationChecks
             // SSH monitoring moved to Remote's SSH card, as on the Mac.
             var remoteSSH = Find<CheckBox>(window, "settings.connections.ssh");
             Check(remoteSSH.IsChecked == true, "SSH monitoring uses the shared default");
+            const string demoHost = "remote-ssh-discovered:demo", hostToggle = "settings.connections.monitor." + demoHost;
+            var hostSwitch = Find<CheckBox>(window, hostToggle);
+            Check(hostSwitch.IsChecked == true && AutomationProperties.GetName(hostSwitch).Contains("SSH"),
+                "The host switch defaults on and is named for the host");
+            Toggle(hostSwitch);
+            await Until(() => session.Current.SshHostsOff.Contains(demoHost) && Find<CheckBox>(window, hostToggle) is { IsChecked: false, IsEnabled: true }
+                && Descendants(window).OfType<TextBlock>().Any(label => label.Text == ui.Text("connections.host.not_monitored")),
+                "Turning the host off keeps its row with a plain status");
+            Toggle(Find<CheckBox>(window, hostToggle));
+            await Until(() => !session.Current.SshHostsOff.Contains(demoHost) && Find<CheckBox>(window, hostToggle) is { IsChecked: true, IsEnabled: true },
+                "The host can resume without changing the master switch");
             Toggle(remoteSSH); await Until(() => !session.Current.MonitorSSH && remoteSSH.IsEnabled, "The SSH switch awaits engine acknowledgement");
             Toggle(remoteSSH); await Until(() => session.Current.MonitorSSH && remoteSSH.IsEnabled, "SSH monitoring can be enabled again");
             string connectionsImage = Path.Combine(output, "settings-" + scenario + "-connections.png");

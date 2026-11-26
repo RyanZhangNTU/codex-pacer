@@ -39,6 +39,23 @@ final class ConnectionPagePresentationTests: XCTestCase {
         XCTAssertEqual(page.sessionCount, 3)
     }
 
+    func testCodexOnlyListsOffAndQueuedHostsWithoutCountingThem() {
+        let targets = (0..<10).map { index in
+            let alias = "lab-\(index)"
+            return RemoteActivityTarget(id: ConnectionSource.sshPrefix + alias, name: alias, alias: alias, home: "~/.codex")
+        }
+        let missing = ConnectionSource.sshPrefix + "absent"
+        let monitoring = SSHHostMonitoring(offIDs: [targets[0].id, missing])
+        let page = ConnectionPagePresentation(enabledProviders: [.codex], statuses: [.codex: [missing: status(false)]],
+            unavailableSSH: [targets[0].id, missing], hostsOnly: true, codexTargets: targets, monitoring: monitoring)
+        XCTAssertEqual(page.hosts.count, 10)
+        XCTAssertEqual(page.hosts.first { $0.id == targets[0].id }?.modules.first?.state, "notMonitored")
+        XCTAssertEqual(page.hosts.first { $0.id == targets[9].id }?.modules.first?.state, "queued")
+        XCTAssertEqual(page.sourceCount, 8)
+        XCTAssertEqual(page.sessionCount, 0)
+        XCTAssertFalse(page.retry)
+    }
+
     func testManagedSSHHostsKeepTheirIDsAndNamesAcrossConnectionFailures() throws {
         let connected = ConnectionSource.managedSSHPrefix + "build", unavailable = ConnectionSource.managedSSHPrefix + "other"
         let discovered = ConnectionSource.sshPrefix + "build"

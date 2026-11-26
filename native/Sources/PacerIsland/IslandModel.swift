@@ -795,7 +795,7 @@ final class IslandModel: ObservableObject {
 
     private func scheduleCodexRemoteProgress() {
         guard isModuleEnabled(.codex), monitorsSSH, !demo, !sleeping, !stopped, let digest = codexRemoteProgressDigest else { return }
-        let pending = Self.codexRemoteProgressPending(targets: RemoteActivityTarget.configured(home: home), statuses: streamStatuses,
+        let pending = Self.codexRemoteProgressPending(targets: codexRemoteTargets, statuses: streamStatuses,
             configured: CodexRemoteProgressSetup.configuredDigests(defaults: defaults), ring: codexRemoteProgressRing, digest: digest,
             failures: codexRemoteProgressFailedAt, inFlight: Set(codexRemoteProgressRequests.keys),
             checkedAt: codexRemoteProgressCheckedAt, now: Date())
@@ -812,7 +812,7 @@ final class IslandModel: ObservableObject {
     @discardableResult
     func configureCodexRemoteProgress(target: RemoteActivityTarget) async -> CodexRemoteProgressSetup.Status? {
         guard isModuleEnabled(.codex), monitorsSSH, !sleeping, !stopped, !Task.isCancelled,
-              codexRemoteProgressRequests[target.id] == nil, let digests = codexRemoteProgressDigests else { return nil }
+              !sshMonitoring.offIDs.contains(target.id), codexRemoteProgressRequests[target.id] == nil, let digests = codexRemoteProgressDigests else { return nil }
         // One read of the switch, so the recorded digest always describes the request sent.
         let ring = codexRemoteProgressRing, digest = ring ? digests.on : digests.off
         let generation = sourceGeneration, requestID = UUID(), transport = claudeRemoteSetup
@@ -1584,6 +1584,11 @@ final class IslandModel: ObservableObject {
     private var claudeDiscoveryRevision = 0
     private var claudeRemoteSetupTasks: [String: Task<ClaudeHookInstaller.Status, Error>] = [:]
     private var claudeRemoteSetupIDs: [String: UUID] = [:]
+    @Published private(set) var sshMonitoring: SSHHostMonitoring
+    @Published private(set) var discoveredCodexTargets: [RemoteActivityTarget] = []
+    @Published private(set) var discoveredClaudeTargets: [RemoteActivityTarget] = []
+    /// Read when needed, as before, so a replaced host home is bound before an open can acknowledge it.
+    private var codexRemoteTargets: [RemoteActivityTarget] { monitorsSSH ? sshMonitoring.monitored(RemoteActivityTarget.configured(home: home)) : [] }
     @Published private(set) var claudeRemoteTargets: [RemoteActivityTarget] = []
     @Published private(set) var configuringClaudeHosts: Set<String> = []
     @Published private(set) var claudeRemoteSetupStatus: [String: ClaudeHookInstaller.Status] = [:]
@@ -1677,7 +1682,9 @@ final class IslandModel: ObservableObject {
         configuringClaudeHosts.removeAll(); recheckingClaudeHosts.removeAll()
     }
     /// A client-side removal/replacement retires only its owned collector/setup.
-    func reconcileClaudeRemoteTargets(_ targets: [RemoteActivityTarget]) {
+    func reconcileClaudeRemoteTargets(_ discovered: [RemoteActivityTarget]) {
+        if discovered != discoveredClaudeTargets { discoveredClaudeTargets = discovered }
+        let targets = monitorsSSH ? sshMonitoring.monitored(discovered) : []
         for previous in claudeRemoteTargets where !targets.contains(previous) {
             claudeRemoteSetupTasks.removeValue(forKey: previous.id)?.cancel()
             cancelOwnedWork(.init(.setup, provider: .claude, identifier: previous.id))
@@ -1702,10 +1709,10 @@ final class IslandModel: ObservableObject {
         launchOwnedWork(.init(.discovery, provider: .claude)) { [weak self] workTicket in
             guard let self else { return }
             defer { if revision == self.claudeDiscoveryRevision { self.ownedWork.finish(workTicket) } }
-            let targets = includeSSH ? await RemoteActivityTarget.claudeConfigured(codexHome: codexHome, claudeHome: sourceHome) : []
+            let targets = includeSSH ? await ClaudeSSHDiscovery.shared.discovered(codexHome: codexHome, claudeHome: sourceHome, userHome: FileManager.default.homeDirectoryForCurrentUser) : []
             guard !Task.isCancelled, generation == self.claudeGeneration, !self.stopped, !self.sleeping else { return }
             self.reconcileClaudeRemoteTargets(targets)
-            await self.claudeMonitor.updateRemoteTargets(targets)
+            await self.claudeMonitor.updateRemoteTargets(self.claudeRemoteTargets)
             if refresh, !Task.isCancelled, generation == self.claudeGeneration { await self.claudeMonitor.refresh() }
         }
     }
@@ -1802,10 +1809,7 @@ final class IslandModel: ObservableObject {
     private let demoClock: () -> Date
     /// Source tests pass nil to keep demo's I/O isolation while supplying their own events.
     private let demoArguments: [String]?
-    private var demoActivities: [SessionActivity] {
-        get { activityState.demoActivities }
-        set { activityState.demoActivities = newValue }
-    }
+    private var demoActivities: [SessionActivity] = []
     private var demoRequests: [PendingAttentionRequest] {
         get { activityState.demoRequests }
         set { activityState.demoRequests = newValue }
@@ -1934,6 +1938,45 @@ final class IslandModel: ObservableObject {
     }
     var rate: Double? { overview.displayedRate }
     var rateIsFresh: Bool { overview.rateIsFresh }
+    private func permitsSSHHost(_ id: String?) -> Bool {
+        // The global switch stops the sources; this only drops hosts switched off one by one.
+        guard let id, ConnectionSource.isSSHSourceID(id) else { return true }
+        return !sshMonitoring.offIDs.contains(id)
+    }
+
+    func setSSHHost(_ id: String, monitored: Bool) {
+        let next = sshMonitoring.setting(id, monitored: monitored)
+        guard next != sshMonitoring else { return }
+        let previousCodex = codexRemoteTargets
+        let retrying = Set(sshMonitoring.offIDs).subtracting(next.offIDs)
+        sshMonitoring = next
+        defaults.set(next.offIDs, forKey: SSHHostMonitoring.defaultsKey)
+        let selectedCodex = codexRemoteTargets
+        for target in previousCodex where !selectedCodex.contains(target) {
+            cancelOwnedWork(.init(.setup, provider: .codex, identifier: "remote-progress:" + target.id))
+            codexRemoteProgressRequests[target.id] = nil
+            codexRemoteProgressFailedAt[target.id] = nil
+            codexRemoteProgressCheckedAt[target.id] = nil
+        }
+        reconcileClaudeRemoteTargets(discoveredClaudeTargets)
+        bindCompletionSources(.codex)
+        sshActivities.removeAll { !permitsSSHHost($0.sourceHostID) }
+        remoteActivities = sshActivities + durableActivities
+        claudeReceivedActivities.removeAll { !permitsSSHHost($0.sourceHostID) }
+        claudeReceivedRequests.removeAll { !permitsSSHHost($0.sourceHostID) }
+        codexReceivedRequests.removeAll { !permitsSSHHost($0.sourceHostID) }
+        if !demo || demoArguments == nil { streamStatuses = streamStatuses.filter { permitsSSHHost($0.key) } }
+        unavailableSSH.removeAll { !permitsSSHHost($0) }
+        if demo, demoArguments != nil { applyDemoSnapshot() } else { refilterEmbeddedSessions() }
+        guard monitorsSSH, !sleeping, !stopped, !demo else { return }
+        launchOwnedWork(.init(.discovery, identifier: "ssh-host-switch")) { [weak self] ticket in
+            guard let self, self.lifecycle.owns(ticket) else { return }
+            await self.realtimeMonitor.updateSSHMonitoring(self.sshMonitoring, retrying: retrying)
+            guard self.lifecycle.owns(ticket), self.monitorsSSH, self.isModuleEnabled(.claude) else { return }
+            await self.claudeMonitor.updateRemoteTargets(self.claudeRemoteTargets, retrying: retrying)
+        }
+    }
+
     var monitorsSSH: Bool { defaults.object(forKey: "monitorSSH") == nil || defaults.bool(forKey: "monitorSSH") }
     /// Dot tasks are opt-in; see `migrateDurableSwitch`.
     nonisolated static let monitorsDurableKey = "monitorDurable"
@@ -1971,6 +2014,7 @@ final class IslandModel: ObservableObject {
          deepseekMonitor: DeepSeekActivityMonitor = DeepSeekActivityMonitor(),
          durableMonitor: MacDurableMonitor = MacDurableMonitor()) {
         self.defaults = defaults
+        sshMonitoring = SSHHostMonitoring(defaults: defaults)
         expandMode = defaults.string(forKey: IslandExpandMode.defaultsKey).flatMap(IslandExpandMode.init(rawValue:)) ?? .hover
         self.durableMonitor = durableMonitor
         self.compactLayout = .load(from: defaults)
@@ -2000,9 +2044,12 @@ final class IslandModel: ObservableObject {
         if !demo { Self.migrateDurableSwitch(in: defaults, home: home) }
         appliedDurable = defaults.bool(forKey: Self.monitorsDurableKey)
         lifecycle = ApplicationLifecycleCoordinator(demo: demo, configuration: lifecycleConfiguration)
+        discoveredCodexTargets = monitorsSSH ? RemoteActivityTarget.configured(home: home) : []
+        appliedCodexSSH = monitorsSSH
         deepseekBalanceBinding = currentDeepSeekBalanceBinding
         if !demo { restoreDeepSeekHistory() }
-        claudeRemoteTargets = monitorsSSH ? RemoteActivityTarget.claudeCodexTargets(home: home) : []
+        discoveredClaudeTargets = monitorsSSH ? RemoteActivityTarget.claudeCodexTargets(home: home) : []
+        claudeRemoteTargets = sshMonitoring.monitored(discoveredClaudeTargets)
         activityState = ActivityApplicationState(inbox: CompletionInbox(dismissalStore: completionDismissalStore ?? (demo ? nil : .applicationDefault)))
         activityState.includesDemoMetadata = demo && demoArguments != nil
         bindCompletionSources(.codex)
@@ -2443,10 +2490,10 @@ final class IslandModel: ObservableObject {
                 }
             }
             self.syncClaudeCloudMonitor()
-            let targets = self.monitorsSSH ? await RemoteActivityTarget.claudeConfigured(codexHome: codexHome, claudeHome: sourceHome) : []
+            let targets = self.monitorsSSH ? await ClaudeSSHDiscovery.shared.discovered(codexHome: codexHome, claudeHome: sourceHome, userHome: FileManager.default.homeDirectoryForCurrentUser) : []
             guard !Task.isCancelled, generation == self.claudeGeneration, !self.stopped, !self.sleeping else { return }
             self.reconcileClaudeRemoteTargets(targets)
-            await self.claudeMonitor.updateRemoteTargets(targets)
+            await self.claudeMonitor.updateRemoteTargets(self.claudeRemoteTargets)
         }
     }
     /// Pausing for sleep keeps the monitor, because what was running can end
@@ -2507,8 +2554,9 @@ final class IslandModel: ObservableObject {
             completionInbox.remove(activityIDs: excluded)
             if activities.contains(where: { excluded.contains($0.id) }) { activities.removeAll { excluded.contains($0.id) } }
         }
-        now = Date(); claudeStreamStatuses = statuses
-        activityState.replaceHarness(.claude, with: .init(activities: values.filter { !excluded.contains($0.id) }, requests: requests))
+        now = Date(); claudeStreamStatuses = statuses.filter { permitsSSHHost($0.key) }
+        activityState.replaceHarness(.claude, with: .init(activities: values.filter { !excluded.contains($0.id) && permitsSSHHost($0.sourceHostID) },
+            requests: requests.filter { permitsSSHHost($0.sourceHostID) }))
         let hidden = hiddenEmbeddedActivityIDs
         let measured = performance.filter { !excluded.contains($0.id) }
         completionInbox.updatePerformance(measured)
@@ -2628,12 +2676,16 @@ final class IslandModel: ObservableObject {
         launchOwnedWork(.init(.remote, provider: .codex)) { [weak self] workTicket in
             guard let self else { return }
             defer { if generation == self.sourceGeneration { self.ownedWork.finish(workTicket) } }
-            await self.realtimeMonitor.startAsync(home: sourceHome, includeSSH: self.monitorsSSH,
+            await self.realtimeMonitor.startAsync(home: sourceHome, includeSSH: self.monitorsSSH, sshMonitoring: self.sshMonitoring,
                 refreshPolicy: self.activityRefreshPolicy) { [weak self] snapshot in
                 // The monitor publishes serially. Keep that order on the UI
                 // queue so a later empty snapshot cannot overtake an ending.
                 DispatchQueue.main.async {
                     guard let self, generation == self.sourceGeneration, !self.stopped, !self.sleeping else { return }
+                    if self.discoveredCodexTargets != snapshot.discoveredTargets {
+                        self.discoveredCodexTargets = snapshot.discoveredTargets
+                        self.bindCompletionSources(.codex)
+                    }
                     self.receiveRemoteUpdate(snapshot.activities, statuses: snapshot.statuses,
                         unavailable: snapshot.unavailableSources.filter(ConnectionSource.isSSHSourceID),
                         requests: [], names: snapshot.names, performance: snapshot.performance)
@@ -2647,6 +2699,9 @@ final class IslandModel: ObservableObject {
 
     func receiveRemoteUpdate(_ activities: [SessionActivity], statuses: [String: RuntimeStreamStatus],
                              unavailable: [String], requests: [PendingAttentionRequest], names: [SessionNameUpdate], performance: [SessionPerformanceUpdate] = []) {
+        let activities = activities.filter { permitsSSHHost($0.sourceHostID) }
+        let statuses = statuses.filter { permitsSSHHost($0.key) }
+        let unavailable = unavailable.filter { permitsSSHHost($0) }
         let oldLocal = Set(remoteActivities.filter { $0.sourceHostID == nil }.map { $0.id + ":" + ($0.turnID ?? "") })
         let newLocal = Set(activities.filter { $0.sourceHostID == nil }.map { $0.id + ":" + ($0.turnID ?? "") })
         let agentStatesChanged = localSubagentStates(remoteActivities) != localSubagentStates(activities)
@@ -2659,7 +2714,7 @@ final class IslandModel: ObservableObject {
         completionInbox.updatePerformance(performance.filter { !ignored.contains($0.id) })
         if !Self.sameVisibleStreamState(streamStatuses, statuses) { streamStatuses = statuses }
         if unavailableSSH != unavailable { unavailableSSH = unavailable }
-        codexReceivedRequests = requests
+        codexReceivedRequests = requests.filter { permitsSSHHost($0.sourceHostID) }
         refilterEmbeddedSessions()
         if oldLocal != newLocal { refreshActivity() }
         else if agentStatesChanged { refreshActivity(metricsOnly: true) }
@@ -2861,7 +2916,10 @@ final class IslandModel: ObservableObject {
         if appliedCodexSSH != monitorsSSH {
             let changed = appliedCodexSSH != nil
             appliedCodexSSH = monitorsSSH
-            if changed && !plan.changedProviders.contains(.codex) { refreshRemote() }
+            if changed && !plan.changedProviders.contains(.codex) {
+                cancelOwnedWork(.init(.remote, provider: .codex))
+                refreshRemote()
+            }
             if !monitorsSSH { cancelCodexRemoteProgress() }
         }
         // A restarted Claude source applies the ring's switch as part of its setup.
@@ -2887,6 +2945,7 @@ final class IslandModel: ObservableObject {
         quotaCLI = nil; attention = AttentionPolicy()
         completionInbox.remove(provider: .codex)
         durableAccountScope = nil
+        discoveredCodexTargets = monitorsSSH ? RemoteActivityTarget.configured(home: home) : []
         bindCompletionSources(.codex)
         stopDurable(); sshActivities = []
         codexAttentionRequests = []; localActivities = []; remoteActivities = []; unavailableSSH = []; streamStatuses = [:]
@@ -2923,7 +2982,8 @@ final class IslandModel: ObservableObject {
         claudeQuota = nil; claudeHistory = QuotaCycleHistory(); claudeHistoryWarning = nil; claudeErrorMessage = nil
         claudeQuotaSource = nil; claudeConnectionNeeded = false; claudeConnectionSaved = nil; claudeQuotaAttention = AttentionPolicy(); claudeActivityAttention = AttentionPolicy()
         completionInbox.remove(provider: .claude)
-        claudeRemoteTargets = monitorsSSH ? RemoteActivityTarget.claudeCodexTargets(home: home) : []
+        discoveredClaudeTargets = monitorsSSH ? RemoteActivityTarget.claudeCodexTargets(home: home) : []
+        claudeRemoteTargets = sshMonitoring.monitored(discoveredClaudeTargets)
         bindCompletionSources(.claude)
         claudeReceivedActivities = []; claudeReceivedRequests = []
         claudeAttentionRequests = []; claudeStreamStatuses = [:]
@@ -2955,7 +3015,7 @@ final class IslandModel: ObservableObject {
 
     func bindCompletionSources(_ provider: AgentProvider) {
         guard provider != .deepseek else { completionInbox.bindSourceHomes(provider: provider, localHome: deepseekHome); return }
-        let targets = provider == .codex ? (monitorsSSH ? RemoteActivityTarget.configured(home: home) : []) : claudeRemoteTargets
+        let targets = provider == .codex ? codexRemoteTargets : claudeRemoteTargets
         var remoteHomes = Dictionary(targets.map { ($0.id, $0.home) }, uniquingKeysWith: { _, latest in latest })
         if provider == .claude { remoteHomes[ClaudeCloudProjectState.sourceID] = "cloud" }
         completionInbox.bindSourceHomes(provider: provider, localHome: provider == .codex ? home : claudeHome,
@@ -3131,6 +3191,7 @@ final class IslandModel: ObservableObject {
         if demoArguments?.contains("--demo-completion") == true { setDemoStage(.completed) }
     }
     private func applyDemoSnapshot() {
+        activityState.demoActivities = demoActivities.filter { !sshMonitoring.offIDs.contains($0.sourceHostID ?? "") }
         let update = activityState.applyDemoSnapshot(enabled: Set(enabledProviders), at: now, visibility: activityVisibility)
         applyActivityUpdate(update); present(update.notices)
     }
@@ -3149,8 +3210,11 @@ final class IslandModel: ObservableObject {
             observed += cloud.activities
             demoRequests = cloud.attention
         }
+        discoveredCodexTargets = [.init(id: ConnectionSource.sshPrefix + "demo", name: "SSH", alias: "demo", home: "~/.codex")]
+        discoveredClaudeTargets = []; claudeRemoteTargets = []
+        bindCompletionSources(.codex)
         demoActivities = observed
-        completionInbox.observe(observed, at: now, retention: completedRetention)
+        completionInbox.observe(observed.filter { permitsSSHHost($0.sourceHostID) }, at: now, retention: completedRetention)
         applyDemoSnapshot()
         var status = RuntimeStreamStatus()
         status.connected = true; status.attachedThreads = 1; status.notifications = 7 + stage.rawValue

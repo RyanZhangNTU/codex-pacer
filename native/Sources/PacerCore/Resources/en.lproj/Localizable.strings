@@ -567,6 +567,7 @@
 "connections.retry" = "Retry";
 "connections.summary.ok" = "All sources connected";
 "connections.summary.checking" = "Checking sources";
+"connections.summary.none_monitored" = "No hosts monitored";
 "connections.summary.no_hosts" = "No remote hosts";
 "connections.summary.idle" = "Waiting for Remote Control sessions";
 "connections.summary.retrying" = "%ld sources retrying";
@@ -579,6 +580,9 @@
 "connections.section.ssh" = "SSH Hosts";
 "connections.host.connected" = "connected";
 "connections.host.configuring" = "setting up";
+"connections.host.monitor" = "Monitor %@";
+"connections.host.not_monitored" = "Not monitored";
+"connections.host.queued" = "waiting for a slot";
 "connections.host.waiting" = "connecting";
 "connections.host.missing" = "not installed";
 "connections.host.retrying" = "retrying";
