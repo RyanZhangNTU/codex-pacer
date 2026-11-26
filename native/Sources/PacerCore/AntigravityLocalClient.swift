@@ -13,9 +13,11 @@ package protocol AntigravityLocalHost: Sendable {
     func post(_ request: AntigravityLocalRequest) async throws -> (Int, Data)
 }
 
+/// The language server leaves its hub file behind when it exits, one per start,
+/// so only the newest files are checked; two live servers still bind none.
 extension AntigravityLocalHost {
-    package var maximumHubDirectoryEntries: Int { 256 }
-    package var hubCandidateLimit: AntigravityHubCandidateLimit { .all(upTo: 16) }
+    package var maximumHubDirectoryEntries: Int { 4096 }
+    package var hubCandidateLimit: AntigravityHubCandidateLimit { .newest(32) }
 }
 
 package struct AntigravityLocalRequest: Sendable {
