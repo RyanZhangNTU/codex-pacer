@@ -15,12 +15,12 @@ public enum CompactWarningPresentation {
     }
     private static func alerts(provider: AgentProvider, snapshot: QuotaSnapshot?, failed: Bool, now: Date) -> [(String, FiveHourAlert)] {
         guard !failed, let snapshot, !snapshot.isStale(at: now) else { return [] }
-        let buckets = provider == .antigravity ? snapshot.buckets : [QuotaDashboardPresentation.bucket(provider: provider, snapshot: snapshot)].compactMap { $0 }
+        let buckets = provider.quotaGroups != nil ? snapshot.buckets : [QuotaDashboardPresentation.bucket(provider: provider, snapshot: snapshot)].compactMap { $0 }
         return buckets.compactMap { bucket in
             guard let window = bucket.windows.first(where: { $0.durationMinutes == 300 }),
                   window.resetsAt.map({ $0 > now }) ?? true, let remaining = window.remainingPercent,
                   remaining < 20 else { return nil }
-            let name = provider == .antigravity ? [provider.displayName, bucket.name].compactMap { $0 }.joined(separator: " · ") : provider.displayName
+            let name = provider.quotaGroups != nil ? [provider.displayName, bucket.name].compactMap { $0 }.joined(separator: " · ") : provider.displayName
             return (name, remaining <= 0 ? .exhausted : .low(remaining))
         }
     }
@@ -95,7 +95,7 @@ public enum CompactWarningPresentation {
         if warnings.contains(.quotaDelay) {
             let delayed = ordered.filter { provider in
                 guard let snapshot = snapshots[provider] else { return failed.contains(provider) }
-                if provider == .antigravity {
+                if provider.quotaGroups != nil {
                     return failed.contains(provider) || snapshot.isStale(at: now) || snapshot.windows.contains { $0.resetsAt.map { $0 <= now } == true }
                 }
                 let own = windows(provider)
@@ -108,7 +108,7 @@ public enum CompactWarningPresentation {
                 result.append(.init(kind: .quotaDelay, provider: nil, solid: delayed.contains { failed.contains($0) },
                     label: L10n.text("warning.label.quotaDelay"), symbol: nil,
                     help: delayed.flatMap { provider -> [String] in
-                        guard provider == .antigravity, let snapshot = snapshots[provider] else { return [provider.displayName] }
+                        guard provider.quotaGroups != nil, let snapshot = snapshots[provider] else { return [provider.displayName] }
                         return snapshot.buckets.filter { bucket in
                             failed.contains(provider) || snapshot.isStale(at: now) || bucket.windows.contains { $0.resetsAt.map { $0 <= now } == true }
                         }.map { provider.displayName + " · " + ($0.name ?? $0.id) }

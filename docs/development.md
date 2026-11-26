@@ -98,7 +98,11 @@ The expanded island's app buttons and their More menu entries use the transparen
 
 The Mac quota coordinator shares the activity monitor’s verified local hub. It checks the account before and after reading quota. Only the account check reads the email, which Pacer immediately hashes with HMAC-SHA256 using its installation key and a domain unique to Antigravity quota. A changed account discards the in-flight reading. Without an identity, Pacer shows only the current percentages. Both weekly curves use a separate Antigravity history directory. The island uses the selected model group for both periods, while warnings and History use all reported groups.
 
-The catalog reader projects model IDs, display names and supported effort suffixes from the verified session. A settled response’s rate includes thinking tokens and uses first-token latency plus streaming time. Pacer requires at least one second and checks the total against the owned planner’s creation and generation-end timestamps. An ended task and its subagents keep their last measured responses.
+The catalog reader projects model IDs, display names and supported effort suffixes from the verified session. A settled response’s rate includes thinking tokens and uses first-token latency plus streaming time. Pacer requires at least one second and checks the total against the owned planner’s creation and generation-end timestamps. An ended task keeps its last measured response. A subagent line shows speed only while the child is working.
+
+Antigravity’s progress ring uses the same local stdio reporter as WorkBuddy. Pacer owns the `codex-pacer` plugin in the global customization folder and keeps the reporter flag and install record outside plugin discovery, in `.gemini/config/pacer-progress`. Changing the activity data folder does not move the plugin. The install record identifies the exact commands Pacer wrote. A locked directory keeps its record until a later cleanup succeeds.
+
+The monitor reads an estimate only from a DONE generic step after the conversation’s current input anchor, matching Pacer’s server and tool before decoding the bounded percentage. The completion timestamp must follow the monitor baseline and the installation timestamp to confirm setup. A matching MCP permission wait remains an approval on the requesting conversation. Pacer never grants permission on the user’s behalf.
 
 ### Model and reasoning effort
 

@@ -196,10 +196,10 @@ struct SettingsCollapsedBarPane: View {
     @ViewBuilder private var windowPickers: some View {
         if providers.contains(.codex) { quotaWindowPicker(.codex, selection: $windowID) }
         if providers.contains(.claude) { quotaWindowPicker(.claude, selection: $claudeWindowID) }
-        if providers.contains(.antigravity) {
-            quotaWindowPicker(.antigravity, selection: Binding(
-                get: { model.defaults.string(forKey: QuotaWindowSelection.defaultsKey(for: .antigravity)) ?? "auto" },
-                set: { model.setAntigravityPreference($0, key: QuotaWindowSelection.defaultsKey(for: .antigravity)) }))
+        ForEach(providers.filter { ![.codex, .claude].contains($0) && HarnessRegistry.descriptor(for: $0)?.hasQuotaWindows == true }) { provider in
+            quotaWindowPicker(provider, selection: Binding(
+                get: { model.defaults.string(forKey: QuotaWindowSelection.defaultsKey(for: provider)) ?? "auto" },
+                set: { model.setQuotaPreference($0, key: QuotaWindowSelection.defaultsKey(for: provider)) }))
         }
     }
 

@@ -404,10 +404,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         return OutputEstimate(value: sample.value, reportedAt: sample.reportedAt, isFresh: fresh)
     }
     /// A subagent's speed counts toward its task while fresh or while it is
-    /// writing; a finished or tool-bound one adds nothing.
+    /// writing. Callers exclude children that have finished.
     func contributesLiveRate(_ estimate: OutputEstimate) -> Bool {
-        if provider == .antigravity, parentThreadID != nil, stage == .tool { return false }
-        return estimate.isFresh || (phase == .running && [.thinking, .responding].contains(stage))
+        estimate.isFresh || (phase == .running && [.thinking, .responding].contains(stage))
     }
     public func displayedRateIsEstimated(at now: Date) -> Bool {
         if currentBackgroundWait != nil { return false }

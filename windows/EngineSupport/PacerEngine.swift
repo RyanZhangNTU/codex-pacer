@@ -829,13 +829,13 @@ actor EngineRuntime {
         case "retryHarnessProgressSetup":
             guard active, managesLocalHarnessProgress, clientSupportsHarnessModules, let name = command.params?.provider,
                   let definition = localHarnesses.definitions.first(where: { $0.descriptor.id.rawValue == name }),
-                  definition.progressConfigFile != nil else { failure(id: command.id, code: "unavailable"); return true }
+                  definition.descriptor.progressConnector else { failure(id: command.id, code: "unavailable"); return true }
             scheduleLocalHarnessProgress(definition, force: true)
             if projectionReady { publish(notices: []) }
         case "refreshHarnessProgressConnection":
             guard active, let name = command.params?.provider,
                   let definition = localHarnesses.definitions.first(where: { $0.descriptor.id.rawValue == name }),
-                  definition.progressConnection != nil else { failure(id: command.id, code: "unavailable"); return true }
+                  definition.descriptor.progressConnector else { failure(id: command.id, code: "unavailable"); return true }
             let provider = definition.descriptor.id
             if let running = command.params?.appRunning {
                 let started = command.params?.appStartedAt.flatMap { $0.isFinite && $0 > 0 ? Date(timeIntervalSince1970: $0) : nil }
@@ -860,7 +860,7 @@ actor EngineRuntime {
                 }
             }
             // Once the app has made its folder, setup continues without a retry.
-            if localProgressStatuses[provider]?.setup == .missingHome { scheduleLocalHarnessProgress(definition, force: true) }
+            if [.missingHome, .removalPending].contains(localProgressStatuses[provider]?.setup) { scheduleLocalHarnessProgress(definition, force: true) }
             else { scheduleLocalHarnessProgress(definition, inspectOnly: true) }
         case "inspectProviderHome":
             guard let name = command.params?.provider, let provider = AgentProvider(rawValue: name),
@@ -1485,7 +1485,8 @@ actor EngineRuntime {
             module.progressGuide = HarnessProgressGuide(setup: state?.setup, connection: state?.connection, reported: state?.reported ?? false,
                 ringOn: enabled.contains(provider) && !disabledHarnessProgress.contains(provider), name: descriptor.name,
                 addedAt: state?.addedAt, removedAt: state?.removedAt, app: localHarnessApps[provider], view: localHarnessViews[provider],
-                openedConnectors: openedHarnessConnectors[provider] != nil)
+                openedConnectors: openedHarnessConnectors[provider] != nil, pluginPlatform: definition?.installsProgressPlugin == true ? .windows : nil,
+                requestsApproval: harnessActivities[provider]?.requestsProgressApproval == true)
         }
         if let daily = demo && provider == .workbuddy ? DemoScenario.workbuddyDaily(at: now()) : harnessActivities[provider]?.usage?.daily {
             module.week = HarnessWeekPresentation.week(provider: provider, daily: daily, now: now())
@@ -1544,7 +1545,7 @@ actor EngineRuntime {
     }
 
     private func scheduleLocalHarnessProgress(_ definition: LocalHarnessDefinition, force: Bool = false, inspectOnly: Bool = false) {
-        guard !demo, managesLocalHarnessProgress, clientSupportsHarnessModules, let configFile = definition.progressConfigFile else { return }
+        guard !demo, managesLocalHarnessProgress, clientSupportsHarnessModules, definition.descriptor.progressConnector else { return }
         let provider = definition.descriptor.id
         let home = localHarnessHome(definition)
         let reporter = EngineCodexSourceReport.path(URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL)
@@ -1552,15 +1553,16 @@ actor EngineRuntime {
         if inspectOnly {
             guard wanted, localProgressStatuses[provider]?.setup == .configured, localProgressTasks[provider] == nil else { return }
         }
-        let target = LocalHarnessProgressSetup.Target(home: home, configFile: configFile, reporter: reporter, enabled: wanted,
-                                                       ruleDirectory: definition.progressRuleDirectory)
+        guard let target = definition.progressTarget(dataHome: home, reporter: reporter, enabled: wanted) else { return }
+        let reportAt = harnessActivities[provider]?.activities.compactMap { $0.currentProgress?.reportedAt }.max()
         guard let ticket = localProgressQueues[provider, default: .init()].request(target, force: force || inspectOnly) else { return }
         if !inspectOnly { localProgressStatuses[provider] = wanted ? .init(.settingUp) : nil }
         let paths = codexProgressPaths
         let task = Task { [weak self] in
             let result = await Task.detached(priority: .utility) {
-                await LocalHarnessProgressSetup.sync(ticket, storage: WindowsLocalProfileStorage(),
-                    connection: definition.progressConnection, inspectOnly: inspectOnly, prepare: { home in
+                let storage: any ClaudeHookStorage = definition.installsProgressPlugin ? WindowsProgressPluginStorage() : WindowsLocalProfileStorage()
+                return await LocalHarnessProgressSetup.sync(ticket, storage: storage,
+                    connection: definition.progressConnection, inspectOnly: inspectOnly, reportAt: reportAt, prepare: { home in
                     // WorkBuddy trusts a command by its path, so its reporter keeps one.
                     guard let command = await Self.prepareProgressReporter(home: home, paths: paths, stablePath: true) else { return nil }
                     return paths.localHarnessCommand(command, home: home)
@@ -1583,6 +1585,13 @@ actor EngineRuntime {
     /// collapses; an app that has just made its folder lets setup continue.
     private func noteLocalHarnessProgress(_ provider: AgentProvider, snapshot: HarnessActivity) {
         guard let definition = localHarnesses.definition(for: provider), let state = localProgressStatuses[provider] else { return }
+        if definition.installsProgressPlugin {
+            if state.setup == .configured, state.connection != .disabled, !state.reported, let added = state.addedAt,
+               snapshot.activities.contains(where: { ($0.currentProgress?.reportedAt ?? .distantPast) > added }) {
+                scheduleLocalHarnessProgress(definition, inspectOnly: true)
+            }
+            return
+        }
         if state.setup == .missingHome, localProgressTasks[provider] == nil {
             scheduleLocalHarnessProgress(definition, force: true)
         } else if state.setup == .configured, !state.reported, snapshot.activities.contains(where: { $0.selfReportedProgress != nil }) {
@@ -2112,7 +2121,11 @@ actor EngineRuntime {
         // Trusting the tool in the app, or its first report, can happen while
         // nothing polls; a waiting guide is checked each minute so its steps,
         // the Overview line and the sidebar dot clear (11/16 review).
-        for definition in localHarnesses.definitions where definition.progressConnection != nil {
+        for definition in localHarnesses.definitions where definition.descriptor.progressConnector {
+            let provider = definition.descriptor.id
+            if localProgressStatuses[provider]?.setup == .removalPending, localProgressTasks[provider] == nil {
+                scheduleLocalHarnessProgress(definition, force: true)
+            }
             if let state = localProgressStatuses[definition.descriptor.id], state.setup == .configured,
                state.connection != .trusted || !state.reported {
                 scheduleLocalHarnessProgress(definition, inspectOnly: true)

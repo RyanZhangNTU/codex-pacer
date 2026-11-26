@@ -11,7 +11,7 @@ private let showExistingIsland = Notification.Name("com.codexpacer.island.showEx
 enum PacerMain {
     @MainActor static func main() {
         let arguments = CommandLine.arguments
-        if TaskProgressReporter.serveLocalHarnessIfRequested(arguments: arguments, read: {
+        if TaskProgressReporter.serveLocalHarnessIfRequested(arguments: arguments, flagEnabled: MacProgressPluginStorage.flagEnabled, read: {
             var buffer = [UInt8](repeating: 0, count: 4096)
             let count = Darwin.read(STDIN_FILENO, &buffer, buffer.count)
             return count > 0 ? Data(buffer.prefix(count)) : nil

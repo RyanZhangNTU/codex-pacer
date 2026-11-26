@@ -3,9 +3,11 @@ import Foundation
 enum AntigravityHarness {
     static let definition = LocalHarnessDefinition(descriptor: .init(id: .antigravity, name: "Antigravity", symbol: "a.circle",
         brand: .init(dark: .init(0xA5CAFF), light: .init(0x285CAD), accentLift: 0.32, accentLuminance: 0.105),
-        website: URL(string: "https://antigravity.google/"), balance: .quotaWindows, hasRateDisplay: true),
+        website: URL(string: "https://antigravity.google/"), balance: .quotaWindows, hasRateDisplay: true,
+        hasTaskProgress: true, progressConnector: true, quotaGroups: AntigravityQuotaGroup.options),
         platforms: [.macOS], home: ".gemini/antigravity", dataFile: "conversation_summaries.db", windowsExecutables: [],
         macApplicationNames: ["Antigravity"], macBundleIdentifiers: ["com.google.antigravity"], macTeamIdentifier: "EQHXZ8M8AV",
+        installsProgressPlugin: true,
         makeMonitor: { AntigravityMonitor(io: $0) })
 }
 
@@ -227,6 +229,7 @@ actor AntigravityMonitor: LocalHarnessMonitor, AntigravityHubSource {
         let selected = Set(hot.prefix(16).map(\.id))
         let prior = Dictionary(uniqueKeysWithValues: (previous?.activities ?? []).map { ($0.threadID ?? $0.id, $0) })
         var childEnd: [String: Date] = [:], unconfirmedParents = Set<String>()
+        var progressApprovals = Set<String>()
         var value = HarnessActivity(status: .ready)
         let scope = CompletionDismissalStore.digest(["antigravity-home", store.home.standardizedFileURL.path])
         value.scope = scope
@@ -268,6 +271,7 @@ actor AntigravityMonitor: LocalHarnessMonitor, AntigravityHubSource {
             }
             next[row.id] = item
             value.activities.append(result.activity)
+            if result.requestsProgressApproval { progressApprovals.insert(row.id) }
             if let request = result.request { value.requests.append(request) }
         }
         if let session {
@@ -284,6 +288,7 @@ actor AntigravityMonitor: LocalHarnessMonitor, AntigravityHubSource {
         let orphans = Set(family.compactMap { row, parents in parents.contains(where: { !visible.contains($0) }) ? row.id : nil })
         value.activities.removeAll { $0.threadID.map(orphans.contains) == true }
         value.requests.removeAll { orphans.contains($0.threadID) }
+        value.requestsProgressApproval = !progressApprovals.subtracting(orphans).isEmpty
         cache = next; urls = watched; watcher?.update(urls, interval: 0.15)
         if watermark == nil { watermark = io.now() }
         return value
@@ -307,7 +312,7 @@ actor AntigravityMonitor: LocalHarnessMonitor, AntigravityHubSource {
             } catch AntigravityLocalClient.Failure.unsupported { }
             let data = try await client.call(.steps(id, offset: offset), generation: session)
             live.conflictingState = true
-            var steps = try AntigravityProjection.typedSteps(data, offset: offset, cascade: row.id, trajectory: trajectory.id)
+            var steps = try AntigravityProjection.typedSteps(data, offset: offset, anchor: trajectory.anchor?.index, cascade: row.id, trajectory: trajectory.id)
             guard steps.count == trajectory.tail.count else { return }
             for index in steps.indices {
                 let local = trajectory.tail[index]

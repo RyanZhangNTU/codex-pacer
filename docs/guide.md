@@ -73,7 +73,7 @@ The panel is a column of blocks: the task list, a quota block for each service, 
 
 ## Progress rings
 
-Codex, Claude Code, DeepSeek Harness and WorkBuddy each report how much of your request is done. Pacer draws it as a ring around the task's icon.
+Codex, Claude Code, DeepSeek Harness, WorkBuddy and Antigravity each report how much of your request is done. Pacer draws it as a ring around the task's icon.
 
 | You see | It means |
 | --- | --- |
@@ -84,6 +84,8 @@ Codex, Claude Code, DeepSeek Harness and WorkBuddy each report how much of your 
 | A full ring and a check | The request is done. |
 
 Estimates are the agent's own guess, so a ring can move back. Rings are on by default; turn them off for each service with **Progress Ring** on its page in the main window. Start a new session after turning a ring on.
+
+On Mac, turn on the Antigravity module and its **Progress Ring**. Pacer adds its plugin automatically. Start a new Antigravity conversation with a task that uses tools. When asked, always allow Pacer’s progress tool, or add `mcp(codex-pacer_pacer_progress/*)` in Antigravity **Settings → Permissions → MCP tools**. The ring shows the estimate on the conversation that reported it. Each subagent reports its own estimate.
 
 Codex tasks on SSH hosts, and in WSL on Windows, report too: Pacer sets reporting up on each connected host that runs Codex, including hosts added directly in Codex Desktop. Tasks that were already running pick it up once Codex reconnects to the host.
 

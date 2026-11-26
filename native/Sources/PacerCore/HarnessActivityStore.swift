@@ -42,6 +42,7 @@ package struct HarnessActivityDelta: Sendable {
     package var requests: [PendingAttentionRequest] = []
     package var removedRequestIDs: Set<String> = []
     package var status: HarnessSourceStatus?
+    package var requestsProgressApproval: Bool?
     package var conversationURLs: [String: URL]?
     package var usage: UsageChange = .unchanged
 }
@@ -115,6 +116,7 @@ package struct HarnessActivityStore: Sendable {
             activity.activities = Self.applying(delta.activities, to: activity.activities, removing: delta.removedActivityIDs)
             activity.requests = Self.applying(delta.requests, to: activity.requests, removing: delta.removedRequestIDs)
             if let status = delta.status { activity.status = status }
+            if let approval = delta.requestsProgressApproval { activity.requestsProgressApproval = approval }
             if let urls = delta.conversationURLs { activity.conversationURLs = urls }
             if case .replace(let usage) = delta.usage { activity.usage = usage }
         case .health(let status):
@@ -160,6 +162,7 @@ package struct HarnessActivityStore: Sendable {
         value.conversationURLs = ordered.reduce(into: [:]) { urls, source in
             urls.merge(source.conversationURLs) { current, _ in current }
         }
+        value.requestsProgressApproval = ordered.contains(where: \.requestsProgressApproval)
         value.scope = ordered.count == 1 ? ordered.first?.scope : nil
         value.usage = ordered.compactMap(\.usage).max { $0.measuredAt < $1.measuredAt }
         return value

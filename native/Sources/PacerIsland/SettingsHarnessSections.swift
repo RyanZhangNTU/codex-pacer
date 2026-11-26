@@ -31,11 +31,11 @@ struct SettingsHarnessSections: View {
         // ready or off, it is one row like any other service's ring.
         let guideOpen = descriptor.progressConnector && ProgressGuideRows.opens(ProgressGuideRows.guide(model, provider, isOn: showsProgress))
         MainCard(title: L10n.text("main.section.display")) {
-            if provider == .antigravity {
-                CardPicker(title: L10n.text("antigravity.quota.group"), selection: Binding(
-                    get: { model.antigravityGroup },
-                    set: { model.setAntigravityPreference($0.rawValue, key: AntigravityQuotaGroup.defaultsKey) }),
-                    options: AntigravityQuotaGroup.allCases.map { ($0, $0.name) })
+            if let groups = descriptor.quotaGroups {
+                CardPicker(title: L10n.text(groups.labelPrefix + ".group"), selection: Binding(
+                    get: { model.selectedGroup(provider, groups) },
+                    set: { model.setQuotaPreference($0, key: groups.defaultsKey) }),
+                    options: groups.ids.map { ($0, groups.name($0)) })
             }
             if descriptor.progressConnector {
                 ProgressGuideRows(model: model, provider: provider, isOn: $showsProgress)

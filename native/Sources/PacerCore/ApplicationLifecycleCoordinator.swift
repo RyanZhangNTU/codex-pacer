@@ -37,7 +37,7 @@ public struct ApplicationLifecycleCoordinator: Sendable {
         }
     }
     public enum Resource: CaseIterable, Hashable, Sendable {
-        case codexProgressFlag, codexQuota, claudeQuota, antigravityQuota, cloud, claudeActivity, deepseekActivity, remoteSetup, realtime
+        case codexProgressFlag, codexQuota, claudeQuota, localQuota, cloud, claudeActivity, deepseekActivity, remoteSetup, realtime
         case balance, web, claudeWeb, watches, reader, harnesses
     }
     public typealias Cleanup = @Sendable () async -> Void

@@ -14,6 +14,13 @@ public enum WindowsLocalHarnessProgressCleanup {
         let environment = ProcessInfo.processInfo.environment
         var failed = false
         for definition in HarnessRegistry.localHarnesses where definition.platforms.contains(.windows) {
+            if definition.installsProgressPlugin {
+                let profile = fixtureRoot.isEmpty ? FileManager.default.homeDirectoryForCurrentUser : URL(fileURLWithPath: fixtureRoot, isDirectory: true)
+                let target = LocalHarnessProgressSetup.Target(pluginProfile: profile, reporter: executable, enabled: false)
+                if LocalHarnessProgressSetup.apply(target, storage: WindowsProgressPluginStorage(), checkOnly: checkOnly, matchNativeReporter: true,
+                        owns: { paths.ownsLocalHarness($0, arguments: $1, home: $2) }) != nil { failed = true }
+                continue
+            }
             guard let config = definition.progressConfigFile else { continue }
             let home = definition.resolveHome(override: environment.first { $0.key.caseInsensitiveCompare(definition.homeEnvironmentKey) == .orderedSame }?.value,
                 isAbsolute: { $0.dropFirst().hasPrefix(":\\") || $0.dropFirst().hasPrefix(":/") })

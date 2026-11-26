@@ -215,8 +215,9 @@ final class IslandModel: ObservableObject {
             switch selectedProvider {
             case .codex: codexQuota = newValue
             case .claude: claudeQuota = newValue
-            case .antigravity: antigravityQuota.snapshot = newValue
-            default: return
+            default:
+                guard HarnessRegistry.descriptor(for: selectedProvider)?.hasQuotaWindows == true else { return }
+                localQuota[selectedProvider, default: .init()].snapshot = newValue
             }
             onLayoutChange?()
         }
@@ -227,8 +228,9 @@ final class IslandModel: ObservableObject {
             switch selectedProvider {
             case .codex: codexHistory = newValue
             case .claude: claudeHistory = newValue
-            case .antigravity: antigravityQuota.history = newValue
-            default: break
+            default:
+                guard HarnessRegistry.descriptor(for: selectedProvider)?.hasQuotaWindows == true else { return }
+                localQuota[selectedProvider, default: .init()].history = newValue
             }
         }
     }
@@ -238,8 +240,9 @@ final class IslandModel: ObservableObject {
             switch selectedProvider {
             case .codex: codexHistoryWarning = newValue
             case .claude: claudeHistoryWarning = newValue
-            case .antigravity: antigravityQuota.warning = newValue
-            default: break
+            default:
+                guard HarnessRegistry.descriptor(for: selectedProvider)?.hasQuotaWindows == true else { return }
+                localQuota[selectedProvider, default: .init()].warning = newValue
             }
         }
     }
@@ -249,8 +252,9 @@ final class IslandModel: ObservableObject {
             switch selectedProvider {
             case .codex: codexErrorMessage = newValue
             case .claude: claudeErrorMessage = newValue
-            case .antigravity: antigravityQuota.error = newValue
-            default: break
+            default:
+                guard HarnessRegistry.descriptor(for: selectedProvider)?.hasQuotaWindows == true else { return }
+                localQuota[selectedProvider, default: .init()].error = newValue
             }
         }
     }
@@ -283,9 +287,8 @@ final class IslandModel: ObservableObject {
         switch provider {
         case .codex: codexRefreshing
         case .claude: claudeRefreshing
-        case .antigravity: antigravityQuota.refreshing
         case .deepseek: deepseekRefreshing
-        default: false
+        default: localQuota[provider]?.refreshing ?? false
         }
     }
     func providerStreamStatuses(_ provider: AgentProvider) -> [String: RuntimeStreamStatus] {
@@ -309,35 +312,31 @@ final class IslandModel: ObservableObject {
     func taskSourceName(_ activity: SessionActivity) -> String? {
         ActivityTaskRowPresentation.sourceName(activity, options: taskPresentationOptions(for: [activity]))
     }
-    var antigravityGroup: AntigravityQuotaGroup {
-        defaults.string(forKey: AntigravityQuotaGroup.defaultsKey).flatMap(AntigravityQuotaGroup.init(rawValue:))
-            ?? providerQuota(.antigravity)?.buckets.first.flatMap { AntigravityQuotaGroup(rawValue: $0.id) } ?? .gemini
+    func selectedGroup(_ provider: AgentProvider, _ groups: HarnessQuotaGroups) -> String {
+        groups.selection(in: fullQuota(provider), saved: defaults.string(forKey: groups.defaultsKey))
     }
-    func setAntigravityPreference(_ value: String, key: String) {
+    func setQuotaPreference(_ value: String, key: String) {
         defaults.set(value, forKey: key)
         objectWillChange.send(); onLayoutChange?(); onStatusChange?()
     }
     func providerQuota(_ provider: AgentProvider) -> QuotaSnapshot? {
-        if provider == .antigravity {
-            return AntigravityQuotaGroup.selected(antigravityQuota.snapshot, saved: defaults.string(forKey: AntigravityQuotaGroup.defaultsKey))
-        }
-        return fullQuota(provider)
+        guard let snapshot = fullQuota(provider), let groups = provider.quotaGroups else { return fullQuota(provider) }
+        let selected = selectedGroup(provider, groups)
+        return snapshot.buckets.first { $0.id == selected }.map { snapshot.showing($0) }
     }
     func fullQuota(_ provider: AgentProvider) -> QuotaSnapshot? {
         switch provider {
         case .codex: codexQuota
         case .claude: claudeQuota
-        case .antigravity: antigravityQuota.snapshot
-        default: nil
+        default: localQuota[provider]?.snapshot
         }
     }
     func providerQuotaError(_ provider: AgentProvider) -> String? {
         switch provider {
         case .codex: codexErrorMessage
         case .claude: claudeErrorMessage
-        case .antigravity: antigravityQuota.error
         case .deepseek: deepseekBalanceError?.errorDescription
-        default: nil
+        default: localQuota[provider]?.error
         }
     }
     func providerWindow(_ provider: AgentProvider, period: QuotaDashboardPeriod) -> QuotaWindow? {
@@ -351,16 +350,14 @@ final class IslandModel: ObservableObject {
         switch provider {
         case .codex: codexHistory
         case .claude: claudeHistory
-        case .antigravity: antigravityQuota.history
-        default: QuotaCycleHistory()
+        default: localQuota[provider]?.history ?? QuotaCycleHistory()
         }
     }
     func providerHistoryWarning(_ provider: AgentProvider) -> String? {
         switch provider {
         case .codex: codexHistoryWarning
         case .claude: claudeHistoryWarning
-        case .antigravity: antigravityQuota.warning
-        default: nil
+        default: localQuota[provider]?.warning
         }
     }
     func providerCurrentCycle(_ provider: AgentProvider) -> QuotaCycle? {
@@ -934,27 +931,35 @@ final class IslandModel: ObservableObject {
         if provider == nil { refreshLocalHarnessApps() }
         for definition in localHarnesses.definitions {
             let id = definition.descriptor.id
-            guard let configFile = definition.progressConfigFile, provider == nil || provider == id else { continue }
+            guard provider == nil || provider == id else { continue }
             let enabled = isModuleEnabled(id) && showsHarnessProgress(id)
             if inspectOnly {
-                guard enabled, definition.progressConnection != nil, localHarnessProgressStatuses[id]?.setup == .configured,
+                guard enabled, definition.installsProgressPlugin || definition.progressConnection != nil, localHarnessProgressStatuses[id]?.setup == .configured,
                       localHarnessProgressTasks[id] == nil else { continue }
             }
-            let target = LocalHarnessProgressSetup.Target(home: localHarnessHome(definition), configFile: configFile,
-                                                          reporter: executable.path, enabled: enabled, ruleDirectory: definition.progressRuleDirectory)
+            guard let target = definition.progressTarget(dataHome: localHarnessHome(definition), reporter: executable.path, enabled: enabled) else { continue }
+            let reportAt = localHarnessActivities[id]?.activities.compactMap { $0.currentProgress?.reportedAt }.max()
             guard let ticket = localHarnessProgressQueues[id, default: .init()].request(target, force: provider == id) else { continue }
             if !inspectOnly && !keepsState { localHarnessProgressStatuses[id] = enabled ? .init(.settingUp) : nil }
             let task = Task { [weak self] in
                 let status = await Task.detached(priority: .utility) {
-                    await LocalHarnessProgressSetup.sync(ticket, storage: MacClaudeHookStorage(),
-                        connection: definition.progressConnection, inspectOnly: inspectOnly)
+                    let storage: any ClaudeHookStorage
+                    if let profile = target.pluginProfile { storage = MacProgressPluginStorage(profile: profile) }
+                    else { storage = MacClaudeHookStorage() }
+                    return await LocalHarnessProgressSetup.sync(ticket, storage: storage,
+                        connection: definition.progressConnection, inspectOnly: inspectOnly, reportAt: reportAt)
                 }.value
                 guard let self, self.localHarnessProgressQueues[id]?.finish(ticket) == true else { return }
                 var state = status
                 // A report recorded a moment ago may not be on disk yet.
-                if state?.setup == .configured, self.localHarnessProgressStatuses[id]?.reported == true { state?.reported = true }
+                if !definition.installsProgressPlugin, state?.setup == .configured, self.localHarnessProgressStatuses[id]?.reported == true { state?.reported = true }
                 self.localHarnessProgressStatuses[id] = state
                 self.localHarnessProgressTasks[id] = nil
+                // A report can land while the installation is finishing.
+                if definition.installsProgressPlugin, let snapshot = self.localHarnessActivities[id],
+                   snapshot.activities.compactMap({ $0.currentProgress?.reportedAt }).max() != reportAt {
+                    self.noteLocalHarnessProgress(id, snapshot: snapshot)
+                }
             }
             localHarnessProgressQueues[id]?.track(task)
             localHarnessProgressTasks[id] = task
@@ -1107,7 +1112,7 @@ final class IslandModel: ObservableObject {
     func recheckLocalHarnessProgress(_ provider: AgentProvider) {
         refreshLocalHarnessApps()
         checkHarnessLog(provider)
-        if localHarnessProgressStatuses[provider]?.setup == .missingHome {
+        if [.missingHome, .removalPending].contains(localHarnessProgressStatuses[provider]?.setup) {
             guard localHarnessProgressTasks[provider] == nil else { return }
             syncLocalHarnessProgress(force: provider, keepsState: true)
         } else {
@@ -1119,6 +1124,13 @@ final class IslandModel: ObservableObject {
     /// collapses for good; an app that has just made its folder lets setup continue.
     private func noteLocalHarnessProgress(_ provider: AgentProvider, snapshot: HarnessActivity) {
         guard let definition = localHarnesses.definition(for: provider), let state = localHarnessProgressStatuses[provider] else { return }
+        if definition.installsProgressPlugin {
+            if state.setup == .configured, state.connection != .disabled, !state.reported, let added = state.addedAt,
+               snapshot.activities.contains(where: { ($0.currentProgress?.reportedAt ?? .distantPast) > added }) {
+                syncLocalHarnessProgress(force: provider, inspectOnly: true)
+            }
+            return
+        }
         switch Self.localProgressFollowUp(state, reports: snapshot.activities.contains { $0.selfReportedProgress != nil }) {
         case .continueSetup?: recheckLocalHarnessProgress(provider)
         case .markReported?:
@@ -1143,13 +1155,16 @@ final class IslandModel: ObservableObject {
         return HarnessProgressGuide(setup: state?.setup, connection: state?.connection, reported: state?.reported ?? false,
                                     ringOn: isModuleEnabled(provider) && showsHarnessProgress(provider), name: descriptor.name,
                                     addedAt: state?.addedAt, removedAt: state?.removedAt, app: localHarnessApps[provider],
-                                    view: harnessAppViews[provider], openedConnectors: harnessOpenedConnectors[provider] != nil)
+                                    view: harnessAppViews[provider], openedConnectors: harnessOpenedConnectors[provider] != nil,
+                                    pluginPlatform: localHarnesses.definition(for: provider)?.installsProgressPlugin == true ? .macOS : nil,
+                                    requestsApproval: localHarnessActivities[provider]?.requestsProgressApproval == true)
     }
 
     /// The ⓘ text, also while the ring is off and there is no card to word it.
     func progressGuideInfo(_ provider: AgentProvider) -> String {
         guard let descriptor = HarnessRegistry.descriptor(for: provider) else { return "" }
-        return HarnessProgressGuide(setup: .settingUp, connection: nil, reported: false, ringOn: true, name: descriptor.name)?.info ?? ""
+        return HarnessProgressGuide(setup: .settingUp, connection: nil, reported: false, ringOn: true, name: descriptor.name,
+                                    pluginPlatform: localHarnesses.definition(for: provider)?.installsProgressPlugin == true ? .macOS : nil)?.info ?? ""
     }
 
     /// The modules the onboarding note names: their ring is on and their app
@@ -1595,10 +1610,10 @@ final class IslandModel: ObservableObject {
     private var durableAccountScope: String?
     private var lastRemoteDiscovery = Date.distantPast
     private let historyStore: QuotaHistoryStore
-    private let antigravityHistoryStore: QuotaHistoryStore
-    private var antigravityCoordinator: AntigravityQuotaCoordinator?
-    private var antigravityQuotaOwner = UUID()
-    @Published private var antigravityQuota = AntigravityQuotaState()
+    private let localHistoryStores: [AgentProvider: QuotaHistoryStore]
+    private var localQuotaCoordinators: [AgentProvider: any LocalHarnessQuotaCoordinator] = [:]
+    private var localQuotaOwners: [AgentProvider: UUID] = [:]
+    @Published private var localQuota: [AgentProvider: LocalHarnessQuotaState] = [:]
     private let claudeHistoryStore: QuotaHistoryStore
     private let claudeMonitor: ClaudeActivityMonitor
     /// Set by the app, so tests and demos never reach claude.ai.
@@ -1878,7 +1893,7 @@ final class IslandModel: ObservableObject {
     }
     private func applyRefreshCadence() {
         durablePanelInView.set(visiblyExpanded)
-        if visiblyExpanded { refreshAntigravityQuota(force: false) }
+        if visiblyExpanded { for provider in localQuotaCoordinators.keys { refreshLocalQuota(provider, force: false) } }
         if !demo, !sleeping, !stopped {
             logWatcher.update(watchedLogURLs, interval: activityRefreshPolicy.interval, flushPending: visiblyExpanded)
             let generation = sourceGeneration
@@ -2064,7 +2079,7 @@ final class IslandModel: ObservableObject {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("CodexPacerIsland/CurrentCycle", isDirectory: true)
         historyStore = QuotaHistoryStore(directory: directory)
-        antigravityHistoryStore = QuotaHistoryStore(directory: directory.appendingPathComponent("Antigravity", isDirectory: true))
+        localHistoryStores = [.antigravity: QuotaHistoryStore(directory: directory.appendingPathComponent("Antigravity", isDirectory: true))]
         claudeHistoryStore = QuotaHistoryStore(directory: directory.appendingPathComponent("Claude", isDirectory: true))
         enabledProviders = configuredProviders
         if let saved = defaults.string(forKey: "selectedQuotaProvider").flatMap(AgentProvider.init(rawValue:)), quotaProviders.contains(saved) {
@@ -2149,7 +2164,7 @@ final class IslandModel: ObservableObject {
         let harnesses = detachLocalHarnesses()
         await ApplicationLifecycleCoordinator.cleanup([
             .codexQuota: { await quota?.stop() }, .claudeQuota: { await claudeQuota?.stop() },
-            .antigravityQuota: { [antigravityHistoryStore] in await antigravityHistoryStore.flush() },
+            .localQuota: { [localHistoryStores] in for store in localHistoryStores.values { await store.flush() } },
             .cloud: { await cloud?.suspend() }, .balance: { await balance?.stop() }
         ], activity: activityAdapters.cleanup(.sleep, deadline: deadline, detached: harnesses), deadline: deadline)
     }
@@ -2304,7 +2319,7 @@ final class IslandModel: ObservableObject {
     }
 
     func refreshQuota() {
-        refreshAntigravityQuota(force: true)
+        for provider in localQuotaCoordinators.keys { refreshLocalQuota(provider, force: true) }
         refreshOtherQuotas()
     }
     private func refreshOtherQuotas() {
@@ -2312,38 +2327,39 @@ final class IslandModel: ObservableObject {
         refreshClaudeQuota()
         refreshDeepSeekBalance()
     }
-    private func detachAntigravityQuota() {
-        antigravityCoordinator?.invalidateSource()
-        antigravityCoordinator = nil; antigravityQuotaOwner = UUID()
-        cancelOwnedWork(.init(.quota, provider: .antigravity))
-        antigravityQuota = .init()
+    private func detachLocalQuota(_ provider: AgentProvider) {
+        localQuotaCoordinators.removeValue(forKey: provider)?.invalidateSource()
+        localQuotaOwners[provider] = nil
+        cancelOwnedWork(.init(.quota, provider: provider))
+        localQuota[provider] = nil
     }
 
-    private func bindAntigravityQuota(client: AntigravityLocalClient, session: UInt64?, home: URL, version: UInt64) async {
-        guard lifecycle.version(.antigravity) == version, !sleeping, !stopped, isModuleEnabled(.antigravity) else { return }
-        let previous = antigravityCoordinator
-        detachAntigravityQuota()
-        let owner = antigravityQuotaOwner
+    private func bindAntigravityQuota(_ provider: AgentProvider, client: AntigravityLocalClient, session: UInt64?, home: URL, version: UInt64) async {
+        guard lifecycle.version(provider) == version, !sleeping, !stopped, isModuleEnabled(provider) else { return }
+        let previous = localQuotaCoordinators[provider]
+        detachLocalQuota(provider)
+        let owner = UUID()
+        localQuotaOwners[provider] = owner
         await previous?.flush()
-        guard let session, antigravityQuotaOwner == owner, !sleeping, !stopped else { return }
-        antigravityCoordinator = AntigravityQuotaCoordinator(client: client, session: session, home: home,
-            credential: DeepSeekHistoryCredential(defaults: defaults), history: antigravityHistoryStore) { [weak self] state, notices in
-            await self?.receiveAntigravityQuota(state, notices: notices, owner: owner)
+        guard let session, let store = localHistoryStores[provider], localQuotaOwners[provider] == owner, !sleeping, !stopped else { return }
+        localQuotaCoordinators[provider] = AntigravityQuotaCoordinator(client: client, session: session, home: home,
+            credential: DeepSeekHistoryCredential(defaults: defaults), history: store) { [weak self] state, notices in
+            await self?.receiveLocalQuota(provider, state, notices: notices, owner: owner)
         }
-        refreshAntigravityQuota(force: true)
+        refreshLocalQuota(provider, force: true)
     }
 
-    private func receiveAntigravityQuota(_ state: AntigravityQuotaState, notices: [IslandNotice], owner: UUID) {
-        guard owner == antigravityQuotaOwner, !sleeping, !stopped, isModuleEnabled(.antigravity) else { return }
-        antigravityQuota = state; now = Date()
+    private func receiveLocalQuota(_ provider: AgentProvider, _ state: LocalHarnessQuotaState, notices: [IslandNotice], owner: UUID) {
+        guard owner == localQuotaOwners[provider], !sleeping, !stopped, isModuleEnabled(provider) else { return }
+        localQuota[provider] = state; now = Date()
         present(notices); onLayoutChange?(); onStatusChange?()
     }
 
-    private func refreshAntigravityQuota(force: Bool) {
-        let key = ApplicationWorkRegistry.Key(.quota, provider: .antigravity)
-        guard !sleeping, !stopped, !demo, let coordinator = antigravityCoordinator, ownedWork.task(key) == nil,
-              ProviderQuotaRefreshPolicy.isDue(lastAttempt: antigravityQuota.lastAttempt, expanded: visiblyExpanded,
-                  failures: antigravityQuota.failures, now: Date(), force: force) else { return }
+    private func refreshLocalQuota(_ provider: AgentProvider, force: Bool) {
+        let key = ApplicationWorkRegistry.Key(.quota, provider: provider)
+        guard !sleeping, !stopped, !demo, let coordinator = localQuotaCoordinators[provider], ownedWork.task(key) == nil,
+              ProviderQuotaRefreshPolicy.isDue(lastAttempt: localQuota[provider]?.lastAttempt, expanded: visiblyExpanded,
+                  failures: localQuota[provider]?.failures ?? 0, now: Date(), force: force) else { return }
         let expanded = visiblyExpanded
         launchOwnedWork(key) { _ in await coordinator.refresh(expanded: expanded, force: force) }
     }
@@ -2419,8 +2435,8 @@ final class IslandModel: ObservableObject {
         retryQuotaConnection(for: selectedProvider)
     }
     func retryQuotaConnection(for provider: AgentProvider) {
-        if provider == .antigravity {
-            if antigravityCoordinator != nil { refreshAntigravityQuota(force: true) }
+        if localHistoryStores[provider] != nil {
+            if localQuotaCoordinators[provider] != nil { refreshLocalQuota(provider, force: true) }
             else { refreshLocalHarness(provider) }
             return
         }
@@ -2895,7 +2911,7 @@ final class IslandModel: ObservableObject {
             let policy = self.activityRefreshPolicy
             if let source = monitor as? any AntigravityHubSource {
                 await source.observeHub { [weak self] client, session in
-                    await self?.bindAntigravityQuota(client: client, session: session, home: home, version: version)
+                    await self?.bindAntigravityQuota(provider, client: client, session: session, home: home, version: version)
                 }
                 guard self.lifecycle.owns(ticket) else { return }
             }
@@ -2944,9 +2960,9 @@ final class IslandModel: ObservableObject {
         noteLocalHarnessProgress(provider, snapshot: snapshot)
     }
     private func resetLocalHarness(_ provider: AgentProvider) {
-        if provider == .antigravity {
-            detachAntigravityQuota()
-            Task { [antigravityHistoryStore] in await antigravityHistoryStore.flush() }
+        if let store = localHistoryStores[provider] {
+            detachLocalQuota(provider)
+            Task { await store.flush() }
         }
         localHarnessActivities.remove(provider)
         activityState.removeHarness(provider)
@@ -2962,7 +2978,7 @@ final class IslandModel: ObservableObject {
         }
     }
     private func detachLocalHarnesses() -> LocalHarnessMonitors {
-        detachAntigravityQuota()
+        for provider in localHistoryStores.keys { detachLocalQuota(provider) }
         localHarnessActivities.detachLocalBindings()
         localHarnessRevision &+= 1
         return localHarnesses.detach()
@@ -3134,7 +3150,7 @@ final class IslandModel: ObservableObject {
         let completed = await ApplicationLifecycleCoordinator.cleanup([
             .codexProgressFlag: { _ = await progressFlag?.value },
             .codexQuota: { await quota?.stop() }, .claudeQuota: { await claudeQuota?.stop() },
-            .antigravityQuota: { [antigravityHistoryStore] in await antigravityHistoryStore.flush() },
+            .localQuota: { [localHistoryStores] in for store in localHistoryStores.values { await store.flush() } },
             .cloud: { await cloud?.stop() }, .remoteSetup: { await setup.shutdown() }, .balance: { await balance?.stop() },
             .harnesses: { for task in localProgress { await task.value } }
         ], activity: activityAdapters.cleanup(.shutdown, deadline: deadline, detached: harnesses), deadline: deadline)
@@ -3172,7 +3188,8 @@ final class IslandModel: ObservableObject {
         }
         // Reset deadlines also follow the calendar between quota readings.
         remindResetExpiry()
-        for definition in localHarnesses.definitions where progressGuide(definition.descriptor.id)?.waiting == true {
+        for definition in localHarnesses.definitions where progressGuide(definition.descriptor.id)?.waiting == true ||
+            (definition.installsProgressPlugin && localHarnessProgressStatuses[definition.descriptor.id]?.setup == .configured) {
             recheckLocalHarnessProgress(definition.descriptor.id)
         }
     }
@@ -3230,9 +3247,8 @@ final class IslandModel: ObservableObject {
                 switch provider {
                 case .codex: refreshCodexQuota(force: force)
                 case .claude: refreshClaudeQuota(force: force)
-                case .antigravity: refreshAntigravityQuota(force: force)
                 case .deepseek: refreshDeepSeekBalance(scheduled: !force, active: active)
-                default: break
+                default: refreshLocalQuota(provider, force: force)
                 }
             case .activity(let provider): activityAdapters[provider]?.start()
             case .discoverActivityRoutes(let provider): activityAdapters[provider]?.discoverRoutes?()

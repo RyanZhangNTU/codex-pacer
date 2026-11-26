@@ -157,3 +157,26 @@ private struct WireResetCredit: Decodable {
     let grantedAt: Double
     let expiresAt: Double?
 }
+
+extension QuotaSnapshot {
+    package func showing(_ bucket: QuotaBucket) -> QuotaSnapshot {
+        .init(buckets: [bucket], capturedAt: capturedAt, accountScope: accountScope, resetCredits: resetCredits)
+    }
+}
+
+package struct LocalHarnessQuotaState: Equatable, Sendable {
+    package var snapshot: QuotaSnapshot?
+    package var history = QuotaCycleHistory()
+    package var error: String?
+    package var warning: String?
+    package var lastAttempt: Date?
+    package var failures = 0
+    package var refreshing = false
+    package init() {}
+}
+
+package protocol LocalHarnessQuotaCoordinator: Sendable {
+    func invalidateSource()
+    func flush() async
+    func refresh(expanded: Bool, force: Bool) async
+}

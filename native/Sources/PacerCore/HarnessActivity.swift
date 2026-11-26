@@ -5,6 +5,7 @@ public struct HarnessActivity: Equatable, Sendable {
     public var activities: [SessionActivity]
     public var requests: [PendingAttentionRequest]
     public var status: HarnessSourceStatus?
+    package var requestsProgressApproval = false
     package var scope: String?
     package var conversationURLs: [String: URL] = [:]
     package var usage: HarnessUsage?
@@ -111,6 +112,17 @@ package struct LocalHarnessDefinition: Sendable {
     /// The app's own page for its connectors, under the conversation scheme.
     package var connectorsPath: String?
     package var progressConfigFile: String?
+    package var installsProgressPlugin = false
+
+    package func progressTarget(dataHome: URL, reporter: String, enabled: Bool,
+                                userHome: URL = FileManager.default.homeDirectoryForCurrentUser) -> LocalHarnessProgressSetup.Target? {
+        if installsProgressPlugin {
+            return .init(pluginProfile: userHome, reporter: reporter, enabled: enabled)
+        }
+        guard let progressConfigFile else { return nil }
+        return .init(home: dataHome, configFile: progressConfigFile, reporter: reporter, enabled: enabled, ruleDirectory: progressRuleDirectory)
+    }
+
     package var progressRuleDirectory: String?
     package var progressConnection: LocalHarnessProgressSetup.ConnectionReader?
     /// The app's own log, under its data folder, where it notes opening its
@@ -194,7 +206,7 @@ package struct HarnessActivityFeed: Sendable {
                     removedActivityIDs: Set(rows.keys).subtracting(value.activities.map(\.id)),
                     requests: value.requests.filter { requests[$0.id] != $0 },
                     removedRequestIDs: Set(requests.keys).subtracting(value.requests.map(\.id)),
-                    status: value.status, conversationURLs: value.conversationURLs == previous.conversationURLs ? nil : value.conversationURLs,
+                    status: value.status, requestsProgressApproval: value.requestsProgressApproval, conversationURLs: value.conversationURLs == previous.conversationURLs ? nil : value.conversationURLs,
                     usage: value.usage == previous.usage ? .unchanged : .replace(value.usage)
                 ))
             }

@@ -18,6 +18,7 @@ public struct AgentProvider: RawRepresentable, Hashable, CaseIterable, Codable, 
     public static var allCases: [Self] { HarnessRegistry.ids }
 
     public var id: String { rawValue }
+    package var quotaGroups: HarnessQuotaGroups? { HarnessRegistry.descriptor(for: self)?.quotaGroups }
     public var displayName: String { HarnessRegistry.descriptor(for: self)?.name ?? rawValue }
     public var taskSymbol: String { HarnessRegistry.descriptor(for: self)?.symbol ?? "circle" }
 

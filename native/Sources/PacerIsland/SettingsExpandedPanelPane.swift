@@ -108,8 +108,6 @@ struct SettingsExpandedPanelPane: View {
         case .tasks:
             "\(L10n.text("main.panel.page_size")) \(options.pageSize) · "
                 + L10n.text(options.rowStyle == .oneLine ? "main.panel.row_one" : "main.panel.row_two")
-        case .codex, .claude, .antigravity:
-            periodsLabel(options.periods(for: block.provider ?? .codex))
         case .deepseek:
             L10n.text("main.panel.dial") + " · " + L10n.text(options.deepseekDial == .budget ? "main.panel.dial_budget" : "main.panel.dial_day")
         case .deepseekSpend:
@@ -118,6 +116,7 @@ struct SettingsExpandedPanelPane: View {
             L10n.text("main.panel.week_line") + " · " + L10n.text(options.weekLine ? "main.panel.show" : "main.panel.hide")
         case .workbuddy, .workbuddyAI:
             L10n.text("credits.option.center") + " · " + L10n.text("credits.figure." + center(block).rawValue)
+        default: periodsLabel(options.periods(for: block.provider ?? .codex))
         }
     }
 
@@ -189,12 +188,12 @@ struct SettingsExpandedPanelPane: View {
 
     private func sectionTitle(_ row: [ExpandedPanelLayout.Block]) -> String {
         guard let first = row.first else { return "" }
-        switch first {
+        switch first.group {
         case .tasks:
             return ExpandedPanelPresentation.header(.init(kind: .tasks), budgetDial: false).title
-        case .codex, .claude, .antigravity, .deepseek, .workbuddy, .workbuddyAI:
+        case .quota:
             return ExpandedPanelPresentation.header(.init(kind: .quota, providers: row.compactMap(\.provider)), budgetDial: false).title
-        case .deepseekSpend, .deepseekWeek:
+        case .deepseek:
             return first.label
         }
     }
@@ -409,8 +408,6 @@ struct SettingsExpandedPanelPane: View {
                     (240, L10n.text("settings.four_hours")), (0, L10n.text("settings.until_clicked"))])
             }
             link(L10n.text("settings.hide_projects"), to: L10n.text("main.panel.in_general"), action: openGeneral)
-        case .block(.codex), .block(.claude), .block(.antigravity):
-            if case .block(let block) = item, let provider = block.provider { quota(provider) }
         case .block(.deepseek):
             segments(L10n.text("main.panel.dial"), help: L10n.text("main.panel.dial_help"),
                      selection: $options.deepseekDial, options: [(.budget, L10n.text("main.panel.dial_budget")),
@@ -431,6 +428,8 @@ struct SettingsExpandedPanelPane: View {
                 quotaLayout(detailsHelp: L10n.text("harness.account.details_help"))
                 link(L10n.text("harness.account.connection"), to: L10n.text("harness.account.open_settings"), action: { openModule(provider) })
             }
+        case .block(let block):
+            if let provider = block.provider { quota(provider) }
         case .actions:
             switchRow(L10n.text("panel.action.apps"), isOn: $showsAppButtons)
             switchRow(L10n.text("panel.action.markRead"), isOn: action(.markRead))
@@ -497,15 +496,7 @@ struct SettingsExpandedPanelPane: View {
 extension ExpandedPanelLayout.Block {
     /// A service's own quota block.
     static func quotaBlock(for provider: AgentProvider) -> Self? {
-        switch provider {
-        case .codex: .codex
-        case .claude: .claude
-        case .antigravity: .antigravity
-        case .deepseek: .deepseek
-        case .workbuddy: .workbuddy
-        case .workbuddyAI: .workbuddyAI
-        default: nil
-        }
+        Self(rawValue: provider.rawValue)
     }
 }
 

@@ -130,7 +130,7 @@ struct QuotaDashboardView: View {
         return VStack(spacing: 6) {
             HStack(spacing: 20) {
                 ring
-                if provider != .antigravity || main.resetsAt != nil || fiveHour?.resetsAt != nil {
+                if main.resetsAt != nil || fiveHour?.resetsAt != nil {
                     QuotaDashboardDetailsView(quota: main, fiveHourQuota: ring.showsSplitRing ? fiveHour : nil, now: model.now)
                 }
             }
@@ -427,13 +427,13 @@ private struct QuotaDashboardDetailsView: View {
         Group {
             if let fiveHourQuota {
                 VStack(alignment: .leading, spacing: 9) {
-                    if fiveHourQuota.provider != .antigravity || fiveHourQuota.resetsAt != nil {
+                    if fiveHourQuota.resetsAt != nil {
                         QuotaPeriodDetailView(reading: QuotaRingReading(quota: fiveHourQuota, now: now))
-                        if quota.provider != .antigravity || quota.resetsAt != nil {
+                        if quota.resetsAt != nil {
                             Rectangle().fill(PacerPalette.hairline).frame(height: 1)
                         }
                     }
-                    if quota.provider != .antigravity || quota.resetsAt != nil { QuotaPeriodDetailView(reading: weekly) }
+                    if quota.resetsAt != nil { QuotaPeriodDetailView(reading: weekly) }
                 }
             } else {
                 VStack(spacing: 0) {
@@ -524,8 +524,8 @@ struct QuotaProviderStatusView: View {
         let status = QuotaConnectionPresentation(provider: provider, snapshot: model.providerQuota(provider),
             error: model.providerQuotaError(provider), refreshing: model.providerRefreshing(provider))
         VStack(spacing: 6) {
-            if provider == .antigravity, model.fullQuota(provider) != nil {
-                Text(model.antigravityGroup.name).font(.system(size: 11)).foregroundStyle(PacerPalette.secondary)
+            if let groups = provider.quotaGroups, model.fullQuota(provider) != nil {
+                Text(groups.name(model.selectedGroup(provider, groups))).font(.system(size: 11)).foregroundStyle(PacerPalette.secondary)
             }
             if status.state == .error, let error = status.message {
                 Text(error).font(.system(size: 11)).foregroundStyle(PacerPalette.attention)

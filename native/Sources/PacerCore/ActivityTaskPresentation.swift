@@ -326,8 +326,7 @@ public struct ActivityTaskRowPresentation: Sendable {
         case .unknown: state = .unknown
         }
         let rate = child.displayedOutputEstimate(at: now).flatMap { sample -> OutputEstimate? in
-            if state == .running { return child.contributesLiveRate(sample) ? sample : nil }
-            return child.provider == .antigravity && [.completed, .stopped, .failed].contains(state) ? sample : nil
+            state == .running && child.contributesLiveRate(sample) ? sample : nil
         }
         let status: String?
         switch state {

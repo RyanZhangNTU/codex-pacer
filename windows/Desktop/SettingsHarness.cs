@@ -199,7 +199,8 @@ internal sealed partial class SettingsWindow
                 if (harnessProgressBody == null) return;
                 button.IsEnabled = editable && !demo;
                 if (!done && action == "retry") ShowIssue("harness.progress_state.failed");
-                else if (!done) ShowIssueText(HarnessAccountCard.Fields(ui, "harness.progress_state.open_failed",
+                else if (!done) ShowIssueText(HarnessAccountCard.Fields(ui, WindowsConversationApplication.CanOpenConnectors(provider)
+                    ? "harness.progress_state.open_failed" : "progress_guide.plugin.open_failed",
                     HarnessModule(provider)?.DisplayName is { Length: > 0 and <= 64 } app ? app : PaneTitle(provider)));
             };
             return button;
@@ -386,7 +387,7 @@ internal sealed partial class SettingsWindow
                 issue.Visibility = Visibility.Visible;
                 // Once the user quits it, Pacer opens it again, as the hint says.
                 if (!await WindowsConversationApplication.WaitForExitAsync(executables, TimeSpan.FromMinutes(3))
-                    || !await WindowsConversationApplication.OpenProgressConnectorsAsync(provider)) return true;
+                    || !await WindowsConversationApplication.ReopenForGuideAsync(provider)) return true;
                 issue.Visibility = Visibility.Collapsed;
             }
             else if (result != WindowsConversationApplication.RestartResult.Restarted) { CloseGuideFloat(provider); return false; }
@@ -404,7 +405,7 @@ internal sealed partial class SettingsWindow
     /// they're in the app.
     private void OpenGuideFloat(string provider, bool bringForward = true)
     {
-        if (demo || engine is not { } client || HarnessModule(provider) is not { } module) return;
+        if (demo || engine is not { } client || HarnessModule(provider) is not { } module || !WindowsConversationApplication.CanOpenConnectors(provider)) return;
         var area = System.Windows.Forms.Screen.FromHandle(new System.Windows.Interop.WindowInteropHelper(this).Handle).WorkingArea;
         HarnessGuideFloat.Open(provider, client, session, ui, Resources, kind => kind == "trust" ? TrustPicture(provider) : CustomConnectorPicture(), area);
         if (bringForward) _ = AppWindows.BringForwardAsync(module.Launch?.Executables);

@@ -53,6 +53,9 @@ internal sealed class WindowsConversationApplication
     internal static Task<bool> OpenProgressConnectorsAsync(string provider) => SignedHandlers.TryGetValue(provider, out var handler) && handler.ConnectorsPath != null
         ? OpenProviderAsync(provider, new Uri(handler.Scheme + "://" + handler.ConnectorsPath)) : Task.FromResult(false);
 
+    internal static Task<bool> ReopenForGuideAsync(string provider) =>
+        CanOpenConnectors(provider) ? OpenProgressConnectorsAsync(provider) : OpenApplicationAsync(provider);
+
     private static async Task<bool> OpenProviderAsync(string provider, Uri? destination)
     {
         if (!SignedHandlers.TryGetValue(provider, out var application)) return false;
@@ -75,7 +78,7 @@ internal sealed class WindowsConversationApplication
         {
             // Nothing is ended unless Pacer can start the app again: an app whose
             // handler is edited, unsigned or on another computer stays running.
-            if (await Task.Run(() => ResolveSignedHandler(application)) == null) return RestartResult.Failed;
+            if (await Task.Run(() => ResolveSignedHandler(application)) is not string executablePath) return RestartResult.Failed;
             bool quit = await Task.Run(async () =>
             {
                 string[] names = executables.Select(path => Path.GetFileNameWithoutExtension(path.Replace('/', '\\'))).Where(name => name.Length > 0)
@@ -88,7 +91,14 @@ internal sealed class WindowsConversationApplication
                         .OrderBy(entry => entry.started).Select(entry => entry.process).FirstOrDefault();
                     // A child that can't be ended raises an AggregateException; the
                     // wait below then reports the app as still running.
-                    try { main?.Kill(entireProcessTree: true); }
+                    try
+                    {
+                        if (main != null && string.Equals(main.MainModule?.FileName, executablePath, StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (application.ConnectorsPath != null) main.Kill(entireProcessTree: true);
+                            else main.CloseMainWindow();
+                        }
+                    }
                     catch (Exception error) when (Recoverable(error) || error is NotSupportedException or AggregateException) { }
                 }
                 finally { foreach (var process in processes) process.Dispose(); }
@@ -100,7 +110,7 @@ internal sealed class WindowsConversationApplication
                 return false;
             });
             if (!quit) return RestartResult.StillRunning;
-            return await OpenProgressConnectorsAsync(provider) ? RestartResult.Restarted : RestartResult.Failed;
+            return await ReopenForGuideAsync(provider) ? RestartResult.Restarted : RestartResult.Failed;
         }
         catch (Exception error) when (Recoverable(error)) { return RestartResult.Failed; }
     }

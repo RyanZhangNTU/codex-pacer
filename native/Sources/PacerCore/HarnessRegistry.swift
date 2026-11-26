@@ -33,6 +33,22 @@ public struct HarnessBrand: Equatable, Sendable {
     public static let neutral = HarnessBrand(dark: .init(0xA1A1A6), light: .init(0x5A5A60), accentLift: 0.3, accentLuminance: 0.1)
 }
 
+/// Independently selectable quota pools. History and warnings cover every pool.
+package struct HarnessQuotaGroups: Sendable {
+    package let ids: [String]
+    package let defaultsKey: String
+    package let labelPrefix: String
+
+    package func name(_ id: String, language: AppLanguage? = nil) -> String {
+        L10n.text(labelPrefix + "." + id, language: language)
+    }
+
+    package func selection(in snapshot: QuotaSnapshot?, saved: String?) -> String {
+        if let saved, ids.contains(saved) { return saved }
+        return ids.first(where: { id in snapshot?.buckets.contains { $0.id == id } == true }) ?? ids[0]
+    }
+}
+
 public struct HarnessDescriptor: Sendable {
     public let id: AgentProvider
     public let name: String
@@ -45,6 +61,7 @@ public struct HarnessDescriptor: Sendable {
     public let hasRateDisplay: Bool
     public let hasTaskProgress: Bool
     public let reportsSessionUsage: Bool
+    package let quotaGroups: HarnessQuotaGroups?
     public let progressConnector: Bool
     /// The account sign-in and bill, for account credits.
     public let accountCredits: HarnessAccountCreditsDefinition?
@@ -57,7 +74,7 @@ public struct HarnessDescriptor: Sendable {
     package init(id: AgentProvider, name: String, symbol: String, defaultMode: ProviderModuleMode = .automatic,
                  brand: HarnessBrand = .neutral, website: URL? = nil, balance: HarnessBalanceKind? = nil,
                  hasRateDisplay: Bool = false, hasTaskProgress: Bool = false, reportsSessionUsage: Bool = false,
-                 progressConnector: Bool = false, accountCredits: HarnessAccountCreditsDefinition? = nil) {
+                 progressConnector: Bool = false, quotaGroups: HarnessQuotaGroups? = nil, accountCredits: HarnessAccountCreditsDefinition? = nil) {
         self.id = id
         self.name = name
         self.symbol = symbol
@@ -68,6 +85,7 @@ public struct HarnessDescriptor: Sendable {
         self.hasRateDisplay = hasRateDisplay
         self.hasTaskProgress = hasTaskProgress
         self.reportsSessionUsage = reportsSessionUsage
+        self.quotaGroups = quotaGroups
         self.progressConnector = progressConnector
         self.accountCredits = accountCredits
     }

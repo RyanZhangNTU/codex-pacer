@@ -17,13 +17,14 @@ struct ProgressGuideRows: View {
 
     /// Pacer couldn't open the app; the user opens it and finds the connectors.
     static func openFailed(_ provider: AgentProvider) -> String {
-        L10n.text("harness.progress_state.open_failed", HarnessRegistry.descriptor(for: provider)?.name ?? provider.displayName)
+        let connectors = HarnessRegistry.localHarnesses.first { $0.descriptor.id == provider }?.connectorsPath
+        return L10n.text(connectors == nil ? "progress_guide.plugin.open_failed" : "harness.progress_state.open_failed", provider.displayName)
     }
 
     /// The card shown: nothing while the ring is off, unless removing the tool failed.
     static func guide(_ model: IslandModel, _ provider: AgentProvider, isOn: Bool) -> HarnessProgressGuide? {
         let guide = model.progressGuide(provider)
-        return isOn || guide?.stage == .cleanupFailed ? guide : nil
+        return isOn || guide?.stage == .cleanupFailed || guide?.stage == .removalPending ? guide : nil
     }
     /// Steps or a problem to show under the header.
     static func opens(_ guide: HarnessProgressGuide?) -> Bool { guide.map(ProgressGuideBody.shows) == true }
@@ -136,7 +137,7 @@ struct ProgressGuideChip: View {
 /// The steps, or a problem's line and action, under the header. Each step
 /// is one line; the current one carries its picture, its action and what
 /// the card waits for.
-private struct ProgressGuideBody: View {
+struct ProgressGuideBody: View {
     let guide: HarnessProgressGuide
     let provider: AgentProvider
     var restart: IslandModel.HarnessRestart?
@@ -173,6 +174,17 @@ private struct ProgressGuideBody: View {
                     .foregroundStyle(step.state == .done ? AnyShapeStyle(.secondary) : step.state == .pending ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(minHeight: 20)
+                if let server = step.copyText {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(server, forType: .string)
+                    } label: {
+                        Label(server, systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderless)
+                    .help(L10n.text("progress_guide.plugin.copy"))
+                    .accessibilityLabel(L10n.text("progress_guide.plugin.copy") + ", " + server)
+                }
                 if current {
                     switch guide.picture {
                     case .customConnector?: CustomConnectorPicture()

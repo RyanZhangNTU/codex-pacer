@@ -46,8 +46,7 @@ public enum CompactBarPresentation {
             self.singleTask = singleTask; self.metric = metric; self.codexWindow = codexWindow; self.claudeWindow = claudeWindow; self.rings = rings
         }
         func window(for provider: AgentProvider) -> String {
-            if provider == .antigravity { return antigravityWindow ?? "auto" }
-            return provider == .codex ? codexWindow : claudeWindow
+            [AgentProvider.codex: codexWindow, .claude: claudeWindow, .antigravity: antigravityWindow ?? "auto"][provider] ?? "auto"
         }
         public var valid: Bool {
             rings.count == 2 &&
@@ -339,8 +338,8 @@ public enum CompactBarPresentation {
             }
             let raw = value(provider), number = percent(raw)
             return .init(provider: provider, text: number == "—" ? number : number + "%",
-                stripText: number, stripUnit: "%", dimmed: provider == .antigravity &&
-                    (source(provider)?.failed == true || QuotaDashboardPresentation.isStale(snapshot: source(provider)?.snapshot, window: selected(provider), now: date)), value: raw,
+                stripText: number, stripUnit: "%", dimmed: source(provider)?.failed == true ||
+                    QuotaDashboardPresentation.isStale(snapshot: source(provider)?.snapshot, window: selected(provider), now: date), value: raw,
                 low: metric == .remaining && choices.lowColor && raw.map { $0 <= lowQuota } == true ? true : nil)
         }
         var entries = alternating.map(entry)
@@ -361,9 +360,8 @@ public enum CompactBarPresentation {
             return .init(provider: provider, text: number == "—" ? number : number + "%", stripText: number, dimmed: false, value: left)
         }
         func quotaName(_ provider: AgentProvider) -> String {
-            guard provider == .antigravity, let id = source(provider)?.snapshot?.buckets.first?.id,
-                  let group = AntigravityQuotaGroup(rawValue: id) else { return provider.displayName }
-            return provider.displayName + " · " + L10n.text("antigravity.quota." + group.rawValue, language: language)
+            guard let groups = provider.quotaGroups, let id = source(provider)?.snapshot?.buckets.first?.id else { return provider.displayName }
+            return provider.displayName + " · " + groups.name(id, language: language)
         }
         let quotaHelp = ordered.map(entry).map { entry in L10n.text("provider.compact_quota", quotaName(entry.provider), entry.text, language: language) }.joined(separator: " · ")
         let gaugeHelp = rings.map { ring in

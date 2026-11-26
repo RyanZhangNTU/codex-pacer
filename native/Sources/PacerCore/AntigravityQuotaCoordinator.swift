@@ -4,55 +4,37 @@ package enum AntigravityQuotaGroup: String, CaseIterable, Sendable {
     case gemini, thirdParty = "3p"
 
     package static let defaultsKey = "antigravityQuotaGroup"
+    static let options = HarnessQuotaGroups(ids: allCases.map(\.rawValue), defaultsKey: defaultsKey, labelPrefix: "antigravity.quota")
     package var name: String { L10n.text("antigravity.quota." + rawValue) }
 
     /// A saved choice stays selected when its pool is unavailable. On first use
     /// an account offering just one pool shows that pool.
     package static func selected(_ snapshot: QuotaSnapshot?, saved: String?) -> QuotaSnapshot? {
         guard let snapshot else { return nil }
-        let choice = saved.flatMap(Self.init(rawValue:))
-        let bucket = snapshot.buckets.first { $0.id == (choice ?? .gemini).rawValue }
-            ?? (choice == nil ? snapshot.buckets.first : nil)
-        return bucket.map { snapshot.showing($0) }
+        let id = options.selection(in: snapshot, saved: saved)
+        return snapshot.buckets.first { $0.id == id }.map { snapshot.showing($0) }
     }
-}
-
-extension QuotaSnapshot {
-    func showing(_ bucket: QuotaBucket) -> QuotaSnapshot {
-        .init(buckets: [bucket], capturedAt: capturedAt, accountScope: accountScope, resetCredits: resetCredits)
-    }
-}
-
-package struct AntigravityQuotaState: Equatable, Sendable {
-    package var snapshot: QuotaSnapshot?
-    package var history = QuotaCycleHistory()
-    package var error: String?
-    package var warning: String?
-    package var lastAttempt: Date?
-    package var failures = 0
-    package var refreshing = false
-    package init() {}
 }
 
 /// One coordinator belongs to one verified hub session. Activity owns the
 /// client and its revocation. Quota never opens a second transport binding.
-package actor AntigravityQuotaCoordinator {
+package actor AntigravityQuotaCoordinator: LocalHarnessQuotaCoordinator {
     private let client: AntigravityLocalClient
     private let session: UInt64
     private let home: URL
     private let credential: DeepSeekHistoryCredential
     private let store: QuotaHistoryStore
     private let now: @Sendable () -> Date
-    private let output: @Sendable (AntigravityQuotaState, [IslandNotice]) async -> Void
+    private let output: @Sendable (LocalHarnessQuotaState, [IslandNotice]) async -> Void
     private let generation = QuotaWorkGeneration()
     private let revision: UInt64
-    private var state = AntigravityQuotaState()
+    private var state = LocalHarnessQuotaState()
     private var scope: String?
     private var policies: [String: AttentionPolicy] = [:]
 
     package init(client: AntigravityLocalClient, session: UInt64, home: URL, credential: DeepSeekHistoryCredential,
                  history: QuotaHistoryStore, now: @escaping @Sendable () -> Date = { Date() },
-                 output: @escaping @Sendable (AntigravityQuotaState, [IslandNotice]) async -> Void) {
+                 output: @escaping @Sendable (LocalHarnessQuotaState, [IslandNotice]) async -> Void) {
         self.client = client; self.session = session; self.home = home; self.credential = credential
         revision = generation.capture()
         self.store = history; self.now = now; self.output = output

@@ -9,6 +9,7 @@ public struct TaskProgressReporter {
     private static let limit = 1024 * 1024
     private static let instructions = ProgressPrompt.toolDescription
     private let flag: URL?
+    private var localFlagEnabled: ((URL) -> Bool)?
     private let capturesDurableReceipts: Bool
     private var pending = Data()
     private var durableReceipts: [DurableProgressReceipt] = []
@@ -25,7 +26,7 @@ public struct TaskProgressReporter {
     }
 
     @discardableResult package static func serveLocalHarnessIfRequested(
-        arguments: [String], read: () throws -> Data?
+        arguments: [String], flagEnabled: ((URL) -> Bool)? = nil, read: () throws -> Data?
     ) -> Bool {
         guard arguments.count >= 2, arguments[1] == localHarnessArgument else { return false }
         let flag: URL?
@@ -36,6 +37,7 @@ public struct TaskProgressReporter {
         default: return true
         }
         var reporter = Self(localHarnessFlag: flag)
+        reporter.localFlagEnabled = flagEnabled
         do {
             while let bytes = try read(), !bytes.isEmpty {
                 for reply in try reporter.receive(bytes) {
@@ -69,6 +71,7 @@ public struct TaskProgressReporter {
 
     private var enabled: Bool {
         guard let flag else { return true }
+        if let localFlagEnabled { return localFlagEnabled(flag) }
         guard let facts = try? FileManager.default.attributesOfItem(atPath: flag.path),
               facts[.type] as? FileAttributeType == .typeRegular,
               (facts[.size] as? NSNumber)?.intValue == CodexProgressSetup.on.count,

@@ -30,6 +30,9 @@ struct AntigravityProjection {
         let finished: Date?
         let execution: String?
         let wait: PendingAttentionRequest.Kind?
+        var progress: Int?
+        var completed: Date?
+        var requestsProgressApproval = false
     }
 
     struct Call {
@@ -66,13 +69,13 @@ struct AntigravityProjection {
         var conflictingState = false
     }
 
-    static func typedSteps(_ data: Data, offset: Int, cascade: String, trajectory: String) throws -> [TypedStep] {
+    static func typedSteps(_ data: Data, offset: Int, anchor: Int?, cascade: String, trajectory: String) throws -> [TypedStep] {
         guard let list = try JSONFieldView.document(data).fields(["steps"])["steps"] else { throw JSONFieldView.Failure.malformed }
         return try list.elements(maximumCount: 128).enumerated().map { position, element in
             let index = offset + position
-            let fields = try element.fields(["type", "status", "metadata", "requestedInteraction"])
+            let fields = try element.fields(["type", "status", "metadata", "requestedInteraction", "generic"])
             guard let meta = try fields["metadata"]?.fields(["sourceTrajectoryStepInfo", "executionId", "createdAt", "viewableAt",
-                                                              "finishedGeneratingAt", "internalMetadata", "requestedInteraction"]),
+                                                              "finishedGeneratingAt", "completedAt", "internalMetadata", "requestedInteraction"]),
                   let owner = try meta["sourceTrajectoryStepInfo"]?.fields(["cascadeId", "trajectoryId", "stepIndex"]),
                   AntigravityStore.uuid(owner["cascadeId"]?.string()) == cascade,
                   AntigravityStore.uuid(owner["trajectoryId"]?.string()) == trajectory,
@@ -97,11 +100,28 @@ struct AntigravityProjection {
             let transitions = try meta["internalMetadata"]?.fields(["statusTransitions"])["statusTransitions"]?.elements(maximumCount: 64)
             let changed = try transitions?.last?.fields(["updatedStatus", "timestamp"])
             let transition = changed?["updatedStatus"]?.string() == status ? AntigravityStore.date(changed?["timestamp"]?.string()) : nil
+            var percent: Int?
+            var asksForProgress = false
+            if let anchor, index > anchor {
+                if typedStatus == .done, name == "CORTEX_STEP_TYPE_GENERIC",
+                   let args = try? fields["generic"]?.fields(["args"])["args"]?.fields(["ServerName", "ToolName", "Arguments"]),
+                   args["ServerName"]?.matchesStringLiteral(AntigravityProgressPlugin.server) == true,
+                   args["ToolName"]?.matchesStringLiteral(CodexProgressEvidence.tool) == true,
+                   let json = args["Arguments"]?.string(limit: 128) {
+                    percent = CodexProgressEvidence.percent(json)
+                }
+                if typedStatus == .waiting, wait == .approval,
+                   let resource = try? interaction?["permission"]?.fields(["resource"])["resource"]?.fields(["action", "target"]) {
+                    asksForProgress = resource["action"]?.string(limit: 3) == "mcp" &&
+                        resource["target"]?.string(limit: 64) == AntigravityProgressPlugin.server + "/" + CodexProgressEvidence.tool
+                }
+            }
             return TypedStep(index: index, type: type, status: typedStatus,
                              created: AntigravityStore.date(meta["createdAt"]?.string()), transition: transition,
                              viewable: AntigravityStore.date(meta["viewableAt"]?.string()),
                              finished: AntigravityStore.date(meta["finishedGeneratingAt"]?.string()),
-                             execution: meta["executionId"]?.string(limit: 128), wait: wait)
+                             execution: meta["executionId"]?.string(limit: 128), wait: wait, progress: percent,
+                             completed: AntigravityStore.date(meta["completedAt"]?.string()) ?? transition, requestsProgressApproval: asksForProgress)
         }
     }
 
@@ -163,6 +183,7 @@ struct AntigravityProjection {
         var activity: SessionActivity
         var request: PendingAttentionRequest?
         var needsRecheck = false
+        var requestsProgressApproval = false
     }
 
     static func project(_ row: AntigravityStore.Summary, trajectory: AntigravityStore.Trajectory?,
@@ -241,7 +262,8 @@ struct AntigravityProjection {
                 state = .finished
             } else { return unknown() }
         } else if active {
-            let waiting = open.compactMap { step in status(step) == .waiting ? typed[step.index] : nil }.first { $0.wait != nil }
+            let waits = open.compactMap { step in status(step) == .waiting ? typed[step.index] : nil }
+            let waiting = waits.first(where: \.requestsProgressApproval) ?? waits.first { $0.wait != nil }
             if let waiting, let kind = waiting.wait {
                 at = waiting.transition ?? waiting.created ?? at
                 pending = PendingAttentionRequest(id: CompletionDismissalStore.digest([turn, String(waiting.index), kind.rawValue]),
@@ -278,6 +300,17 @@ struct AntigravityProjection {
         let first = cached.dated && anchor.type == 14 ? live.firstViewable : nil
         SessionPerformanceUpdate(id: task.id, turnID: turn, response: sample, firstTokenLatency: first?.timeIntervalSince(started),
                                  firstTokenReportedAt: first)?.apply(to: &task)
-        return Result(activity: task, request: pending)
+        if let watermark {
+            if let prior = previous?.currentProgress, prior.turnID == turn, prior.reportedAt > watermark {
+                task.reportProgress(prior.percent, at: prior.reportedAt, turnID: turn)
+            }
+            for step in typed.values.sorted(by: { $0.index < $1.index }) where step.index > anchor.index {
+                if let percent = step.progress, let completed = step.completed, completed > watermark {
+                    task.reportProgress(percent, at: completed, turnID: turn)
+                }
+            }
+        }
+        return Result(activity: task, request: pending, requestsProgressApproval: pending != nil &&
+            open.contains { typed[$0.index]?.requestsProgressApproval == true })
     }
 }

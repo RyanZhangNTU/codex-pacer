@@ -73,7 +73,7 @@ Codex 额度无需额外设置。
 
 ## 进度圆环
 
-Codex、Claude Code、DeepSeek Harness 和 WorkBuddy 都会报告你的请求完成了多少，Pacer 把它画成任务图标外的一圈圆环。
+Codex、Claude Code、DeepSeek Harness、WorkBuddy 和 Antigravity 都会报告你的请求完成了多少，Pacer 把它画成任务图标外的一圈圆环。
 
 | 看到的样子 | 含义 |
 | --- | --- |
@@ -84,6 +84,8 @@ Codex、Claude Code、DeepSeek Harness 和 WorkBuddy 都会报告你的请求完
 | 圆环填满并出现对勾 | 请求已完成。 |
 
 估计来自代理自己的判断，所以圆环偶尔会往回走。圆环默认开启；可以在主窗口各服务页面的“任务进度圆环”中分别关闭。打开圆环后，新开的会话才会开始报告。
+
+在 Mac 上开启 Antigravity 模块及其“任务进度圆环”后，Pacer 会自动添加插件。在 Antigravity 中新建对话，交给它一项需要使用工具的任务。出现权限提示时，选择始终允许 Pacer 的进度工具，也可以在 Antigravity 的“设置 → 权限 → MCP 工具”中添加 `mcp(codex-pacer_pacer_progress/*)`。首次报告进度后，对应对话的圆环就会显示进度。每个子智能体单独报告自己的进度。
 
 SSH 主机上的 Codex 任务（以及 Windows 上 WSL 里的 Codex 任务）也会报告进度：Pacer 会在每台已连接、装有 Codex 的主机上设置好。已经在运行的任务，要等 Codex 重新连接到该主机后才会开始报告。
 

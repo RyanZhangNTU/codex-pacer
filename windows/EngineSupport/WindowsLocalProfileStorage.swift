@@ -60,3 +60,52 @@ public struct WindowsLocalProfileStorage: ClaudeHookStorage {
     }
     public func remove(_ url: URL) throws { try validate(url); try FileManager.default.removeItem(at: url) }
 }
+
+/// The plugin owns three files and two directories. Windows keeps the plugin
+/// directory locked while it is an MCP process's current working directory.
+package struct WindowsProgressPluginStorage: ProgressPluginStorage {
+    private let base = WindowsLocalProfileStorage()
+    package init() {}
+
+    package func validate(_ url: URL) throws {
+        try base.validate(url)
+        guard base.exists(url), !base.isDirectory(url) else { return }
+        let file = CreateFileW(WindowsLocalProfileStorage.wide(url), DWORD(FILE_READ_ATTRIBUTES),
+            DWORD(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE), nil, DWORD(OPEN_EXISTING),
+            DWORD(FILE_FLAG_OPEN_REPARSE_POINT), nil)
+        guard file != INVALID_HANDLE_VALUE else { throw ClaudeHookInstaller.Failure.unsafePath }
+        defer { CloseHandle(file) }
+        var info = BY_HANDLE_FILE_INFORMATION()
+        guard GetFileInformationByHandle(file, &info), info.nNumberOfLinks == 1,
+              info.dwFileAttributes & DWORD(FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY) == 0 else {
+            throw ClaudeHookInstaller.Failure.unsafePath
+        }
+    }
+    package func exists(_ url: URL) -> Bool { base.exists(url) }
+    package func isDirectory(_ url: URL) -> Bool { base.isDirectory(url) }
+    package func isReadable(_ url: URL) -> Bool { base.isReadable(url) }
+    package func read(_ url: URL) throws -> Data { try validate(url); return try base.read(url) }
+    package func createDirectory(_ url: URL, permissions: UInt16) throws { try base.createDirectory(url, permissions: permissions) }
+    package func replace(_ url: URL, with data: Data, permissions: UInt16) throws {
+        try validate(url); try base.replace(url, with: data, permissions: permissions)
+    }
+    package func names(in directory: URL) throws -> Set<String> {
+        try validate(directory)
+        return try Set(FileManager.default.contentsOfDirectory(atPath: directory.path))
+    }
+    package func remove(_ url: URL) throws {
+        try validate(url)
+        guard DeleteFileW(WindowsLocalProfileStorage.wide(url)) else { throw removalError(directory: false) }
+    }
+    package func removeEmptyDirectory(_ url: URL) throws {
+        try validate(url)
+        guard RemoveDirectoryW(WindowsLocalProfileStorage.wide(url)) else { throw removalError(directory: true) }
+    }
+    private func removalError(directory: Bool) -> any Error {
+        let code = GetLastError()
+        if code == ERROR_SHARING_VIOLATION || code == ERROR_LOCK_VIOLATION || (directory && code == ERROR_ACCESS_DENIED) {
+            return ProgressPluginRemovalError.inUse
+        }
+        return CocoaError(.fileWriteUnknown)
+    }
+}

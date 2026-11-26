@@ -15,6 +15,7 @@ private func timestamp(_ second: Int) -> String {
 private struct Step {
     let type: String, status: String
     let second: Int
+    var arguments: [String: String]?
     var interaction: String?
     var code: Int { ["USER_INPUT": 14, "PLANNER_RESPONSE": 15, "SYSTEM_MESSAGE": 101][type] ?? 132 }
     // An arbitrary unmeasured integer exercises forward compatibility for PENDING.
@@ -33,7 +34,14 @@ private struct Step {
         var object: [String: Any] = ["type": "CORTEX_STEP_TYPE_" + type, "status": "CORTEX_STEP_STATUS_" + status,
                                      "metadata": meta, "generic": ["args": ["secret": "private-tool-sentinel"]],
                                      "userInput": ["userResponse": "private-prompt-sentinel"]]
-        if interaction == "mcp" {
+        if let arguments {
+            object["generic"] = ["args": arguments]
+            meta["completedAt"] = timestamp(second + 1)
+            object["metadata"] = meta
+        }
+        if interaction == "pacer" {
+            object["requestedInteraction"] = ["permission": ["resource": ["action": "mcp", "target": "codex-pacer_pacer_progress/report_progress"]]]
+        } else if interaction == "mcp" {
             object["requestedInteraction"] = ["permission": ["resource": ["action": "mcp", "target": "private-tool-sentinel"]]]
         } else if let interaction { object["requestedInteraction"] = [interaction: ["text": "private-question-sentinel"]] }
         return object
@@ -214,6 +222,80 @@ private final class SnapshotRace: PlatformFileSystem, @unchecked Sendable {
 final class AntigravityTests: XCTestCase {
     private let input = Step("USER_INPUT", "DONE", 1)
     private let planner = Step("PLANNER_RESPONSE", "DONE", 2)
+
+    private func report(_ percent: String, at second: Int, status: String = "DONE", server: String = "codex-pacer_pacer_progress",
+                        tool: String = "report_progress", type: String = "GENERIC") -> Step {
+        var step = Step(type, status, second)
+        step.arguments = ["ServerName": server, "ToolName": tool, "Arguments": percent]
+        return step
+    }
+
+    func testProgressFollowsOnlyItsOwnRowAndCurrentInput() async throws {
+        let f = try Fixture(), m = try f.monitor(), updates = Updates()
+        try f.write([Step("USER_INPUT", "DONE", -10), report(#"{"percent":70}"#, at: -9)], state: "RUNNING", at: -7)
+        await m.start(home: f.home, policy: .collapsed) { await updates.receive($0) }
+        await m.refresh()
+        var snapshot = await updates.last
+        XCTAssertNil(snapshot.activities.first?.currentProgress)
+        let parent = [input, report(#"{"percent":100}"#, at: 2)]
+        let child = [Step("SYSTEM_MESSAGE", "DONE", 1), report(#"{"percent":49}"#, at: 3)]
+        try f.write(parent, state: "RUNNING", at: 3)
+        try f.write(child, state: "RUNNING", at: 4, id: childID, parent: rootID)
+        await m.refresh(); snapshot = await updates.last
+        var root = try XCTUnwrap(snapshot.activities.first { $0.threadID == rootID })
+        XCTAssertEqual(root.currentProgress?.percent, 100); XCTAssertEqual(root.phase, .running)
+        XCTAssertEqual(root.currentProgress?.reportedAt, epoch.addingTimeInterval(3))
+        XCTAssertEqual(snapshot.activities.first { $0.threadID == childID }?.currentProgress?.percent, 49)
+        let updated = parent + [report(#"{"percent":18}"#, at: 5), report("not-json", at: 6, server: "other"),
+            report(#"{"percent":90}"#, at: 7, tool: "other"), report(#"{"percent":80}"#, at: 8, status: "ERROR"),
+            report(#"{"percent":true}"#, at: 9), report(#"{"percent":1.5}"#, at: 10), report(#"{"percent":101}"#, at: 11),
+            report(#"{"percent":66}"#, at: 12, type: "RUN_COMMAND")]
+        try f.write(updated, state: "RUNNING", at: 14)
+        await m.refresh(); snapshot = await updates.last
+        root = try XCTUnwrap(snapshot.activities.first { $0.threadID == rootID })
+        XCTAssertEqual(root.currentProgress?.percent, 18)
+        XCTAssertEqual(root.currentProgress?.reportedAt, epoch.addingTimeInterval(6))
+        try f.write(updated + [Step("USER_INPUT", "DONE", 15)], state: "RUNNING", at: 15)
+        await m.refresh(); snapshot = await updates.last
+        XCTAssertNil(snapshot.activities.first { $0.threadID == rootID }?.currentProgress)
+        XCTAssertEqual(snapshot.activities.first { $0.threadID == childID }?.currentProgress?.percent, 49)
+        await m.stop()
+    }
+
+    func testProgressApprovalRemainsAnApprovalAndAdvancesGuide() async throws {
+        let f = try Fixture(), m = try f.monitor(), updates = Updates()
+        await m.start(home: f.home, policy: .collapsed) { await updates.receive($0) }
+        for interaction in ["mcp", "pacer"] {
+            try f.write([input, Step("GENERIC", "WAITING", 2, interaction)], state: "RUNNING", at: 3)
+            await m.refresh()
+            let snapshot = await updates.last
+            XCTAssertEqual(snapshot.requests.first?.kind, .approval); XCTAssertEqual(snapshot.requests.first?.threadID, rootID)
+            XCTAssertEqual(snapshot.activities.first?.phase, .waitingForInput)
+            XCTAssertEqual(snapshot.requestsProgressApproval, interaction == "pacer")
+            let guide = HarnessProgressGuide(setup: .configured, connection: nil, reported: false, ringOn: true, name: "Antigravity",
+                                            pluginPlatform: .macOS, requestsApproval: snapshot.requestsProgressApproval)
+            XCTAssertEqual(guide?.stage, interaction == "pacer" ? .allowTool : .newConversation)
+            XCTAssertEqual(guide?.steps[2].copyText, "codex-pacer_pacer_progress")
+        }
+        await m.stop()
+    }
+
+    func testProgressGuideUsesPlatformLoadBehaviorAndOnlyAReportConfirmsSetup() {
+        func guide(_ setup: LocalHarnessProgressStatus, _ platform: HarnessPlatform, app: HarnessProgressGuide.AppPresence? = nil,
+                   reported: Bool = false, connection: LocalHarnessProgressConnection? = nil, on: Bool = true) -> HarnessProgressGuide? {
+            HarnessProgressGuide(setup: setup, connection: connection, reported: reported, ringOn: on, name: "Antigravity",
+                                 addedAt: epoch, app: app, pluginPlatform: platform)
+        }
+        XCTAssertEqual(guide(.settingUp, .macOS)?.steps.first?.state, .current)
+        XCTAssertEqual(guide(.configured, .macOS, app: .running(since: .distantPast))?.stage, .newConversation)
+        XCTAssertEqual(guide(.configured, .windows, app: .running(since: .distantPast))?.action, .restartApp)
+        XCTAssertEqual(guide(.configured, .windows, app: .running(since: epoch))?.stage, .allowTool)
+        XCTAssertEqual(guide(.configured, .macOS, reported: true)?.stage, .ready)
+        XCTAssertEqual(guide(.configured, .macOS, reported: true, connection: .disabled)?.stage, .turnedOff)
+        for status in [LocalHarnessProgressStatus.conflict, .failed] { XCTAssertEqual(guide(status, .macOS)?.action, .retry) }
+        XCTAssertNil(guide(.configured, .macOS, on: false))
+        XCTAssertEqual(guide(.removalPending, .windows, on: false)?.waiting, true)
+    }
 
     func testFirstResponseBeforeSummaryAndTranscriptCatchUp() async throws {
         let f = try Fixture(), m = try f.monitor(), updates = Updates()
@@ -666,15 +748,15 @@ final class AntigravityTests: XCTestCase {
         let definition = AntigravityHarness.definition
         XCTAssertEqual(definition.platforms, [.macOS]); XCTAssertEqual(definition.homeEnvironmentKey, "ANTIGRAVITY_CONFIG_DIR")
         XCTAssertEqual(definition.macBundleIdentifiers, ["com.google.antigravity"]); XCTAssertEqual(definition.macTeamIdentifier, "EQHXZ8M8AV")
-        XCTAssertEqual(definition.descriptor.balance, .quotaWindows); XCTAssertFalse(definition.descriptor.hasTaskProgress)
+        XCTAssertEqual(definition.descriptor.balance, .quotaWindows); XCTAssertTrue(definition.descriptor.hasTaskProgress); XCTAssertTrue(definition.descriptor.progressConnector)
         XCTAssertNil(definition.conversationScheme); XCTAssertNil(definition.progressConfigFile)
     }
 }
 
 private actor QuotaUpdates {
-    private(set) var state = AntigravityQuotaState()
+    private(set) var state = LocalHarnessQuotaState()
     private(set) var notices: [IslandNotice] = []
-    func receive(_ state: AntigravityQuotaState, _ notices: [IslandNotice]) {
+    func receive(_ state: LocalHarnessQuotaState, _ notices: [IslandNotice]) {
         self.state = state
         self.notices += notices
     }
@@ -701,7 +783,7 @@ extension AntigravityTests {
         XCTAssertEqual(try rate(tokens: 100, thinking: 50, first: 0.9, streaming: 0.1, span: 1), 100)
     }
 
-    func testMissedRootAndChildEndingKeepTheirDisplayedRates() async throws {
+    func testMissedEndingsKeepMeasurementsButHideEndedChildLineRate() async throws {
         let f = try Fixture(), monitor = try f.monitor(), updates = Updates()
         await monitor.start(home: f.home, policy: .collapsed) { await updates.receive($0) }
         try f.write([input, planner, Step("GENERIC", "CANCELED", 7)], state: "IDLE", at: 8)
@@ -715,7 +797,9 @@ extension AntigravityTests {
         XCTAssertEqual(ended.count, 2)
         let child = try XCTUnwrap(ended.first { $0.threadID == childID })
         let line = ActivityTaskRowPresentation.subagentLine(child, options: .init(), at: epoch.addingTimeInterval(100))
-        XCTAssertEqual(line.rateText, "33.3"); XCTAssertFalse(line.rateIsFresh)
+        XCTAssertNil(line.rateText); XCTAssertFalse(line.rateIsFresh)
+        let root = try XCTUnwrap(ended.first { $0.threadID == rootID })
+        XCTAssertEqual(ActivityTaskRowPresentation(activity: root, unread: true, at: epoch.addingTimeInterval(100)).rateText, "33.3")
         for task in ended {
             XCTAssertEqual(task.displayedOutputEstimate(at: epoch.addingTimeInterval(100))?.value, 100.0 / 3)
         }
@@ -813,7 +897,7 @@ extension AntigravityTests {
         let coordinator = AntigravityQuotaCoordinator(client: client, session: try XCTUnwrap(generation), home: f.home,
             credential: credential, history: store, now: { epoch }) { await output.receive($0, $1) }
         func status(_ local: String) -> Data { Data("{\"userStatus\":{\"email\":\"\(local)@example.invalid\"}}".utf8) }
-        func read(_ remaining: Double) async throws -> AntigravityQuotaState {
+        func read(_ remaining: Double) async throws -> LocalHarnessQuotaState {
             f.host.respond("RetrieveUserQuotaSummary", with: try quotaData(gemini: remaining, third: remaining))
             await coordinator.refresh(expanded: true, force: true)
             return await output.state
