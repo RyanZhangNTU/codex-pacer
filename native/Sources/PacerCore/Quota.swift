@@ -175,6 +175,13 @@ package struct LocalHarnessQuotaState: Equatable, Sendable {
     package init() {}
 }
 
+package typealias LocalQuotaOutput = @Sendable (LocalHarnessQuotaState, [IslandNotice]) async -> Void
+package typealias LocalQuotaFactory = @Sendable (URL, DeepSeekHistoryCredential, QuotaHistoryStore, @escaping LocalQuotaOutput) -> any LocalHarnessQuotaCoordinator
+
+package protocol LocalHarnessQuotaSource: Sendable {
+    func observeQuota(_ observer: @escaping @Sendable (LocalQuotaFactory?) async -> Void) async
+}
+
 package protocol LocalHarnessQuotaCoordinator: Sendable {
     func invalidateSource()
     func flush() async

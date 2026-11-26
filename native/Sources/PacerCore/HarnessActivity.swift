@@ -101,6 +101,7 @@ package struct LocalHarnessDefinition: Sendable {
     package let descriptor: HarnessDescriptor
     package let platforms: Set<HarnessPlatform>
     package let home: String
+    package var detectsDataDirectory = false
     package let dataFile: String
     package let windowsExecutables: [String]
     package var macApplicationNames: [String] = []
@@ -142,6 +143,7 @@ package struct LocalHarnessDefinition: Sendable {
     /// folder: it covers portable copies and custom install folders.
     package func hasLocalData(home: URL) -> Bool {
         var isDirectory: ObjCBool = false
+        if detectsDataDirectory { return FileManager.default.fileExists(atPath: home.path, isDirectory: &isDirectory) && isDirectory.boolValue }
         return FileManager.default.fileExists(atPath: home.appendingPathComponent(dataFile).path, isDirectory: &isDirectory) && !isDirectory.boolValue
     }
     package func resolveHome(override: String?, isAbsolute: (String) -> Bool,

@@ -4,6 +4,12 @@ import PacerCore
 
 public struct MacFileSystem: PlatformFileSystem {
     public init() {}
+    public func resolvedDirectory(_ url: URL) -> URL {
+        guard let path = realpath(url.path, nil) else { return url }
+        defer { free(path) }
+        return URL(fileURLWithPath: String(cString: path), isDirectory: true)
+    }
+
     public func metadata(_ url: URL, followingSymbolicLinks: Bool) -> PlatformFileMetadata? {
         var info = stat()
         guard url.isFileURL else { return nil }

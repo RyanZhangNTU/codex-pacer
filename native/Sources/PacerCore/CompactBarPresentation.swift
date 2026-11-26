@@ -37,29 +37,33 @@ public enum CompactBarPresentation {
         public var singleTask: SingleTask
         public var metric: Metric
         public var codexWindow: String
-        public var antigravityWindow: String?
+        public var moduleWindows: [String: String]?
         public var claudeWindow: String
         public var rings: [RingChoice]
         public init(singleTask: SingleTask = .stage, metric: Metric = .remaining, codexWindow: String = "auto",
-                    claudeWindow: String = "auto", antigravityWindow: String? = nil, rings: [RingChoice] = [.automatic, .automatic]) {
-            self.antigravityWindow = antigravityWindow
+                    claudeWindow: String = "auto", moduleWindows: [String: String]? = nil, rings: [RingChoice] = [.automatic, .automatic]) {
+            self.moduleWindows = moduleWindows
             self.singleTask = singleTask; self.metric = metric; self.codexWindow = codexWindow; self.claudeWindow = claudeWindow; self.rings = rings
         }
         func window(for provider: AgentProvider) -> String {
-            [AgentProvider.codex: codexWindow, .claude: claudeWindow, .antigravity: antigravityWindow ?? "auto"][provider] ?? "auto"
+            switch provider {
+            case .codex: codexWindow
+            case .claude: claudeWindow
+            default: moduleWindows?[provider.rawValue] ?? "auto"
+            }
         }
         public var valid: Bool {
             rings.count == 2 &&
-                [codexWindow, claudeWindow, antigravityWindow ?? "auto"].allSatisfy { $0.utf8.count <= 1024 && !$0.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) } }
+                ((moduleWindows ?? [:]).values + [codexWindow, claudeWindow]).allSatisfy { $0.utf8.count <= 1024 && !$0.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) } }
         }
-        private enum CodingKeys: String, CodingKey { case singleTask, metric, codexWindow, claudeWindow, antigravityWindow, rings }
+        private enum CodingKeys: String, CodingKey { case singleTask, metric, codexWindow, claudeWindow, moduleWindows, rings }
         public init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             singleTask = try values.decode(SingleTask.self, forKey: .singleTask)
             metric = try values.decode(Metric.self, forKey: .metric)
             codexWindow = try values.decode(String.self, forKey: .codexWindow)
             claudeWindow = try values.decode(String.self, forKey: .claudeWindow)
-            antigravityWindow = try values.decodeIfPresent(String.self, forKey: .antigravityWindow)
+            moduleWindows = try values.decodeIfPresent([String: String].self, forKey: .moduleWindows)
             // A ring saved by a version with another module draws nothing here
             // instead of invalidating the whole bar; a malformed value still does.
             rings = try values.decode([String].self, forKey: .rings).map { value in

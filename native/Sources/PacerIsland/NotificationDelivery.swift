@@ -26,6 +26,9 @@ final class NotificationDelivery {
             content.title = "Codex Pacer"
             let detail = hidden ? L10n.text("activity.hidden_local_name") : notice.detail
             content.body = L10n.text("notice.body", notice.title, detail)
+            if let provider = notice.taskProvider, provider.opensApplicationForTasks {
+                content.userInfo["taskApplication"] = provider.rawValue
+            }
             if let category = notice.category { content.categoryIdentifier = category }
             try? await addRequest(UNNotificationRequest(identifier: Self.identifier(notice.id), content: content, trigger: nil))
         }

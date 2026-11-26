@@ -320,9 +320,9 @@ final class IslandModel: ObservableObject {
         objectWillChange.send(); onLayoutChange?(); onStatusChange?()
     }
     func providerQuota(_ provider: AgentProvider) -> QuotaSnapshot? {
-        guard let snapshot = fullQuota(provider), let groups = provider.quotaGroups else { return fullQuota(provider) }
-        let selected = selectedGroup(provider, groups)
-        return snapshot.buckets.first { $0.id == selected }.map { snapshot.showing($0) }
+        let snapshot = fullQuota(provider)
+        guard let groups = provider.quotaGroups else { return snapshot }
+        return groups.selected(snapshot, saved: defaults.string(forKey: groups.defaultsKey))
     }
     func fullQuota(_ provider: AgentProvider) -> QuotaSnapshot? {
         switch provider {
@@ -1861,8 +1861,8 @@ final class IslandModel: ObservableObject {
     /// not found, so reference shots stay the same, unless `--demo-workbuddy`
     /// puts it there too. A module on in the demo adds its task and dial.
     private static func demoInstallation(_ arguments: [String]?) -> ProviderInstallationDetection {
-        ProviderInstallationDetection(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true,
-            additional: arguments?.contains("--demo-workbuddy") == true ? [.workbuddy] : [])
+        let modules = HarnessRegistry.localHarnesses.map(\.descriptor.id).filter { arguments?.contains("--demo-" + $0.rawValue) == true }
+        return ProviderInstallationDetection(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true, additional: Set(modules))
     }
 
     var home: URL {
@@ -2079,7 +2079,11 @@ final class IslandModel: ObservableObject {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("CodexPacerIsland/CurrentCycle", isDirectory: true)
         historyStore = QuotaHistoryStore(directory: directory)
-        localHistoryStores = [.antigravity: QuotaHistoryStore(directory: directory.appendingPathComponent("Antigravity", isDirectory: true))]
+        localHistoryStores = Dictionary(uniqueKeysWithValues: HarnessRegistry.localHarnesses.compactMap { definition in
+            let module = definition.descriptor
+            guard definition.platforms.contains(.macOS), module.hasQuotaWindows else { return nil }
+            return (module.id, QuotaHistoryStore(directory: directory.appendingPathComponent(module.id.rawValue.capitalized, isDirectory: true)))
+        })
         claudeHistoryStore = QuotaHistoryStore(directory: directory.appendingPathComponent("Claude", isDirectory: true))
         enabledProviders = configuredProviders
         if let saved = defaults.string(forKey: "selectedQuotaProvider").flatMap(AgentProvider.init(rawValue:)), quotaProviders.contains(saved) {
@@ -2334,16 +2338,15 @@ final class IslandModel: ObservableObject {
         localQuota[provider] = nil
     }
 
-    private func bindAntigravityQuota(_ provider: AgentProvider, client: AntigravityLocalClient, session: UInt64?, home: URL, version: UInt64) async {
+    private func bindLocalQuota(_ provider: AgentProvider, factory: LocalQuotaFactory?, home: URL, version: UInt64) async {
         guard lifecycle.version(provider) == version, !sleeping, !stopped, isModuleEnabled(provider) else { return }
         let previous = localQuotaCoordinators[provider]
         detachLocalQuota(provider)
         let owner = UUID()
         localQuotaOwners[provider] = owner
         await previous?.flush()
-        guard let session, let store = localHistoryStores[provider], localQuotaOwners[provider] == owner, !sleeping, !stopped else { return }
-        localQuotaCoordinators[provider] = AntigravityQuotaCoordinator(client: client, session: session, home: home,
-            credential: DeepSeekHistoryCredential(defaults: defaults), history: store) { [weak self] state, notices in
+        guard let factory, let store = localHistoryStores[provider], localQuotaOwners[provider] == owner, !sleeping, !stopped else { return }
+        localQuotaCoordinators[provider] = factory(home, DeepSeekHistoryCredential(defaults: defaults), store) { [weak self] state, notices in
             await self?.receiveLocalQuota(provider, state, notices: notices, owner: owner)
         }
         refreshLocalQuota(provider, force: true)
@@ -2909,9 +2912,9 @@ final class IslandModel: ObservableObject {
         launchOwnedWork(.init(.activity, provider: provider, identifier: "local-harness")) { [weak self] ticket in
             guard let self, self.lifecycle.owns(ticket) else { return }
             let policy = self.activityRefreshPolicy
-            if let source = monitor as? any AntigravityHubSource {
-                await source.observeHub { [weak self] client, session in
-                    await self?.bindAntigravityQuota(provider, client: client, session: session, home: home, version: version)
+            if let source = monitor as? any LocalHarnessQuotaSource {
+                await source.observeQuota { [weak self] factory in
+                    await self?.bindLocalQuota(provider, factory: factory, home: home, version: version)
                 }
                 guard self.lifecycle.owns(ticket) else { return }
             }
@@ -3288,6 +3291,10 @@ final class IslandModel: ObservableObject {
         redrawClock(demoClock())
         for snapshot in DemoScenario.quota(.codex, at: now) { codexHistory.record(snapshot); codexQuota = snapshot }
         for snapshot in DemoScenario.quota(.claude, at: now) { claudeHistory.record(snapshot); claudeQuota = snapshot }
+        if demoArguments?.contains("--demo-antigravity") == true {
+            localQuota[.antigravity] = DemoScenario.antigravityQuota(at: now)
+            localHarnessProgressStatuses[.antigravity] = .init(.configured)
+        }
         makeDeepSeekDemo()
         configureHarnessAccounts()
         guard demoArguments != nil else { return }
@@ -3313,6 +3320,12 @@ final class IslandModel: ObservableObject {
             let cloud = DemoScenario.claudeCloud(stage: stage, at: now)
             observed += cloud.activities
             demoRequests = cloud.attention
+        }
+        if demoArguments.contains("--demo-antigravity") {
+            let snapshot = DemoScenario.antigravityTasks(at: now)
+            observed += snapshot.activities
+            demoRequests += snapshot.requests
+            localHarnessActivities.replace(.antigravity, with: snapshot)
         }
         discoveredCodexTargets = [.init(id: ConnectionSource.sshPrefix + "demo", name: "SSH", alias: "demo", home: "~/.codex")]
         discoveredClaudeTargets = []; claudeRemoteTargets = []

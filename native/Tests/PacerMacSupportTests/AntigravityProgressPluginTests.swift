@@ -62,6 +62,46 @@ final class AntigravityProgressPluginTests: XCTestCase {
         XCTAssertFalse(storage.exists(config.appendingPathComponent("mcp_config.json")))
     }
 
+    func testRemovalOnlyCleansOwnedGeneratedCaches() async throws {
+        let data = profile.appendingPathComponent(".gemini/antigravity/plugin_data/codex-pacer")
+        let schemas = profile.appendingPathComponent(".gemini/antigravity/mcp/" + AntigravityProgressPlugin.server)
+        let schema = schemas.appendingPathComponent("report_progress.json")
+        let sibling = schemas.deletingLastPathComponent().appendingPathComponent("other-server")
+        let extra = schemas.appendingPathComponent("other.json")
+        let personal = data.appendingPathComponent("keep")
+        let tool = Data(#"{"name":"report_progress","inputSchema":{"type":"object","properties":{"percent":{"type":"integer"}}}}"#.utf8)
+        for directory in [data, schemas, sibling] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        try tool.write(to: schema)
+        try Data().write(to: personal)
+        try Data().write(to: extra)
+        _ = try await sync()
+        _ = try await sync(ring: false)
+        XCTAssertTrue(storage.exists(personal))
+        XCTAssertEqual(try storage.names(in: schemas), ["other.json", "report_progress.json"])
+
+        try storage.remove(personal)
+        try storage.remove(extra)
+        let link = sibling.appendingPathComponent("keep.json")
+        try FileManager.default.linkItem(at: schema, to: link)
+        _ = try await sync()
+        _ = try await sync(module: false)
+        XCTAssertFalse(storage.exists(data))
+        XCTAssertEqual(try Data(contentsOf: schema), tool)
+
+        try FileManager.default.removeItem(at: link)
+        try Data("{}".utf8).write(to: schema)
+        _ = try await sync()
+        _ = try await sync(ring: false)
+        XCTAssertTrue(storage.exists(schema))
+        try tool.write(to: schema)
+        _ = try await sync()
+        _ = try await sync(ring: false)
+        XCTAssertFalse(storage.exists(schemas))
+        XCTAssertTrue(storage.isDirectory(sibling))
+    }
+
     func testForeignModifiedAndLinkedFilesRemainUntouched() async throws {
         try FileManager.default.createDirectory(at: plugin, withIntermediateDirectories: true)
         let manifest = plugin.appendingPathComponent("plugin.json")

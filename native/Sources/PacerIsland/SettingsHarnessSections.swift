@@ -22,6 +22,22 @@ struct SettingsHarnessSections: View {
         MainCard(title: L10n.text("main.section.status")) {
             ModuleMonitoringRow(monitoring: model.harnessMonitoring(provider), help: model.localHarnessHome(provider)?.path,
                                 rescan: { model.refreshLocalHarness(provider) })
+            if descriptor.hasQuotaWindows {
+                CardRow(title: L10n.text("provider.account")) {
+                    if model.fullQuota(provider)?.accountScope != nil {
+                        Text(L10n.text("harness.account.signed_in")).font(.system(size: 12.5)).foregroundStyle(.secondary)
+                    }
+                    Button(L10n.text("activity.open_app", provider.displayName)) { model.openDesktopApplication(provider) }
+                        .buttonStyle(.main).disabled(model.desktopApplications[provider] == nil)
+                }
+                CardRow(title: L10n.text("provider.usage")) {
+                    let window = model.providerWindow(provider, period: .weekly)
+                    Text(window?.remainingPercent.map { L10n.text("harness.weekly_remaining", Int($0.rounded())) } ?? "—")
+                        .foregroundStyle(.secondary)
+                    Button(L10n.text("common.refresh")) { model.retryQuotaConnection(for: provider) }
+                        .buttonStyle(.main).disabled(model.providerRefreshing(provider))
+                }
+            }
             if let connection = model.harnessAccount(provider) {
                 HarnessAccountRow(connection: connection)
                 HarnessUsageRow(connection: connection, settings: model.creditSettings(provider), now: model.now)
@@ -49,6 +65,9 @@ struct SettingsHarnessSections: View {
         }
         if let connection = model.harnessAccount(provider) {
             HarnessCreditsCard(connection: connection, settings: model.creditSettings(provider), now: model.now)
+        }
+        if descriptor.hasQuotaWindows, let website = descriptor.website {
+            Link(website.host ?? provider.displayName, destination: website)
         }
         MainCard {
             CardDisclosure(title: L10n.text("provider.custom_locations"),

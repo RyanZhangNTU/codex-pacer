@@ -58,6 +58,7 @@ struct ProgressGuideRows: View {
     }
 
     private func perform(_ action: HarnessProgressGuide.Action) {
+        if model.isDemo, action != .retry { model.openDesktopApplication(provider); return }
         switch action {
         case .retry: model.syncLocalHarnessProgress(force: provider)
         case .openApp: Task { openFailed = !(await MacLocalHarnessApplication.openApplication(provider: provider)) }

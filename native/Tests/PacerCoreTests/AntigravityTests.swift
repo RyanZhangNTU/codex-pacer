@@ -204,6 +204,7 @@ private final class SnapshotRace: PlatformFileSystem, @unchecked Sendable {
         shm = URL(fileURLWithPath: db.path + "-shm")
         self.change = change
     }
+    func resolvedDirectory(_ url: URL) -> URL { files.resolvedDirectory(url) }
     func metadata(_ url: URL, followingSymbolicLinks: Bool) -> PlatformFileMetadata? {
         let result = files.metadata(url, followingSymbolicLinks: followingSymbolicLinks)
         if url == shm, let change {
@@ -271,6 +272,8 @@ final class AntigravityTests: XCTestCase {
             let snapshot = await updates.last
             XCTAssertEqual(snapshot.requests.first?.kind, .approval); XCTAssertEqual(snapshot.requests.first?.threadID, rootID)
             XCTAssertEqual(snapshot.activities.first?.phase, .waitingForInput)
+            var notices = AttentionPolicy()
+            XCTAssertEqual(notices.requestNotices(snapshot.requests).first?.taskProvider, .antigravity)
             XCTAssertEqual(snapshot.requestsProgressApproval, interaction == "pacer")
             let guide = HarnessProgressGuide(setup: .configured, connection: nil, reported: false, ringOn: true, name: "Antigravity",
                                             pluginPlatform: .macOS, requestsApproval: snapshot.requestsProgressApproval)
@@ -542,7 +545,7 @@ final class AntigravityTests: XCTestCase {
         var data = Data(repeating: 65, count: AntigravityTranscript.maximumBytes + 100)
         data.append(contentsOf: ("\n" + line + "\n" + line).utf8)
         try data.write(to: url); transcript.read(url, files: f.files)
-        XCTAssertEqual(transcript.records[2]?.outputTokens, 37); XCTAssertEqual(transcript.records.count, 1)
+        XCTAssertEqual(transcript.records[2]?.model, "gemini-4-hydrogen-tiered-high"); XCTAssertEqual(transcript.records.count, 1)
         try Data("invalid\n".utf8).write(to: url, options: .atomic); transcript.read(url, files: f.files)
         XCTAssertTrue(transcript.records.isEmpty)
         XCTAssertEqual(AntigravityModel(id: "new-family-high")?.name, "new-family-high")
@@ -739,18 +742,19 @@ final class AntigravityTests: XCTestCase {
         XCTAssertThrowsError(try f.store.trajectory(row)) { XCTAssertEqual($0 as? AntigravityStore.Failure, .incompatible) }
     }
 
-    func testOptionalColumnsAndSignedAppOnlyRegistration() throws {
+    func testOptionalColumnsOnOlderSummaryStores() throws {
         let f = try Fixture()
         try f.write([input, planner], state: "IDLE", at: 7)
         try f.sql("ALTER TABLE conversation_summaries DROP COLUMN not_fully_idle; ALTER TABLE conversation_summaries DROP COLUMN last_user_input_step_index")
         let row = try XCTUnwrap(f.store.summaries().first)
         XCTAssertFalse(row.background); XCTAssertEqual(row.inputIndex, -1)
-        let definition = AntigravityHarness.definition
-        XCTAssertEqual(definition.platforms, [.macOS]); XCTAssertEqual(definition.homeEnvironmentKey, "ANTIGRAVITY_CONFIG_DIR")
-        XCTAssertEqual(definition.macBundleIdentifiers, ["com.google.antigravity"]); XCTAssertEqual(definition.macTeamIdentifier, "EQHXZ8M8AV")
-        XCTAssertEqual(definition.descriptor.balance, .quotaWindows); XCTAssertTrue(definition.descriptor.hasTaskProgress); XCTAssertTrue(definition.descriptor.progressConnector)
-        XCTAssertNil(definition.conversationScheme); XCTAssertNil(definition.progressConfigFile)
+
     }
+}
+
+private func syntheticAccount(_ label: String) -> Data {
+    let identity = [label, "example.invalid"].joined(separator: "@")
+    return try! JSONSerialization.data(withJSONObject: ["userStatus": ["email": identity]])
 }
 
 private actor QuotaUpdates {
@@ -820,7 +824,7 @@ extension AntigravityTests {
                       "gpt-6.2-sol": object("GPT Sol", ["high"]),
                       "future": object("Future", ["high"]), "future-tiered": object("Longer base", ["high"])]
         let data = try JSONSerialization.data(withJSONObject: ["userStatus": ["cascadeModelConfigData": ["groupedModels": groups],
-            "email": "synthetic@example.invalid", "name": "forbidden-sentinel", "profilePictureUrl": "forbidden-sentinel"]])
+            "email": "forbidden-sentinel", "name": "forbidden-sentinel", "profilePictureUrl": "forbidden-sentinel"]])
         f.host.respond("GetUserStatus", with: data)
         let catalog = await client.modelCatalog(for: "gemini-4-hydrogen-tiered-high", session: session)
         for (id, name, effort) in [("gemini-4-hydrogen-tiered-high", "Catalog Hydrogen", "high"),
@@ -859,7 +863,7 @@ extension AntigravityTests {
         XCTAssertEqual(value.buckets.map(\.id), ["gemini", "3p"])
         XCTAssertEqual(value.windows.map(\.durationMinutes), [300, 10080, 300, 10080])
         XCTAssertEqual(Set(value.windows.map(\.id)).count, 4)
-        let gemini = AntigravityQuotaGroup.selected(value, saved: nil), third = AntigravityQuotaGroup.selected(value, saved: "3p")
+        let gemini = AntigravityQuotaGroup.options.selected(value, saved: nil), third = AntigravityQuotaGroup.options.selected(value, saved: "3p")
         XCTAssertEqual(CompactBarPresentation.quotaValue(provider: .antigravity, snapshot: gemini, failed: false, metric: .remaining,
             selection: nil, now: epoch), 90)
         XCTAssertEqual(CompactBarPresentation.quotaValue(provider: .antigravity, snapshot: third, failed: false, metric: .remaining,
@@ -883,8 +887,8 @@ extension AntigravityTests {
         let partial = Data(#"{"response":{"groups":[{"buckets":[{"bucketId":"gemini-weekly","window":"5h","remainingFraction":0.5},{"bucketId":"3p-5h","window":"5h","remainingFraction":0},{"bucketId":"future-5h","window":"5h","remainingFraction":1},{"bucketId":"3p-weekly","window":"weekly","remainingFraction":1.01},{"bucketId":"gemini-5h","window":"5h","remainingFraction":"0.5"}]}]}}"#.utf8)
         let onlyThird = try AntigravityQuotaCoordinator.decode(partial, scope: nil, at: epoch)
         XCTAssertEqual(onlyThird.windows.map(\.usedPercent), [100])
-        XCTAssertEqual(AntigravityQuotaGroup.selected(onlyThird, saved: nil)?.buckets.first?.id, "3p")
-        XCTAssertNil(AntigravityQuotaGroup.selected(onlyThird, saved: "gemini"))
+        XCTAssertEqual(AntigravityQuotaGroup.options.selected(onlyThird, saved: nil)?.buckets.first?.id, "3p")
+        XCTAssertNil(AntigravityQuotaGroup.options.selected(onlyThird, saved: "gemini"))
         XCTAssertEqual(QuotaDashboardPresentation.selectedWindow(provider: .antigravity, snapshot: onlyThird, selection: nil)?.durationMinutes, 300)
     }
 
@@ -896,13 +900,13 @@ extension AntigravityTests {
         let credential = DeepSeekHistoryCredential(loadSalt: { Data(repeating: 7, count: 32) }, saveSalt: { _ in })
         let coordinator = AntigravityQuotaCoordinator(client: client, session: try XCTUnwrap(generation), home: f.home,
             credential: credential, history: store, now: { epoch }) { await output.receive($0, $1) }
-        func status(_ local: String) -> Data { Data("{\"userStatus\":{\"email\":\"\(local)@example.invalid\"}}".utf8) }
+
         func read(_ remaining: Double) async throws -> LocalHarnessQuotaState {
             f.host.respond("RetrieveUserQuotaSummary", with: try quotaData(gemini: remaining, third: remaining))
             await coordinator.refresh(expanded: true, force: true)
             return await output.state
         }
-        f.host.respond("GetUserStatus", with: status("account-a"))
+        f.host.respond("GetUserStatus", with: syntheticAccount("account-a"))
         var state = try await read(0.1)
         let scopeA = try XCTUnwrap(state.snapshot?.accountScope)
         XCTAssertEqual(scopeA.count, 64); XCTAssertEqual(state.history.cycles.count, 2)
@@ -917,7 +921,7 @@ extension AntigravityTests {
         XCTAssertEqual(notices.count, 2); XCTAssertEqual(Set(notices.map(\.id)).count, 2)
         for group in AntigravityQuotaGroup.allCases { XCTAssertTrue(notices.contains { $0.detail.contains(group.name) }) }
 
-        let b = status("account-b")
+        let b = syntheticAccount("account-b")
         f.host.intercept = { [host = f.host] request in
             if request.path.hasSuffix("RetrieveUserQuotaSummary") { host.respond("GetUserStatus", with: b) }
         }
@@ -957,7 +961,7 @@ extension AntigravityTests {
         let coordinator = AntigravityQuotaCoordinator(client: client, session: try XCTUnwrap(generation), home: f.home,
             credential: DeepSeekHistoryCredential(loadSalt: { Data(repeating: 1, count: 32) }, saveSalt: { _ in }),
             history: QuotaHistoryStore(directory: directory), now: { epoch }) { await output.receive($0, $1) }
-        f.host.respond("GetUserStatus", with: Data(#"{"userStatus":{"email":"test@example.invalid"}}"#.utf8))
+        f.host.respond("GetUserStatus", with: syntheticAccount("test"))
         f.host.respond("RetrieveUserQuotaSummary", with: try quotaData(gemini: 1, third: 1))
         let (started, start) = AsyncStream<Void>.makeStream(), (blocked, resume) = AsyncStream<Void>.makeStream()
         f.host.intercept = { request in

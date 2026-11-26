@@ -8,7 +8,6 @@ struct AntigravityTranscript {
         let type: String
         let created: Date
         let model: String?
-        let outputTokens: Int?
     }
 
     private(set) var records: [Int: Record] = [:]
@@ -33,14 +32,13 @@ struct AntigravityTranscript {
         while start < data.endIndex, let end = data[start...].firstIndex(of: 10) {
             defer { start = end + 1 }
             guard end > start, let fields = try? JSONFieldView.document(data.subdata(in: start..<end))
-                .fields(["step_index", "type", "status", "created_at", "model", "output_tokens"]),
+                .fields(["step_index", "type", "status", "created_at", "model"]),
                   fields["status"]?.matchesStringLiteral("DONE") == true,
                   let index = fields["step_index"]?.integer(), index >= 0,
                   let type = fields["type"]?.string(limit: 64),
                   let created = AntigravityStore.date(fields["created_at"]?.string(limit: 48)) else { continue }
             let record = Record(index: index, type: type, created: created,
-                                    model: type == "PLANNER_RESPONSE" ? fields["model"]?.string(limit: 128) : nil,
-                                    outputTokens: fields["output_tokens"]?.unsignedInteger().flatMap(Int.init(exactly:)))
+                                model: type == "PLANNER_RESPONSE" ? fields["model"]?.string(limit: 128) : nil)
             records[index] = record
             if type == "USER_INPUT" || index == 0 && type == "SYSTEM_MESSAGE" { latestInput = record }
             if records.count > 256 {

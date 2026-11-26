@@ -231,10 +231,10 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
             }
         }
         self.stage = stage
-        info = text("plugin.info")
+        info = L10n.text("antigravity.progress_ring_help", language: language)
         let server = AntigravityProgressPlugin.server
         let titles = [text("plugin.add"), text(platform == .macOS ? "plugin.conversation" : "plugin.restart"),
-                      text("plugin.allow", "mcp(" + server + "/*)"), text("plugin.report")]
+                      text("plugin.allow", server), text("plugin.report")]
         let current: Int?
         switch stage {
         case .adding: current = 0
@@ -273,7 +273,11 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
         default: actionTitle = nil
         }
         attention = tone == .attention || tone == .error
-        if attention, let current { summary = titles[current] } else { summary = line }
+        switch stage {
+        case .allowTool: summary = text("plugin.allow_hint")
+        case .newConversation: summary = text("plugin.conversation_hint")
+        default: summary = attention ? (current.map { titles[$0] } ?? line) : nil
+        }
         waiting = [.newConversation, .restartForPlugin, .allowTool, .turnedOff, .removalPending].contains(stage)
     }
 

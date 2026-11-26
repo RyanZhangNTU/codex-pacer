@@ -265,7 +265,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         UserDefaults.standard.register(defaults: ["completedRetentionMinutes": 30, "systemNotifications": false,
             "compactMetric": "remaining", "quotaWindowID": QuotaWindowSelection.weekly.rawValue])
         AppTheme(defaults: .standard).apply()
-        model = IslandModel(demo: CommandLine.arguments.contains("--demo"), initiallyExpanded: CommandLine.arguments.contains("--expanded"))
+        model = IslandModel(demo: CommandLine.arguments.contains("--demo") || CommandLine.arguments.contains("--demo-antigravity"), initiallyExpanded: CommandLine.arguments.contains("--expanded"))
         model.makeClaudeCloudMonitor = { PacerMain.makeClaudeCloudMonitor() }
         updater = AppUpdater(enabled: !model.isDemo)
         panel = PanelController(model: model)
@@ -414,9 +414,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }
     private func openActivity(_ activity: SessionActivity) async -> ActivityOpenOutcome {
         if model.isDemo {
+            if activity.provider.opensApplicationForTasks {
+                _ = showDemoDestination(title: L10n.text("demo.app_title")) { DemoConversationView(application: activity.provider, onReturn: $0) }
+                return .openedApplication
+            }
             return showDemoDestination(title: L10n.text("demo.chat_title")) { DemoConversationView(activity: activity, onReturn: $0) }
         }
-        if HarnessRegistry.localHarnesses.contains(where: { $0.descriptor.id == activity.provider && $0.conversationScheme == nil }) {
+        if activity.provider.opensApplicationForTasks {
             guard await MacLocalHarnessApplication.openApplication(provider: activity.provider) else { return .failed(L10n.text("activity.open_failed")) }
             model.close()
             return .openedApplication
@@ -474,8 +478,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
         let action = response.actionIdentifier, identifier = response.notification.request.identifier
+        let appID = response.notification.request.content.userInfo["taskApplication"] as? String
         Task { @MainActor [weak self] in
             guard let self else { return }
+            if action == UNNotificationDefaultActionIdentifier, let provider = appID.flatMap(AgentProvider.init(rawValue:)),
+               provider.opensApplicationForTasks, self.model.isModuleEnabled(provider),
+               self.model.desktopApplications[provider] != nil {
+                self.model.openDesktopApplication(provider)
+                return
+            }
             switch action {
             case NotificationDelivery.openHarnessAction: self.model.openDeepSeekApp()
             case NotificationDelivery.snoozeSpikeAction: self.model.snoozeDeepSeekSpike()

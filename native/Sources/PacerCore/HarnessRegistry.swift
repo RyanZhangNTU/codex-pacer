@@ -43,6 +43,12 @@ package struct HarnessQuotaGroups: Sendable {
         L10n.text(labelPrefix + "." + id, language: language)
     }
 
+    package func selected(_ snapshot: QuotaSnapshot?, saved: String?) -> QuotaSnapshot? {
+        guard let snapshot else { return nil }
+        let id = selection(in: snapshot, saved: saved)
+        return snapshot.buckets.first { $0.id == id }.map { snapshot.showing($0) }
+    }
+
     package func selection(in snapshot: QuotaSnapshot?, saved: String?) -> String {
         if let saved, ids.contains(saved) { return saved }
         return ids.first(where: { id in snapshot?.buckets.contains { $0.id == id } == true }) ?? ids[0]

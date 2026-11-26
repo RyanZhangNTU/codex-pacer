@@ -5,20 +5,16 @@ enum AntigravityHarness {
         brand: .init(dark: .init(0xA5CAFF), light: .init(0x285CAD), accentLift: 0.32, accentLuminance: 0.105),
         website: URL(string: "https://antigravity.google/"), balance: .quotaWindows, hasRateDisplay: true,
         hasTaskProgress: true, progressConnector: true, quotaGroups: AntigravityQuotaGroup.options),
-        platforms: [.macOS], home: ".gemini/antigravity", dataFile: "conversation_summaries.db", windowsExecutables: [],
+        platforms: [.macOS], home: ".gemini/antigravity", detectsDataDirectory: true, dataFile: "conversation_summaries.db", windowsExecutables: [],
         macApplicationNames: ["Antigravity"], macBundleIdentifiers: ["com.google.antigravity"], macTeamIdentifier: "EQHXZ8M8AV",
         installsProgressPlugin: true,
         makeMonitor: { AntigravityMonitor(io: $0) })
 }
 
-package protocol AntigravityHubSource: Sendable {
-    func observeHub(_ observer: @escaping @Sendable (AntigravityLocalClient, UInt64?) async -> Void) async
-}
-
-actor AntigravityMonitor: LocalHarnessMonitor, AntigravityHubSource {
-    private var hubObserver: (@Sendable (AntigravityLocalClient, UInt64?) async -> Void)?
-    func observeHub(_ observer: @escaping @Sendable (AntigravityLocalClient, UInt64?) async -> Void) {
-        hubObserver = observer
+actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
+    private var quotaObserver: (@Sendable (LocalQuotaFactory?) async -> Void)?
+    func observeQuota(_ observer: @escaping @Sendable (LocalQuotaFactory?) async -> Void) {
+        quotaObserver = observer
     }
 
     private struct Cached {
@@ -143,7 +139,12 @@ actor AntigravityMonitor: LocalHarnessMonitor, AntigravityHubSource {
             watermark = nil
             for key in cache.keys { cache[key]?.metadata = .init(); cache[key]?.witnessed = nil; cache[key]?.gap = nil }
             hubGeneration = session
-            await hubObserver?(client, session)
+            if let session {
+                await quotaObserver? { home, credential, history, output in
+                    AntigravityQuotaCoordinator(client: client, session: session, home: home, credential: credential,
+                                                history: history, output: output)
+                }
+            } else { await quotaObserver?(nil) }
             guard current == generation else { return nil }
         }
         let summaryFiles = [store.summariesURL, sidecar(store.summariesURL)]

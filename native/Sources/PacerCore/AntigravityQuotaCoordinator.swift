@@ -7,12 +7,8 @@ package enum AntigravityQuotaGroup: String, CaseIterable, Sendable {
     static let options = HarnessQuotaGroups(ids: allCases.map(\.rawValue), defaultsKey: defaultsKey, labelPrefix: "antigravity.quota")
     package var name: String { L10n.text("antigravity.quota." + rawValue) }
 
-    /// A saved choice stays selected when its pool is unavailable. On first use
-    /// an account offering just one pool shows that pool.
     package static func selected(_ snapshot: QuotaSnapshot?, saved: String?) -> QuotaSnapshot? {
-        guard let snapshot else { return nil }
-        let id = options.selection(in: snapshot, saved: saved)
-        return snapshot.buckets.first { $0.id == id }.map { snapshot.showing($0) }
+        options.selected(snapshot, saved: saved)
     }
 }
 
@@ -82,10 +78,12 @@ package actor AntigravityQuotaCoordinator: LocalHarnessQuotaCoordinator {
         guard let scope else { return [] }
         return reading.buckets.flatMap { bucket -> [IslandNotice] in
             let baseline = policies[bucket.id] == nil
-            let notices = policies[bucket.id, default: AttentionPolicy()].quotaNotices(reading.showing(bucket), at: now())
+            let notices = policies[bucket.id, default: AttentionPolicy()].quotaNotices(reading.showing(bucket), at: now()) { window in
+                L10n.text(window.durationMinutes == 300 ? "antigravity.quota.low" : "antigravity.quota.week_low", bucket.name ?? bucket.id)
+            }
             return baseline ? [] : notices.map {
                 IslandNotice(id: "antigravity:" + scope + ":" + $0.id, kind: $0.kind,
-                    title: "Antigravity · " + $0.title, detail: (bucket.name ?? bucket.id) + " · " + $0.detail)
+                    title: "Antigravity · " + $0.title, detail: $0.detail)
             }
         }
     }

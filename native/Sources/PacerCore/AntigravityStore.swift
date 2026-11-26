@@ -1,8 +1,5 @@
 import Foundation
 import SQLite3
-#if canImport(Darwin)
-import Darwin
-#endif
 
 struct AntigravityStore {
     enum RunState {
@@ -55,14 +52,7 @@ struct AntigravityStore {
     init(home: URL, files: any PlatformFileSystem) {
         // Resolve the selected root once (including macOS /var → /private/var).
         // SQL opens below it still refuse symlinks in any component.
-        #if canImport(Darwin)
-        if let path = realpath(home.path, nil) {
-            self.home = URL(fileURLWithPath: String(cString: path), isDirectory: true)
-            free(path)
-        } else { self.home = home }
-        #else
-        self.home = home.resolvingSymlinksInPath()
-        #endif
+        self.home = files.resolvedDirectory(home)
         self.files = files
     }
 

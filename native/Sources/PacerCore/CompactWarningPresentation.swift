@@ -74,7 +74,10 @@ public enum CompactWarningPresentation {
                 let readings = alerts(provider: provider, snapshot: snapshots[provider], failed: failed.contains(provider), now: now)
                 guard !readings.isEmpty else { continue }
                 let help = readings.map { name, alert in
-                    switch alert {
+                    if let groups = provider.quotaGroups {
+                        return L10n.text(groups.labelPrefix + (alert == .exhausted ? ".empty" : ".low"), name)
+                    }
+                    return switch alert {
                     case .exhausted: L10n.text("quota.five_hour_exhausted", name)
                     case .low(let remaining): L10n.text("quota.five_hour_low", name, "\(Int(remaining.rounded()))%")
                     }

@@ -176,6 +176,31 @@ package struct AntigravityProgressPlugin {
         if storage.exists(rules), try !storage.names(in: rules).isSubset(of: ["AGENTS.md"]) { return true }
         return false
     }
+    /// Antigravity creates these only after loading the plugin. An unrelated
+    /// entry or an unsafe path leaves that entire cache directory alone.
+    private func removeGeneratedCaches() throws {
+        let dataHome = target.home.deletingLastPathComponent().appendingPathComponent("antigravity", isDirectory: true)
+        for (path, schemas) in [("plugin_data/" + Self.folder, false), ("mcp/" + Self.server, true)] {
+            let folder = dataHome.appendingPathComponent(path, isDirectory: true)
+            guard storage.isDirectory(folder), let names = try? storage.names(in: folder) else { continue }
+            if schemas && names == [CodexProgressEvidence.tool + ".json"] {
+                let file = folder.appendingPathComponent(CodexProgressEvidence.tool + ".json")
+                guard let data = try? bytes(file), Self.isProgressSchema(data) else { continue }
+                try storage.remove(file)
+            } else if !names.isEmpty { continue }
+            try storage.removeEmptyDirectory(folder)
+        }
+    }
+
+    private static func isProgressSchema(_ data: Data) -> Bool {
+        guard let tool = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              tool["name"] == nil || tool["name"] as? String == CodexProgressEvidence.tool else { return false }
+        let schema = (tool["inputSchema"] ?? tool["input_schema"] ?? tool["parameters"] ?? tool) as? [String: Any]
+        guard let properties = schema?["properties"] as? [String: Any],
+              Set(properties.keys) == ["percent"], let percent = properties["percent"] as? [String: Any] else { return false }
+        return (percent["type"] as? String)?.lowercased() == "integer"
+    }
+
     private func remove(_ old: Install, checkOnly: Bool) throws -> State? {
         try directory(plugin); try directory(rules)
         var conflict = try extras()
@@ -189,6 +214,7 @@ package struct AntigravityProgressPlugin {
                 if try storage.names(in: url).isEmpty { try storage.removeEmptyDirectory(url) }
             }
             if !conflict {
+                try removeGeneratedCaches()
                 try storage.remove(journal)
                 if try storage.names(in: state).isEmpty { try storage.removeEmptyDirectory(state) }
             }

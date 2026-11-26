@@ -30,6 +30,7 @@ struct TaskRowView: View {
     private var status: String { presentation.status }
     private var subagents: Int { presentation.subagents }
     private var subagentText: String {
+        if activity.provider.opensApplicationForTasks { return activity.provider.taskOpenLabel }
         if activity.claudeCloud != nil { return L10n.text("claude.cloud.workers_help", subagents) }
         return L10n.text(subagents == 1 ? "activity.subagent_running" : "activity.subagents_running", subagents)
     }

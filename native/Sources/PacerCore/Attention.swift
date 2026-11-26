@@ -8,7 +8,9 @@ public struct IslandNotice: Equatable, Sendable, Identifiable {
     public let detail: String
     /// The system notification category, for notices that offer actions.
     public let category: String?
-    public init(id: String, kind: Kind, title: String, detail: String, category: String? = nil) {
+    package let taskProvider: AgentProvider?
+    public init(id: String, kind: Kind, title: String, detail: String, category: String? = nil, taskProvider: AgentProvider? = nil) {
+        self.taskProvider = taskProvider
         self.id = id; self.kind = kind; self.title = title; self.detail = detail; self.category = category
     }
 }
@@ -44,7 +46,7 @@ public struct AttentionPolicy: Sendable {
         }.map { request in
             IslandNotice(id: "request:" + request.id, kind: .waitingForInput,
                 title: request.kind.label,
-                detail: request.sourceName ?? L10n.text("activity.local_task"))
+                detail: request.sourceName ?? L10n.text("activity.local_task"), taskProvider: request.provider)
         }
     }
 
@@ -57,7 +59,8 @@ public struct AttentionPolicy: Sendable {
         }
     }
 
-    public mutating func quotaNotices(_ snapshot: QuotaSnapshot, at now: Date, threshold: Double = 15) -> [IslandNotice] {
+    public mutating func quotaNotices(_ snapshot: QuotaSnapshot, at now: Date, threshold: Double = 15,
+                                      detail: ((QuotaWindow) -> String)? = nil) -> [IslandNotice] {
         guard !snapshot.isStale(at: now) else { return [] }
         if quotaScope != snapshot.accountScope { lowWindows.removeAll(); quotaScope = snapshot.accountScope }
         var notices: [IslandNotice] = []
@@ -67,7 +70,7 @@ public struct AttentionPolicy: Sendable {
             if remaining > threshold + 5 { lowWindows.remove(key) }
             if remaining <= threshold, lowWindows.insert(key).inserted {
                 notices.append(IslandNotice(id: key, kind: .lowQuota, title: L10n.text("notice.low_quota"),
-                    detail: L10n.text("notice.quota_remaining", window.label, Int(remaining.rounded()))))
+                    detail: detail?(window) ?? L10n.text("notice.quota_remaining", window.label, Int(remaining.rounded()))))
             }
         }
         let activeIDs = Set(snapshot.windows.compactMap { window -> String? in
@@ -108,7 +111,7 @@ public struct AttentionPolicy: Sendable {
             default: return nil
             }
             return IslandNotice(id: "\(activity.id):\(activity.turnID ?? ""):\(kind.rawValue):\(changed.timeIntervalSince1970)",
-                kind: kind, title: activity.turnFailed ? L10n.text("activity.failed") : kind == .completed ? activity.endingLabel : activity.phase.label, detail: activity.project)
+                kind: kind, title: activity.turnFailed ? L10n.text("activity.failed") : kind == .completed ? activity.endingLabel : activity.phase.label, detail: activity.project, taskProvider: activity.provider)
         }
     }
 }

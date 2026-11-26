@@ -143,6 +143,52 @@ public enum DemoScenario {
         return state.activities[0]
     }
 
+    package static func antigravityTasks(at now: Date) -> HarnessActivity {
+        let start = now.addingTimeInterval(-65)
+        func task(_ index: Int, title: String, state: SessionActivity.ObservedTurnState) -> SessionActivity {
+            let session = String(format: "00000000-0000-4000-8000-%012d", 200 + index)
+            var value = SessionActivity.observedSession(provider: .antigravity, session: session, stage: .starting, at: start)
+            value.applyObservedTurn(state, id: "demo-turn", started: start, at: now, live: true, model: "Gemini", effort: "high")
+            value.applyObservedTitle(L10n.text(title), project: nil)
+            return value
+        }
+        let parent = task(1, title: "demo.optimize", state: .working(.tool))
+        var child = task(2, title: "demo.antigravity_reviewer", state: .working(.thinking))
+        child.updateParent(parent.threadID)
+        child.subagentDisplay = SubagentDisplay(role: L10n.text("demo.antigravity_reviewer"), typeName: nil)
+        let waiting = task(3, title: "demo.review_notes", state: .waiting(.approval))
+        var ended = task(4, title: "demo.cloud_changelog", state: .finished)
+        let response = ResponsePerformance(responseID: "demo-response", turnID: "demo-turn", outputTokens: 10000,
+            startedAt: start, completedAt: start.addingTimeInterval(50), source: .requestUsage)
+        SessionPerformanceUpdate(id: ended.id, turnID: "demo-turn", response: response, firstTokenLatency: 3,
+                                 firstTokenReportedAt: start.addingTimeInterval(3))?.apply(to: &ended)
+        let approval = PendingAttentionRequest(id: "demo-progress-approval", threadID: waiting.threadID!, sourceHostID: nil,
+            sourceName: nil, kind: .approval, detectedAt: now, provider: .antigravity)
+        var result = HarnessActivity(activities: [parent, child, waiting, ended], requests: [approval], status: .ready)
+        result.requestsProgressApproval = true
+        return result
+    }
+
+    package static func antigravityQuota(at now: Date) -> LocalHarnessQuotaState {
+        var state = LocalHarnessQuotaState()
+        for (hoursAgo, used) in [(36, 6.0), (12, 18.0), (0, 34.0)] {
+            let captured = now.addingTimeInterval(-Double(hoursAgo) * 3600)
+            let buckets = AntigravityQuotaGroup.allCases.map { group in
+                let windows = [("5h", 300), ("weekly", 10080)].map { period, minutes in
+                    QuotaWindow(id: "antigravity:" + group.rawValue + "-" + period,
+                        usedPercent: group == .gemini ? (minutes == 300 ? 19 : used) : 0,
+                        durationMinutes: minutes, resetsAt: group == .gemini
+                            ? (minutes == 300 ? captured.addingTimeInterval(7200) : now.addingTimeInterval(2 * 86400)) : nil)
+                }
+                return QuotaBucket(id: group.rawValue, name: group.name, plan: nil, windows: windows, credits: nil)
+            }
+            let reading = QuotaSnapshot(buckets: buckets, capturedAt: captured, accountScope: "demo", resetCredits: nil)
+            state.history.record(reading)
+            state.snapshot = reading
+        }
+        return state
+    }
+
     static let demoWorkBuddySession = "00000000-0000-4000-8000-000000000006"
 
     /// A WorkBuddy task with its model, rate, credits and reported progress,

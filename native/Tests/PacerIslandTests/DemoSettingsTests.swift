@@ -19,6 +19,23 @@ final class DemoSettingsTests: XCTestCase {
         return defaults
     }
 
+    func testAntigravityDemoShowsItsFamilyApprovalFinalRateAndSeparateQuotaPools() throws {
+        let defaults = try defaults()
+        let model = IslandModel(demo: true, demoClock: { self.now }, demoArguments: ["--demo-antigravity"], defaults: defaults)
+        let rows = model.activities.filter { $0.provider == .antigravity }
+        let child = try XCTUnwrap(rows.first { $0.parentThreadID != nil })
+        XCTAssertTrue(rows.contains { $0.phase == .running && $0.threadID == child.parentThreadID })
+        XCTAssertNotNil(child.subagentDisplay?.title)
+        let ended = try XCTUnwrap(rows.first { $0.phase == .completed })
+        XCTAssertEqual(ended.displayedOutputEstimate(at: now)?.value, 200)
+        XCTAssertEqual(model.progressGuide(.antigravity)?.stage, .allowTool)
+        XCTAssertEqual(rows.filter { $0.phase == .waitingForInput }.count, 1)
+        let snapshot = try XCTUnwrap(model.fullQuota(.antigravity))
+        XCTAssertEqual(snapshot.buckets.map(\.id), ["gemini", "3p"])
+        XCTAssertEqual(snapshot.buckets.last?.windows.map(\.remainingPercent), [100, 100])
+        XCTAssertNil(snapshot.buckets.last?.windows.first?.resetsAt)
+    }
+
     func testSettingsPreserveDemoTasksStageRatesAndRequests() async throws {
         let defaults = try defaults(), clock = now
         let model = IslandModel(demo: true, demoClock: { clock }, demoArguments: arguments, defaults: defaults)

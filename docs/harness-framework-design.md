@@ -1,6 +1,6 @@
 # Harness modules
 
-A Harness is the app that runs a task and keeps its conversation. Codex, Claude Code, DeepSeek Harness, WorkBuddy and WorkBuddy AI are modules of one framework: the same registry, module modes, activity lifecycle and settings pages on both platforms. A WorkBuddy task stays a WorkBuddy task even when it runs a DeepSeek model.
+A Harness is the app that runs a task and keeps its conversation. Codex, Claude Code, DeepSeek Harness, WorkBuddy, WorkBuddy AI and Antigravity are modules of one framework: the same registry, module modes, activity lifecycle and settings pages on both platforms. A WorkBuddy task stays a WorkBuddy task even when it runs a DeepSeek model.
 
 ## The registry
 
@@ -12,7 +12,7 @@ A Harness is the app that runs a task and keeps its conversation. Codex, Claude 
 | `defaultMode` | `automatic` for every module: on when found on this computer. |
 | `brand` | Dark and light colors, plus the accent lift and light-glass luminance that keep it apart under a single accent color. |
 | `website` | Where the module library sends people who don't have the app. |
-| `balance` | `quotaWindows` (Codex, Claude), `wallet` (DeepSeek) or `accountCredits` (WorkBuddy). Code asks for a kind, never for a list of IDs. |
+| `balance` | `quotaWindows` (Codex, Claude, Antigravity), `wallet` (DeepSeek) or `accountCredits` (WorkBuddy). Code asks for a kind, never for a list of IDs. |
 | `hasTaskProgress`, `hasRateDisplay`, `reportsSessionUsage`, `progressConnector` | Capabilities. |
 | `accountCredits` | Sign-in sites, the bill request and the summary script, for account credits. |
 
@@ -28,7 +28,7 @@ Strings follow key families by module ID, so a new module adds strings without c
 - **Module Library page:** a tile per module, with its icon, name, one-line summary and state (On, Off, Not found). Clicking a tile opens the module's page; the round button turns it on or off. A module that isn't found shows a **Get** link to its website, and can still be turned on, for example when its data is in a custom folder.
 - **Onboarding:** prominent modules as cards; the others under a folded “N more not found on this computer”.
 
-Local modules count as installed when their app is found, or when their data file exists in the default or a chosen folder.
+Local modules count as installed when the app or its data file is found in a supported location. A definition can use the data directory itself as evidence, as Antigravity does before its first conversation.
 
 ## Activity
 
@@ -58,9 +58,19 @@ For a task source that writes local files or a database:
 2. Register it in `HarnessRegistry.localHarnesses` and add `static let <id>` to `AgentProvider`.
 3. Strings for the key families above, in `en` and `zh-Hans`; then run `scripts/windows/build-localization.py` and `build-shell-resources.py`.
 4. Optional artwork: `provider-<id>.png` and `provider-<id>-outline.png` in Core resources. Without it, the symbol is drawn.
-5. Optional: account credits (`accountCredits` and a summary script), a progress connector (`progressConfigFile`, `progressRuleDirectory`, `progressConnection`), a conversation scheme for navigation.
+5. Optional: account credits (`accountCredits` and a summary script), a progress connector (`progressConfigFile`, `progressRuleDirectory`, `progressConnection`), a conversation scheme for navigation. For an owned progress plugin or quota from a verified local service, see [Antigravity on Mac](#antigravity-on-mac).
 
 Colors, icons, sidebar rows, the library, onboarding, Help, the collapsed bar, notifications and History follow from the descriptor on both platforms. Panel blocks are still an enumerated list in `ExpandedPanelLayout`; a module with its own panel block adds a case there.
+
+## Antigravity on Mac
+
+The local definition registers the app, its data folder, the Gemini and Claude/GPT quota pools, and app-only navigation. The task reader joins local SQLite and transcript metadata to typed steps from the running app. A model running inside Antigravity belongs to the Antigravity module.
+
+- **Local host port.** `LocalHarnessIO` can supply an `AntigravityLocalHost` to verify the process and listener and send a bounded loopback request. Core owns the request allowlist, source generation and revocation.
+- **Local quota coordinator.** A monitor implementing `LocalHarnessQuotaSource` publishes a coordinator factory when it verifies a session and clears it on loss. The host supplies the history store and installation credential, refreshes through `LocalHarnessQuotaCoordinator`, and rejects updates from a retired owner. A descriptor’s `quotaGroups` selects the island bucket. History and quota warnings receive the full snapshot.
+- **Owned progress plugin.** A definition with `installsProgressPlugin` selects the plugin installer in `progressTarget`. Installation and cleanup use the fixed customization profile, independent of the chosen task folder. The guide can open the app and copy its server name. A completed call to the owned tool attributes progress to the calling task.
+
+The Mac host is enabled. Windows host work and acceptance are tracked in [Windows engine development](windows-engine.md#antigravity).
 
 ## WorkBuddy and WorkBuddy AI
 

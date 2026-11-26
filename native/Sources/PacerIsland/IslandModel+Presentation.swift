@@ -114,7 +114,9 @@ extension IslandModel {
             metric: defaults.string(forKey: "compactMetric").flatMap(CompactBarPresentation.Metric.init(rawValue:)) ?? .remaining,
             codexWindow: QuotaWindowSelection(saved: defaults.string(forKey: "quotaWindowID"), snapshot: providerQuota(.codex)).rawValue,
             claudeWindow: QuotaWindowSelection(saved: defaults.string(forKey: "claudeQuotaWindowID"), snapshot: providerQuota(.claude)).rawValue,
-            antigravityWindow: defaults.string(forKey: QuotaWindowSelection.defaultsKey(for: .antigravity)),
+            moduleWindows: Dictionary(uniqueKeysWithValues: localHarnessDescriptors.filter(\.hasQuotaWindows).compactMap { module in
+                defaults.string(forKey: QuotaWindowSelection.defaultsKey(for: module.id)).map { (module.id.rawValue, $0) }
+            }),
             rings: QuotaRingSlot.allCases.map { slot in
                 guard let saved = defaults.string(forKey: slot.defaultsKey) else { return .automatic }
                 // A present empty or unknown preference previously meant no ring.

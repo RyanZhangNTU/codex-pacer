@@ -138,8 +138,8 @@ final class ExpandedPanelDisplayTests: XCTestCase {
         let both = try await subagentWidth("", type: wideTag, codexTask: String(repeating: "w", count: 48))
         XCTAssertEqual(both - oneTag, 120 + 4, accuracy: 1, "Each truncated tag and its gap add to the width")
 
-        let withButtons = try await measure(TaskPagerView(model: model, actions: true).header)
-        let alone = try await measure(TaskPagerView(model: model, actions: false).header)
+        let withButtons = try await measure(TaskPagerView(model: model, actions: true).header(on: 0))
+        let alone = try await measure(TaskPagerView(model: model, actions: false).header(on: 0))
         let controls = NSHostingView(rootView: IslandPanelControls(model: model).fixedSize()).fittingSize.width
         XCTAssertGreaterThanOrEqual(withButtons - alone, controls,
             "A task list below the first block keeps only its page controls")

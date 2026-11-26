@@ -37,7 +37,7 @@ final class WidthMeasurementTests: XCTestCase {
             XCTAssertEqual(model.visibleActivities.count, 4)
             for language in AppLanguage.allCases {
                 let capture = WidthCapture()
-                let header = TaskPagerView(model: model, language: language).header
+                let header = TaskPagerView(model: model, language: language).header(on: 0)
                     .onPreferenceChange(ExpandedContentIdealWidth.self) { width in
                         DispatchQueue.main.async { capture.value = width }
                     }

@@ -67,7 +67,8 @@ final class LocalizationTests: XCTestCase {
             let id = descriptor.id.rawValue
             var keys = ["welcome.module.\(id)_missing", "\(id).progress_ring_help", "main.search.\(id)", "module.\(id).summary",
                         "panel.block.\(id)", "panel.block_detail.\(id)"]
-            keys += ["credits", "cost", "progress", "apps"].flatMap { ["help.\(id).\($0).title", "help.\(id).\($0).detail"] }
+            let topics = descriptor.quotaGroups == nil ? ["credits", "cost", "progress", "apps"] : ["quota", "tasks", "speed", "progress", "apps"]
+            keys += topics.flatMap { ["help.\(id).\($0).title", "help.\(id).\($0).detail"] }
             if descriptor.reportsAccountCredits {
                 keys += ["main.history.\(id)_week", "main.history.\(id)_empty"]
                 keys += ["title", "prompt", "prompt_detail", "signed_in", "signed_in_detail"].map { "\(id).login.\($0)" }

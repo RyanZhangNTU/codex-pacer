@@ -19,7 +19,7 @@ The first time you open Codex Pacer, a short guide walks you through it:
 
 1. What each part of the collapsed bar means.
 2. **Island**, which sits at the top center of the screen around the notch, or **Free Move**, which you drag anywhere.
-3. Which services to follow: Codex, Claude, DeepSeek and WorkBuddy (and WorkBuddy AI, the international version, if you have it). Pacer turns on the ones it finds on this computer; the others wait under **more not found on this computer**.
+3. Which services to follow: Codex, Claude, DeepSeek, Antigravity on Mac, and WorkBuddy (and WorkBuddy AI, the international version, if you have it). Pacer turns on the ones it finds on this computer; the others wait under **more not found on this computer**.
 4. Progress rings, notifications and opening at login.
 
 You can open the guide again from **Help & Updates**. After each update, a short **What's New** note shows the highlights once.
@@ -40,7 +40,7 @@ Codex quota needs nothing extra.
 | --- | --- |
 | **Task badge** | How many tasks are running. Its ring shows which services are working, or their average progress. Amber means a task needs your reply or approval; a check means one just finished. |
 | **Speed** | The combined output speed of your running tasks, in tokens per second. Shows `000` when no rate is available. |
-| **Quota** | Quota left for Codex and Claude, your DeepSeek balance or budget, or your WorkBuddy credits. |
+| **Quota** | Quota left for Codex, Claude and Antigravity, your DeepSeek balance or budget, or your WorkBuddy credits. |
 | **Warnings** | Appear only when something needs attention, such as low quota, low credits or a disconnected SSH host. |
 
 **Hover** to expand the island, **move away** to collapse it. Click the top to keep it open, and press Esc to close it. In **Settings → Expanded Panel**, choose **On click** to open the island with one click and close it with another.
@@ -60,7 +60,7 @@ All your tasks share one list. Tasks that need you come first, then running task
 - **A task whose status is unconfirmed** (Pacer lost track of it, for example because the app running it quit or crashed) clears the same way: open it, or use **Mark All as Read**. It comes back if the task starts working again.
 - **Each subagent has a dot.** The provider’s color means running, the attention color means it’s waiting for you, red means it failed, and grey means it ended. A one-line task shows up to five dots and a two-line task shows eight. While the task works, the two-line view lists up to three subagents, showing active ones first and then the most recently ended. The rest share a summary line. Only working subagents contribute to the task’s speed.
 - Claude subagents show their description, with a tag for a specialized agent’s type. Codex subagents show their task name as a tag, as Codex lists them, followed by what they are doing now; a role other than the default adds a second tag. Each line shows live speed, time, and the model with its reasoning level when available. Once it ends, the outcome replaces the speed. Codex for Claude runs carry a task, review or resume tag. On Mac, the panel widens first. If space is still tight, the title shortens, then the model and time drop away in that order. The speed stays visible.
-- **App buttons** in the header open Codex, Claude, DeepSeek Harness or WorkBuddy directly. Buttons you take out of the header wait in the **⋯** menu, beside **Refresh** and **Quit**.
+- **App buttons** in the header open Codex, Claude, DeepSeek Harness, WorkBuddy or Antigravity directly. Buttons you take out of the header wait in the **⋯** menu, beside **Refresh** and **Quit**.
 - With more tasks than fit on a page (three by default), use the arrows to page through them.
 
 ### Arranging the panel
@@ -85,7 +85,10 @@ Codex, Claude Code, DeepSeek Harness, WorkBuddy and Antigravity each report how 
 
 Estimates are the agent's own guess, so a ring can move back. Rings are on by default; turn them off for each service with **Progress Ring** on its page in the main window. Start a new session after turning a ring on.
 
-On Mac, turn on the Antigravity module and its **Progress Ring**. Pacer adds its plugin automatically. Start a new Antigravity conversation with a task that uses tools. When asked, always allow Pacer’s progress tool, or add `mcp(codex-pacer_pacer_progress/*)` in Antigravity **Settings → Permissions → MCP tools**. The ring shows the estimate on the conversation that reported it. Each subagent reports its own estimate.
+On the Antigravity page on Mac, turn on **Progress Ring** and start a new conversation in Antigravity.
+If the tool is missing, start another conversation.
+At the first permission prompt, choose **Yes, always allow**, or allow the server `codex-pacer_pacer_progress` in Antigravity’s **Settings → Permissions → MCP tools**.
+You can copy the server name from Pacer’s guide.
 
 Codex tasks on SSH hosts, and in WSL on Windows, report too: Pacer sets reporting up on each connected host that runs Codex, including hosts added directly in Codex Desktop. Tasks that were already running pick it up once Codex reconnects to the host.
 
@@ -103,6 +106,8 @@ Turn on **Dot Tasks** on the Codex page to see Dot Durable tasks. It is off by d
 
 Spend made elsewhere on your account, such as web searches or another device, is included in today's total and budgets.
 
+**Antigravity on Mac.** Gemini has its own quota, and Claude and GPT share another pool. On the Antigravity settings page, choose which pool supplies the island’s short-term and weekly readings. An unused pool can show its full quota with no reset date. History shows both pools and plots weekly usage when a reset date is available.
+
 **WorkBuddy.** WorkBuddy uses account credits. Once you sign in, its ring shows what is left of this month's credits, which refresh every plan cycle. Above the figure, the ring counts down to the refresh, or shows extra credits about to expire. Rewards and top-ups never refresh, so the ring's gap shows them as an amount, such as **+1,300**. When you have none, it says **This month**. The figure in the middle can show this month's share, this month's credits or everything available; choose it on the **Expanded Panel** page. The bar shows everything available by default. Each WorkBuddy task shows the credits its turn used.
 
 ## Services
@@ -116,6 +121,8 @@ Spend made elsewhere on your account, such as web searches or another device, is
 The Collaboration page lists the pairs, each with its switch; Claude calls Codex is the first. Its basic settings choose when Claude may call Codex, the model, reasoning effort and fast mode (or follow Codex's own), and when the conversations Pacer leaves in Codex are cleared. The advanced settings set Codex's file access, whether it works in the project or a separate worktree, standing instructions added to every request, Codex's memories, how many runs go at once and a quota floor below which Claude won't start new runs.
 
 **DeepSeek Harness.** Pacer follows local Harness sessions, their speed and cost.
+
+**Antigravity on Mac.** Each task shows its stage, time to first output, and the roles and states of its subagents. The island tells you when a task is waiting for a child, an answer or an approval. An ended task keeps its last measured response speed. Click a task or its notification to open Antigravity and select the conversation there. Opening the app leaves ended tasks unread.
 
 **WorkBuddy.** Pacer follows WorkBuddy's tasks on this computer: running work, questions waiting for you and finished turns. Click a task to return to its conversation. To see your credits, click **Sign In** on the WorkBuddy page; the window closes by itself once you're signed in. The page lists this month's credits, extra credits and the total, then what each kind has left and when it refreshes or expires. The **⋯** menu next to the account refreshes, switches account or signs out. History shows the credits you used each day of the last week. WorkBuddy AI, the international version, works the same way on its own page and account.
 
@@ -145,7 +152,7 @@ Click the gear in the expanded island to open the main window.
 | --- | --- |
 | **Overview** | Anything that needs you, each service at a glance and the running tasks. |
 | **History** | Each service's quota over the current period, and the last 7 days of DeepSeek spend and WorkBuddy credits. |
-| **Codex, Claude, DeepSeek, WorkBuddy** | Turn each service on or off. Every service page starts with the same status: **Task monitoring** (whether Pacer reads its tasks on this computer), **Account** and **Usage**; then what it shows, its usage settings if it has any, and custom folders. Only services found on this computer, or turned on, are listed. |
+| **Codex, Claude, DeepSeek, WorkBuddy, Antigravity** | Turn each service on or off. Every service page starts with the same status: **Task monitoring** (whether Pacer reads its tasks on this computer), **Account** and **Usage**; then what it shows, its usage settings if it has any, and custom folders. Only services found on this computer, or turned on, are listed. |
 | **Module Library** | Every service Pacer can follow. Those found on this computer come first; the rest are folded away. Turn any of them on or off, or follow the link to get one. |
 | **Collaboration** | Pairs like Claude calls Codex: the switch, and how Codex runs for Claude. |
 | **Remote** | Tasks on other machines: SSH hosts and, on Windows, WSL. |
