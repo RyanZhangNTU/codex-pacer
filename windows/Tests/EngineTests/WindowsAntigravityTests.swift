@@ -38,7 +38,7 @@ final class WindowsAntigravityTests: XCTestCase {
         defer { otherOwner.deallocate() }
         var length: DWORD = 68
         XCTAssertTrue(CreateWellKnownSid(WinWorldSid, nil, otherOwner, &length))
-        XCTAssertThrowsError(try WindowsLocalProfileOwner.validate(otherOwner, exactUser: true))
+        XCTAssertThrowsError(try WindowsLocalProfileOwner.validate(otherOwner))
         let link = root.appendingPathComponent("second-link")
         XCTAssertTrue(CreateHardLinkW(WindowsFiles.wide(link), WindowsFiles.wide(file), nil))
         XCTAssertNil(host.serverIdentity(hub: file, pid: pid, httpPort: port))

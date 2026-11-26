@@ -24,7 +24,10 @@ struct WindowsAntigravityLocalHost: AntigravityLocalHost {
         else { return false }
         defer { if let descriptor { _ = LocalFree(descriptor) } }
         guard let owner else { return false }
-        return (try? WindowsLocalProfileOwner.validate(owner, exactUser: true)) != nil
+        // As for other profile files: the current user, or Administrators only
+        // while Pacer itself runs elevated, which is how an elevated process
+        // owns the files it creates.
+        return (try? WindowsLocalProfileOwner.validate(owner)) != nil
     }
 
     func serverIdentity(hub: URL, pid: Int32, httpPort: UInt16) -> String? {
