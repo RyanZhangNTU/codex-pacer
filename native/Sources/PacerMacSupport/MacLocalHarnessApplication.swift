@@ -83,16 +83,17 @@ import Security
         // An edition whose bundle ID is not known yet is trusted by its name,
         // its own URL scheme and its publisher's signature alone.
         let pinned = !definition.macBundleIdentifiers.isEmpty
-        guard let organization = definition.macSigningOrganization, let scheme = definition.conversationScheme,
-              let bundle = Bundle(url: url), let identifier = bundle.bundleIdentifier,
-              !pinned || definition.macBundleIdentifiers.contains(identifier),
-              let types = bundle.object(forInfoDictionaryKey: "CFBundleURLTypes") as? [[String: Any]],
-              types.contains(where: { ($0["CFBundleURLSchemes"] as? [String])?.contains(scheme) == true }) else { return false }
+        guard let bundle = Bundle(url: url), let identifier = bundle.bundleIdentifier,
+              !pinned || definition.macBundleIdentifiers.contains(identifier) else { return false }
+        if let scheme = definition.conversationScheme {
+            guard let types = bundle.object(forInfoDictionaryKey: "CFBundleURLTypes") as? [[String: Any]],
+                  types.contains(where: { ($0["CFBundleURLSchemes"] as? [String])?.contains(scheme) == true }) else { return false }
+        } else if !pinned { return false }
         var code: SecStaticCode?, requirement: SecRequirement?
-        // The publisher's Team ID is steadier than its organization name; the
-        // name stays the fallback for an app without a known team.
-        let publisher = definition.macTeamIdentifier.map { "certificate leaf[subject.OU] = \"" + $0 + "\"" }
-            ?? "certificate leaf[subject.O] = \"" + organization + "\""
+        let publisher: String
+        if let team = definition.macTeamIdentifier { publisher = "certificate leaf[subject.OU] = \"" + team + "\"" }
+        else if let organization = definition.macSigningOrganization { publisher = "certificate leaf[subject.O] = \"" + organization + "\"" }
+        else { return false }
         let expression = (pinned ? "identifier \"" + identifier + "\" and " : "") + "anchor apple generic and " + publisher
         guard SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess, let code,
               SecRequirementCreateWithString(expression as CFString, [], &requirement) == errSecSuccess, let requirement else { return false }

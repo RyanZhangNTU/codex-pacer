@@ -62,7 +62,7 @@ public struct QuotaCycleHistory: Codable, Equatable, Sendable {
         }
     }
 
-    public mutating func record(_ snapshot: QuotaSnapshot) {
+    public mutating func record(_ snapshot: QuotaSnapshot, preservingMissingSeries: Bool = false) {
         guard let scope = snapshot.accountScope else { return }
         if scope != accountScope { cycles.removeAll(); lastCapturedAt = nil; accountScope = scope }
         guard snapshot.capturedAt >= (lastCapturedAt ?? .distantPast) else { return }
@@ -73,7 +73,7 @@ public struct QuotaCycleHistory: Codable, Equatable, Sendable {
             bucket.windows.filter { $0.durationMinutes == 10080 }.map { (bucket, $0) }
         }
         let ids = Set(weekly.map { $0.1.id })
-        cycles.removeAll { !ids.contains($0.id) || $0.resetsAt <= oldest }
+        cycles.removeAll { (!preservingMissingSeries && !ids.contains($0.id)) || $0.resetsAt <= oldest }
         for (bucket, window) in weekly {
             guard let reset = window.resetsAt, reset > snapshot.capturedAt,
                   let remaining = window.remainingPercent else { continue }

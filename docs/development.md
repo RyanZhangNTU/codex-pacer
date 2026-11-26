@@ -94,6 +94,12 @@ Both hosts load the provider app icons from the same `PacerCore/Resources/provid
 
 The expanded island's app buttons and their More menu entries use the transparent `provider-*-outline.png` files. ImageGen generated these from the public app icons. The strokes follow each control's foreground color.
 
+### Antigravity quota and response rates
+
+The Mac quota coordinator shares the activity monitor’s verified local hub. It checks the account before and after reading quota. Only the account check reads the email, which Pacer immediately hashes with HMAC-SHA256 using its installation key and a domain unique to Antigravity quota. A changed account discards the in-flight reading. Without an identity, Pacer shows only the current percentages. Both weekly curves use a separate Antigravity history directory. The island uses the selected model group for both periods, while warnings and History use all reported groups.
+
+The catalog reader projects model IDs, display names and supported effort suffixes from the verified session. A settled response’s rate includes thinking tokens and uses first-token latency plus streaming time. Pacer requires at least one second and checks the total against the owned planner’s creation and generation-end timestamps. An ended task and its subagents keep their last measured responses.
+
 ### Model and reasoning effort
 
 Rows show the executing turn's model and reasoning effort. Codex reads them from rollout `turn_context` and Desktop's `latestModel`/`latestReasoningEffort`; app-server thread settings describe configuration for a later turn and never replace them. Claude reads `message.model` with `perTurnEffort` (falling back to `effort`); `<synthetic>` never names a model. A model reported without an effort keeps the known effort only while the model is unchanged; an explicit null clears it. Efforts must match `^[a-z][a-z0-9_-]*` within 32 bytes. `ModelDisplay` shortens known Claude and GPT identifiers (`claude-opus-5-5` becomes Opus 5.5) and keeps the raw identifier in the tooltip.

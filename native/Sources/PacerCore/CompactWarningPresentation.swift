@@ -5,11 +5,24 @@ import Foundation
 public enum CompactWarningPresentation {
     public enum FiveHourAlert: Equatable, Sendable { case low(Double), exhausted }
     public static func fiveHourAlert(provider: AgentProvider, snapshot: QuotaSnapshot?, failed: Bool, now: Date) -> FiveHourAlert? {
-        guard !failed, let snapshot, !snapshot.isStale(at: now),
-              let window = QuotaDashboardPresentation.bucket(provider: provider, snapshot: snapshot)?.windows.first(where: { $0.durationMinutes == 300 }),
-              window.resetsAt.map({ $0 > now }) ?? true,
-              let remaining = window.remainingPercent, remaining.isFinite else { return nil }
-        return remaining <= 0 ? .exhausted : remaining < 20 ? .low(remaining) : nil
+        alerts(provider: provider, snapshot: snapshot, failed: failed, now: now).map(\.1).min { a, b in
+            switch (a, b) {
+            case (.exhausted, .low): true
+            case (.low(let left), .low(let right)): left < right
+            default: false
+            }
+        }
+    }
+    private static func alerts(provider: AgentProvider, snapshot: QuotaSnapshot?, failed: Bool, now: Date) -> [(String, FiveHourAlert)] {
+        guard !failed, let snapshot, !snapshot.isStale(at: now) else { return [] }
+        let buckets = provider == .antigravity ? snapshot.buckets : [QuotaDashboardPresentation.bucket(provider: provider, snapshot: snapshot)].compactMap { $0 }
+        return buckets.compactMap { bucket in
+            guard let window = bucket.windows.first(where: { $0.durationMinutes == 300 }),
+                  window.resetsAt.map({ $0 > now }) ?? true, let remaining = window.remainingPercent,
+                  remaining < 20 else { return nil }
+            let name = provider == .antigravity ? [provider.displayName, bucket.name].compactMap { $0 }.joined(separator: " · ") : provider.displayName
+            return (name, remaining <= 0 ? .exhausted : .low(remaining))
+        }
     }
     public struct Item: Codable, Equatable, Sendable {
         public enum Kind: String, Codable, CaseIterable, Sendable {
@@ -58,14 +71,16 @@ public enum CompactWarningPresentation {
         var result: [Item] = []
         if warnings.contains(.fiveHour) {
             for provider in ordered {
-                guard let alert = fiveHourAlert(provider: provider, snapshot: snapshots[provider], failed: failed.contains(provider), now: now) else { continue }
-                let exhausted = alert == .exhausted
-                let help: String
-                switch alert {
-                case .exhausted: help = L10n.text("quota.five_hour_exhausted", provider.displayName)
-                case .low(let remaining): help = L10n.text("quota.five_hour_low", provider.displayName, "\(Int(remaining.rounded()))%")
-                }
-                result.append(.init(kind: .fiveHour, provider: provider.rawValue, solid: exhausted, label: "5h", symbol: nil, help: help))
+                let readings = alerts(provider: provider, snapshot: snapshots[provider], failed: failed.contains(provider), now: now)
+                guard !readings.isEmpty else { continue }
+                let help = readings.map { name, alert in
+                    switch alert {
+                    case .exhausted: L10n.text("quota.five_hour_exhausted", name)
+                    case .low(let remaining): L10n.text("quota.five_hour_low", name, "\(Int(remaining.rounded()))%")
+                    }
+                }.joined(separator: "\n")
+                result.append(.init(kind: .fiveHour, provider: provider.rawValue, solid: readings.contains { $0.1 == .exhausted },
+                                    label: "5h", symbol: nil, help: help))
             }
         }
         if warnings.contains(.ssh), sshIssue {
@@ -80,6 +95,9 @@ public enum CompactWarningPresentation {
         if warnings.contains(.quotaDelay) {
             let delayed = ordered.filter { provider in
                 guard let snapshot = snapshots[provider] else { return failed.contains(provider) }
+                if provider == .antigravity {
+                    return failed.contains(provider) || snapshot.isStale(at: now) || snapshot.windows.contains { $0.resetsAt.map { $0 <= now } == true }
+                }
                 let own = windows(provider)
                 let selected = (selections[provider] == .fiveHour ? own.first { $0.durationMinutes == 300 } : nil)
                     ?? own.first { $0.durationMinutes == 10080 } ?? snapshot.windows.first { $0.durationMinutes == 10080 } ?? snapshot.limitingWindow
@@ -89,7 +107,12 @@ public enum CompactWarningPresentation {
                 // A failed read needs the user; a late update only needs noticing.
                 result.append(.init(kind: .quotaDelay, provider: nil, solid: delayed.contains { failed.contains($0) },
                     label: L10n.text("warning.label.quotaDelay"), symbol: nil,
-                    help: delayed.map(\.displayName).joined(separator: " · ") + " · " + L10n.text("warning.quotaDelay"), affectedProviders: delayed.map(\.rawValue)))
+                    help: delayed.flatMap { provider -> [String] in
+                        guard provider == .antigravity, let snapshot = snapshots[provider] else { return [provider.displayName] }
+                        return snapshot.buckets.filter { bucket in
+                            failed.contains(provider) || snapshot.isStale(at: now) || bucket.windows.contains { $0.resetsAt.map { $0 <= now } == true }
+                        }.map { provider.displayName + " · " + ($0.name ?? $0.id) }
+                    }.joined(separator: " · ") + " · " + L10n.text("warning.quotaDelay"), affectedProviders: delayed.map(\.rawValue)))
             }
         }
         if warnings.contains(.lowCredits) {

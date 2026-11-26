@@ -147,8 +147,10 @@ package struct LocalHarnessIO: Sendable {
     let events: any ActivityFileEvents
     let now: @Sendable () -> Date
 
-    package init(files: any PlatformFileSystem, events: any ActivityFileEvents, now: @escaping @Sendable () -> Date) {
-        self.files = files; self.events = events; self.now = now
+    let antigravity: (any AntigravityLocalHost)?
+
+    package init(files: any PlatformFileSystem, events: any ActivityFileEvents, antigravity: (any AntigravityLocalHost)? = nil, now: @escaping @Sendable () -> Date) {
+        self.files = files; self.events = events; self.now = now; self.antigravity = antigravity
     }
 }
 
@@ -227,7 +229,7 @@ package struct LocalHarnessMonitors: Sendable {
         let id = definition.descriptor.id
         if let monitor = monitors[id] { return monitor }
         let events = HarnessWatchBudget.Events(provider: id, underlying: io.events, budget: budget)
-        let monitor = definition.makeMonitor(.init(files: io.files, events: events, now: io.now))
+        let monitor = definition.makeMonitor(.init(files: io.files, events: events, antigravity: io.antigravity, now: io.now))
         monitors[id] = monitor
         return monitor
     }

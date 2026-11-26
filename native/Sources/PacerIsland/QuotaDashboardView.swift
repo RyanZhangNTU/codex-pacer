@@ -130,7 +130,9 @@ struct QuotaDashboardView: View {
         return VStack(spacing: 6) {
             HStack(spacing: 20) {
                 ring
-                QuotaDashboardDetailsView(quota: main, fiveHourQuota: ring.showsSplitRing ? fiveHour : nil, now: model.now)
+                if provider != .antigravity || main.resetsAt != nil || fiveHour?.resetsAt != nil {
+                    QuotaDashboardDetailsView(quota: main, fiveHourQuota: ring.showsSplitRing ? fiveHour : nil, now: model.now)
+                }
             }
             .padding(.horizontal, IslandMetrics.rowInset)
             QuotaProviderStatusView(model: model, provider: provider)
@@ -425,9 +427,13 @@ private struct QuotaDashboardDetailsView: View {
         Group {
             if let fiveHourQuota {
                 VStack(alignment: .leading, spacing: 9) {
-                    QuotaPeriodDetailView(reading: QuotaRingReading(quota: fiveHourQuota, now: now))
-                    Rectangle().fill(PacerPalette.hairline).frame(height: 1)
-                    QuotaPeriodDetailView(reading: weekly)
+                    if fiveHourQuota.provider != .antigravity || fiveHourQuota.resetsAt != nil {
+                        QuotaPeriodDetailView(reading: QuotaRingReading(quota: fiveHourQuota, now: now))
+                        if quota.provider != .antigravity || quota.resetsAt != nil {
+                            Rectangle().fill(PacerPalette.hairline).frame(height: 1)
+                        }
+                    }
+                    if quota.provider != .antigravity || quota.resetsAt != nil { QuotaPeriodDetailView(reading: weekly) }
                 }
             } else {
                 VStack(spacing: 0) {
@@ -518,6 +524,9 @@ struct QuotaProviderStatusView: View {
         let status = QuotaConnectionPresentation(provider: provider, snapshot: model.providerQuota(provider),
             error: model.providerQuotaError(provider), refreshing: model.providerRefreshing(provider))
         VStack(spacing: 6) {
+            if provider == .antigravity, model.fullQuota(provider) != nil {
+                Text(model.antigravityGroup.name).font(.system(size: 11)).foregroundStyle(PacerPalette.secondary)
+            }
             if status.state == .error, let error = status.message {
                 Text(error).font(.system(size: 11)).foregroundStyle(PacerPalette.attention)
                     .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)

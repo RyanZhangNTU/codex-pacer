@@ -7,9 +7,16 @@ public protocol PlatformFileSystem: Sendable {
     func replace(_ url: URL, with data: Data) -> Bool
     /// Lists non-hidden entries; callers own validation, sorting and limits.
     func entries(in directory: URL) throws -> [URL]
+    func entries(in directory: URL, maximum: Int) throws -> [URL]
 }
 
 extension PlatformFileSystem {
+    public func entries(in directory: URL, maximum: Int) throws -> [URL] {
+        let entries = try entries(in: directory)
+        guard entries.count <= maximum else { throw CocoaError(.fileReadTooLarge) }
+        return entries
+    }
+
     /// Describes the directory entry itself, including a symbolic link.
     public func metadata(_ url: URL) -> PlatformFileMetadata? {
         metadata(url, followingSymbolicLinks: false)

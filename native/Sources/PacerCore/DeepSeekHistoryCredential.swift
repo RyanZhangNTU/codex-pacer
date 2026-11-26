@@ -28,6 +28,14 @@ public final class DeepSeekHistoryCredential: Sendable {
     }
 
     public func fingerprint(source: DeepSeekBalance.Source, identity: String) -> String? {
+        fingerprint(domain: "codex-pacer/deepseek-history/v1\0" + source.rawValue, identity: identity, bytes: 16)
+    }
+
+    func antigravityScope(email: String) -> String? {
+        fingerprint(domain: "codex-pacer/antigravity-quota/v1", identity: email, bytes: 32)
+    }
+
+    private func fingerprint(domain: String, identity: String, bytes: Int) -> String? {
         guard !identity.isEmpty, identity.utf8.count <= 4096 else { return nil }
         Self.lock.lock(); defer { Self.lock.unlock() }
         do {
@@ -40,8 +48,8 @@ public final class DeepSeekHistoryCredential: Sendable {
                 salt = value
             }
             guard let salt else { return nil }
-            let message = Data(("codex-pacer/deepseek-history/v1\0" + source.rawValue + "\0" + identity).utf8)
-            return Self.authenticationCode(message: message, key: salt).prefix(16).map { String(format: "%02x", $0) }.joined()
+            let message = Data((domain + "\0" + identity).utf8)
+            return Self.authenticationCode(message: message, key: salt).prefix(bytes).map { String(format: "%02x", $0) }.joined()
         } catch { return nil }
     }
     static func isValid(_ value: String) -> Bool {

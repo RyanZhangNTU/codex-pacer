@@ -196,6 +196,11 @@ struct SettingsCollapsedBarPane: View {
     @ViewBuilder private var windowPickers: some View {
         if providers.contains(.codex) { quotaWindowPicker(.codex, selection: $windowID) }
         if providers.contains(.claude) { quotaWindowPicker(.claude, selection: $claudeWindowID) }
+        if providers.contains(.antigravity) {
+            quotaWindowPicker(.antigravity, selection: Binding(
+                get: { model.defaults.string(forKey: QuotaWindowSelection.defaultsKey(for: .antigravity)) ?? "auto" },
+                set: { model.setAntigravityPreference($0, key: QuotaWindowSelection.defaultsKey(for: .antigravity)) }))
+        }
     }
 
     /// Which of the provider's limits the bar shows, 5 hours or 7 days. An

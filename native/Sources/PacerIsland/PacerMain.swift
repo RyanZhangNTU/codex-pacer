@@ -416,6 +416,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         if model.isDemo {
             return showDemoDestination(title: L10n.text("demo.chat_title")) { DemoConversationView(activity: activity, onReturn: $0) }
         }
+        if HarnessRegistry.localHarnesses.contains(where: { $0.descriptor.id == activity.provider && $0.conversationScheme == nil }) {
+            guard await MacLocalHarnessApplication.openApplication(provider: activity.provider) else { return .failed(L10n.text("activity.open_failed")) }
+            model.close()
+            return .openedApplication
+        }
         if let destination = model.localHarnessDestination(for: activity) {
             model.close()
             let configuration = NSWorkspace.OpenConfiguration()

@@ -58,7 +58,7 @@ final class IslandModel: ObservableObject {
     private var hostTracking = HostApplicationTrackingState<HostApplication>()
     var lifecycle = ApplicationLifecycleCoordinator()
     private lazy var localHarnesses = LocalHarnessMonitors(platform: .macOS,
-        io: .init(files: MacFileSystem(), events: MacActivityFileEvents(), now: { Date() }))
+        io: .init(files: MacFileSystem(), events: MacActivityFileEvents(), antigravity: MacAntigravityLocalHost(), now: { Date() }))
     private var localHarnessActivities = HarnessActivitySources()
     @Published private var localHarnessRevision = 0
     /// Account credits by module, for each module that reads them from its bill.
@@ -209,13 +209,13 @@ final class IslandModel: ObservableObject {
     private let installationOverride: ProviderInstallationDetection?
     let defaults: UserDefaults
     private var modules = ProviderModules()
-    /// Quota windows exist for Codex and Claude only; DeepSeek reports nil.
     var quota: QuotaSnapshot? {
         get { providerQuota(selectedProvider) }
         set {
             switch selectedProvider {
             case .codex: codexQuota = newValue
             case .claude: claudeQuota = newValue
+            case .antigravity: antigravityQuota.snapshot = newValue
             default: return
             }
             onLayoutChange?()
@@ -227,6 +227,7 @@ final class IslandModel: ObservableObject {
             switch selectedProvider {
             case .codex: codexHistory = newValue
             case .claude: claudeHistory = newValue
+            case .antigravity: antigravityQuota.history = newValue
             default: break
             }
         }
@@ -237,6 +238,7 @@ final class IslandModel: ObservableObject {
             switch selectedProvider {
             case .codex: codexHistoryWarning = newValue
             case .claude: claudeHistoryWarning = newValue
+            case .antigravity: antigravityQuota.warning = newValue
             default: break
             }
         }
@@ -247,6 +249,7 @@ final class IslandModel: ObservableObject {
             switch selectedProvider {
             case .codex: codexErrorMessage = newValue
             case .claude: claudeErrorMessage = newValue
+            case .antigravity: antigravityQuota.error = newValue
             default: break
             }
         }
@@ -280,6 +283,7 @@ final class IslandModel: ObservableObject {
         switch provider {
         case .codex: codexRefreshing
         case .claude: claudeRefreshing
+        case .antigravity: antigravityQuota.refreshing
         case .deepseek: deepseekRefreshing
         default: false
         }
@@ -305,10 +309,25 @@ final class IslandModel: ObservableObject {
     func taskSourceName(_ activity: SessionActivity) -> String? {
         ActivityTaskRowPresentation.sourceName(activity, options: taskPresentationOptions(for: [activity]))
     }
+    var antigravityGroup: AntigravityQuotaGroup {
+        defaults.string(forKey: AntigravityQuotaGroup.defaultsKey).flatMap(AntigravityQuotaGroup.init(rawValue:))
+            ?? providerQuota(.antigravity)?.buckets.first.flatMap { AntigravityQuotaGroup(rawValue: $0.id) } ?? .gemini
+    }
+    func setAntigravityPreference(_ value: String, key: String) {
+        defaults.set(value, forKey: key)
+        objectWillChange.send(); onLayoutChange?(); onStatusChange?()
+    }
     func providerQuota(_ provider: AgentProvider) -> QuotaSnapshot? {
+        if provider == .antigravity {
+            return AntigravityQuotaGroup.selected(antigravityQuota.snapshot, saved: defaults.string(forKey: AntigravityQuotaGroup.defaultsKey))
+        }
+        return fullQuota(provider)
+    }
+    func fullQuota(_ provider: AgentProvider) -> QuotaSnapshot? {
         switch provider {
         case .codex: codexQuota
         case .claude: claudeQuota
+        case .antigravity: antigravityQuota.snapshot
         default: nil
         }
     }
@@ -316,6 +335,7 @@ final class IslandModel: ObservableObject {
         switch provider {
         case .codex: codexErrorMessage
         case .claude: claudeErrorMessage
+        case .antigravity: antigravityQuota.error
         case .deepseek: deepseekBalanceError?.errorDescription
         default: nil
         }
@@ -331,6 +351,7 @@ final class IslandModel: ObservableObject {
         switch provider {
         case .codex: codexHistory
         case .claude: claudeHistory
+        case .antigravity: antigravityQuota.history
         default: QuotaCycleHistory()
         }
     }
@@ -338,6 +359,7 @@ final class IslandModel: ObservableObject {
         switch provider {
         case .codex: codexHistoryWarning
         case .claude: claudeHistoryWarning
+        case .antigravity: antigravityQuota.warning
         default: nil
         }
     }
@@ -373,13 +395,13 @@ final class IslandModel: ObservableObject {
     /// 7 days on an account without that window.
     func providerSelectedWindow(_ provider: AgentProvider, selection: String? = nil) -> QuotaWindow? {
         QuotaDashboardPresentation.selectedWindow(provider: provider, snapshot: providerQuota(provider),
-            selection: selection ?? defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID"))
+            selection: selection ?? defaults.string(forKey: QuotaWindowSelection.defaultsKey(for: provider)))
     }
     /// The collapsed value usually shows a longer window, so the warning watches
     /// each provider's 5h window: below 20% is low and zero is exhausted. Stale,
     /// expired or failed quota never produces a live alert.
     func fiveHourAlert(_ provider: AgentProvider) -> FiveHourQuotaAlert? {
-        CompactWarningPresentation.fiveHourAlert(provider: provider, snapshot: providerQuota(provider),
+        CompactWarningPresentation.fiveHourAlert(provider: provider, snapshot: fullQuota(provider),
             failed: providerQuotaError(provider) != nil, now: now)
     }
     var claudeHome: URL {
@@ -1025,7 +1047,7 @@ final class IslandModel: ObservableObject {
     /// guide beside it. Over a running task the first click only asks to
     /// confirm. It never forces the app to quit.
     func restartHarness(_ provider: AgentProvider, screen: NSScreen? = nil) async {
-        guard !harnessRestarting.contains(provider) else { return }
+        guard localHarnesses.definition(for: provider)?.connectorsPath != nil, !harnessRestarting.contains(provider) else { return }
         let busy = visibleActivities.contains { $0.provider == provider && [.running, .waitingForInput].contains($0.phase) }
         if busy, harnessRestarts[provider] != .confirm { harnessRestarts[provider] = .confirm; return }
         // A demo never quits a real app, and an app Pacer can't open again stays as it is.
@@ -1472,7 +1494,8 @@ final class IslandModel: ObservableObject {
     }
     func canOpen(_ activity: SessionActivity) -> Bool {
         guard !activity.isIgnoredCodexSession else { return false }
-        if localHarnesses.definition(for: activity.provider) != nil {
+        if let definition = localHarnesses.definition(for: activity.provider) {
+            if definition.conversationScheme == nil { return desktopApplications[activity.provider] != nil }
             return providerDetected(activity.provider) && localHarnessActivities[activity.provider]?.conversationURLs[activity.id] != nil
         }
         // Harness has no conversation link; its app opens on the session list.
@@ -1572,6 +1595,10 @@ final class IslandModel: ObservableObject {
     private var durableAccountScope: String?
     private var lastRemoteDiscovery = Date.distantPast
     private let historyStore: QuotaHistoryStore
+    private let antigravityHistoryStore: QuotaHistoryStore
+    private var antigravityCoordinator: AntigravityQuotaCoordinator?
+    private var antigravityQuotaOwner = UUID()
+    @Published private var antigravityQuota = AntigravityQuotaState()
     private let claudeHistoryStore: QuotaHistoryStore
     private let claudeMonitor: ClaudeActivityMonitor
     /// Set by the app, so tests and demos never reach claude.ai.
@@ -1847,10 +1874,11 @@ final class IslandModel: ObservableObject {
         // Back in view: catch up once, as opening the panel does.
         redrawClock()
         if !demo, !sleeping, !stopped { refreshActivity(metricsOnly: true) }
-        if Date().timeIntervalSince(codexQuotaState?.lastAttempt ?? .distantPast) > 30 { refreshQuota() }
+        if Date().timeIntervalSince(codexQuotaState?.lastAttempt ?? .distantPast) > 30 { refreshOtherQuotas() }
     }
     private func applyRefreshCadence() {
         durablePanelInView.set(visiblyExpanded)
+        if visiblyExpanded { refreshAntigravityQuota(force: false) }
         if !demo, !sleeping, !stopped {
             logWatcher.update(watchedLogURLs, interval: activityRefreshPolicy.interval, flushPending: visiblyExpanded)
             let generation = sourceGeneration
@@ -1919,7 +1947,7 @@ final class IslandModel: ObservableObject {
         CompactBarPresentation.quotaValue(provider: provider, snapshot: providerQuota(provider),
             failed: providerQuotaError(provider) != nil,
             metric: (metric ?? defaults.string(forKey: "compactMetric")).flatMap(CompactBarPresentation.Metric.init(rawValue:)) ?? .remaining,
-            selection: selection ?? defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID"), now: now)
+            selection: selection ?? defaults.string(forKey: QuotaWindowSelection.defaultsKey(for: provider)), now: now)
     }
     /// The percentage without its sign, for the docked strip's stacked units.
     func compactQuotaNumber(_ provider: AgentProvider, metric: String? = nil, selection: String? = nil) -> String? {
@@ -1931,7 +1959,7 @@ final class IslandModel: ObservableObject {
     }
     func compactTimeRemainingNumber(_ provider: AgentProvider, selection: String? = nil) -> String? {
         CompactBarPresentation.timeRemainingNumber(provider: provider, snapshot: providerQuota(provider),
-            selection: selection ?? defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID"), now: now)
+            selection: selection ?? defaults.string(forKey: QuotaWindowSelection.defaultsKey(for: provider)), now: now)
     }
     func compactTimeRemainingText(_ provider: AgentProvider, selection: String? = nil) -> String {
         compactTimeRemainingNumber(provider, selection: selection).map { $0 + "%" } ?? "—"
@@ -2036,6 +2064,7 @@ final class IslandModel: ObservableObject {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("CodexPacerIsland/CurrentCycle", isDirectory: true)
         historyStore = QuotaHistoryStore(directory: directory)
+        antigravityHistoryStore = QuotaHistoryStore(directory: directory.appendingPathComponent("Antigravity", isDirectory: true))
         claudeHistoryStore = QuotaHistoryStore(directory: directory.appendingPathComponent("Claude", isDirectory: true))
         enabledProviders = configuredProviders
         if let saved = defaults.string(forKey: "selectedQuotaProvider").flatMap(AgentProvider.init(rawValue:)), quotaProviders.contains(saved) {
@@ -2120,6 +2149,7 @@ final class IslandModel: ObservableObject {
         let harnesses = detachLocalHarnesses()
         await ApplicationLifecycleCoordinator.cleanup([
             .codexQuota: { await quota?.stop() }, .claudeQuota: { await claudeQuota?.stop() },
+            .antigravityQuota: { [antigravityHistoryStore] in await antigravityHistoryStore.flush() },
             .cloud: { await cloud?.suspend() }, .balance: { await balance?.stop() }
         ], activity: activityAdapters.cleanup(.sleep, deadline: deadline, detached: harnesses), deadline: deadline)
     }
@@ -2139,7 +2169,7 @@ final class IslandModel: ObservableObject {
         applyRefreshCadence()
         if value, !demo, !sleeping, !stopped { refreshActivity(metricsOnly: true) }
         onLayoutChange?()
-        if value && Date().timeIntervalSince(codexQuotaState?.lastAttempt ?? .distantPast) > 30 { refreshQuota() }
+        if value && Date().timeIntervalSince(codexQuotaState?.lastAttempt ?? .distantPast) > 30 { refreshOtherQuotas() }
         if value { refreshDesktopApplications(force: false) }
     }
     func hover(_ entered: Bool) {
@@ -2274,10 +2304,50 @@ final class IslandModel: ObservableObject {
     }
 
     func refreshQuota() {
+        refreshAntigravityQuota(force: true)
+        refreshOtherQuotas()
+    }
+    private func refreshOtherQuotas() {
         refreshCodexQuota()
         refreshClaudeQuota()
         refreshDeepSeekBalance()
     }
+    private func detachAntigravityQuota() {
+        antigravityCoordinator?.invalidateSource()
+        antigravityCoordinator = nil; antigravityQuotaOwner = UUID()
+        cancelOwnedWork(.init(.quota, provider: .antigravity))
+        antigravityQuota = .init()
+    }
+
+    private func bindAntigravityQuota(client: AntigravityLocalClient, session: UInt64?, home: URL, version: UInt64) async {
+        guard lifecycle.version(.antigravity) == version, !sleeping, !stopped, isModuleEnabled(.antigravity) else { return }
+        let previous = antigravityCoordinator
+        detachAntigravityQuota()
+        let owner = antigravityQuotaOwner
+        await previous?.flush()
+        guard let session, antigravityQuotaOwner == owner, !sleeping, !stopped else { return }
+        antigravityCoordinator = AntigravityQuotaCoordinator(client: client, session: session, home: home,
+            credential: DeepSeekHistoryCredential(defaults: defaults), history: antigravityHistoryStore) { [weak self] state, notices in
+            await self?.receiveAntigravityQuota(state, notices: notices, owner: owner)
+        }
+        refreshAntigravityQuota(force: true)
+    }
+
+    private func receiveAntigravityQuota(_ state: AntigravityQuotaState, notices: [IslandNotice], owner: UUID) {
+        guard owner == antigravityQuotaOwner, !sleeping, !stopped, isModuleEnabled(.antigravity) else { return }
+        antigravityQuota = state; now = Date()
+        present(notices); onLayoutChange?(); onStatusChange?()
+    }
+
+    private func refreshAntigravityQuota(force: Bool) {
+        let key = ApplicationWorkRegistry.Key(.quota, provider: .antigravity)
+        guard !sleeping, !stopped, !demo, let coordinator = antigravityCoordinator, ownedWork.task(key) == nil,
+              ProviderQuotaRefreshPolicy.isDue(lastAttempt: antigravityQuota.lastAttempt, expanded: visiblyExpanded,
+                  failures: antigravityQuota.failures, now: Date(), force: force) else { return }
+        let expanded = visiblyExpanded
+        launchOwnedWork(key) { _ in await coordinator.refresh(expanded: expanded, force: force) }
+    }
+
     private func refreshCodexQuota(force: Bool = true) {
         guard isModuleEnabled(.codex), refreshTask == nil, !sleeping, !stopped, !demo else { return }
         guard ProviderQuotaRefreshPolicy.isDue(lastAttempt: codexQuotaState?.lastAttempt, expanded: visiblyExpanded,
@@ -2349,6 +2419,11 @@ final class IslandModel: ObservableObject {
         retryQuotaConnection(for: selectedProvider)
     }
     func retryQuotaConnection(for provider: AgentProvider) {
+        if provider == .antigravity {
+            if antigravityCoordinator != nil { refreshAntigravityQuota(force: true) }
+            else { refreshLocalHarness(provider) }
+            return
+        }
         if provider == .claude { retryClaudeWebConnection(); return }
         guard !codexRefreshing else { return }
         let previous = detachCodexQuota(), generation = sourceGeneration
@@ -2818,6 +2893,12 @@ final class IslandModel: ObservableObject {
         launchOwnedWork(.init(.activity, provider: provider, identifier: "local-harness")) { [weak self] ticket in
             guard let self, self.lifecycle.owns(ticket) else { return }
             let policy = self.activityRefreshPolicy
+            if let source = monitor as? any AntigravityHubSource {
+                await source.observeHub { [weak self] client, session in
+                    await self?.bindAntigravityQuota(client: client, session: session, home: home, version: version)
+                }
+                guard self.lifecycle.owns(ticket) else { return }
+            }
             await monitor.start(home: home, policy: policy) { [weak self] snapshot in
                 await self?.receiveLocalHarness(provider, snapshot: snapshot, home: home, version: version)
             }
@@ -2863,6 +2944,10 @@ final class IslandModel: ObservableObject {
         noteLocalHarnessProgress(provider, snapshot: snapshot)
     }
     private func resetLocalHarness(_ provider: AgentProvider) {
+        if provider == .antigravity {
+            detachAntigravityQuota()
+            Task { [antigravityHistoryStore] in await antigravityHistoryStore.flush() }
+        }
         localHarnessActivities.remove(provider)
         activityState.removeHarness(provider)
         localHarnessRevision &+= 1
@@ -2877,6 +2962,7 @@ final class IslandModel: ObservableObject {
         }
     }
     private func detachLocalHarnesses() -> LocalHarnessMonitors {
+        detachAntigravityQuota()
         localHarnessActivities.detachLocalBindings()
         localHarnessRevision &+= 1
         return localHarnesses.detach()
@@ -3048,6 +3134,7 @@ final class IslandModel: ObservableObject {
         let completed = await ApplicationLifecycleCoordinator.cleanup([
             .codexProgressFlag: { _ = await progressFlag?.value },
             .codexQuota: { await quota?.stop() }, .claudeQuota: { await claudeQuota?.stop() },
+            .antigravityQuota: { [antigravityHistoryStore] in await antigravityHistoryStore.flush() },
             .cloud: { await cloud?.stop() }, .remoteSetup: { await setup.shutdown() }, .balance: { await balance?.stop() },
             .harnesses: { for task in localProgress { await task.value } }
         ], activity: activityAdapters.cleanup(.shutdown, deadline: deadline, detached: harnesses), deadline: deadline)
@@ -3143,6 +3230,7 @@ final class IslandModel: ObservableObject {
                 switch provider {
                 case .codex: refreshCodexQuota(force: force)
                 case .claude: refreshClaudeQuota(force: force)
+                case .antigravity: refreshAntigravityQuota(force: force)
                 case .deepseek: refreshDeepSeekBalance(scheduled: !force, active: active)
                 default: break
                 }

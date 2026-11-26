@@ -106,5 +106,5 @@ public enum HarnessRegistry {
         return left == right ? a.rawValue < b.rawValue : left < right
     }
 
-    package static let localHarnesses: [LocalHarnessDefinition] = [WorkBuddyHarness.china, WorkBuddyHarness.international]
+    package static let localHarnesses: [LocalHarnessDefinition] = [WorkBuddyHarness.china, WorkBuddyHarness.international, AntigravityHarness.definition]
 }

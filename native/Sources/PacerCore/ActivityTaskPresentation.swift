@@ -257,7 +257,7 @@ public struct ActivityTaskRowPresentation: Sendable {
         public enum State: String, Sendable, Equatable { case running, approval, input, completed, failed, stopped, unknown }
         public let row: ActivityTaskRowPresentation
         public let state: State
-        /// Only while it writes; a finished or tool-bound subagent shows none.
+        /// An Antigravity ending retains the last measured response.
         public let rateText: String?
         public let rateIsFresh: Bool
         /// Its time while it runs; otherwise its state and how long it took.
@@ -325,7 +325,10 @@ public struct ActivityTaskRowPresentation: Sendable {
         case .interrupted: state = child.turnFailed ? .failed : .stopped
         case .unknown: state = .unknown
         }
-        let live = state == .running ? child.displayedOutputEstimate(at: now).flatMap { child.contributesLiveRate($0) ? $0 : nil } : nil
+        let rate = child.displayedOutputEstimate(at: now).flatMap { sample -> OutputEstimate? in
+            if state == .running { return child.contributesLiveRate(sample) ? sample : nil }
+            return child.provider == .antigravity && [.completed, .stopped, .failed].contains(state) ? sample : nil
+        }
         let status: String?
         switch state {
         case .running: status = nil
@@ -335,8 +338,8 @@ public struct ActivityTaskRowPresentation: Sendable {
         case .stopped, .unknown: status = L10n.text("subagent.ended")
         }
         let time = child.phase == .waitingForInput ? turnTimeText(child, phase: .running, now: now) : row.turnTime
-        return SubagentLine(row: row, state: state, rateText: live.map { String(format: "%.1f", $0.value) },
-                            rateIsFresh: live?.isFresh == true, statusText: status, time: time)
+        return SubagentLine(row: row, state: state, rateText: rate.map { String(format: "%.1f", $0.value) },
+                            rateIsFresh: state == .running && rate?.isFresh == true, statusText: status, time: time)
     }
     /// A run is running while its ledger says so and Codex has not ended its thread.
     public static func isRunningDelegation(_ activity: SessionActivity) -> Bool {

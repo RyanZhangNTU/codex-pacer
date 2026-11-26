@@ -5,6 +5,7 @@ import Foundation
 /// as opening it; an SSH Terminal handoff cannot confirm that it opened.
 public enum ActivityOpenOutcome: Equatable, Sendable {
     case openedConversation
+    case openedApplication
     case dispatchedTerminal
     case failed(String)
 }

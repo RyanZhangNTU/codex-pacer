@@ -224,14 +224,14 @@ final class ExpandedPanelDisplayTests: XCTestCase {
         let all = pane([.codex, .claude, .deepseek])
         all.toggle(.claude)
         // Services that are off keep their hidden places, so turning one on later shows its block.
-        XCTAssertEqual(saved?.blocks, [.tasks, .codex, .deepseek, .workbuddy, .workbuddyAI],
+        XCTAssertEqual(saved?.blocks, [.tasks, .codex, .deepseek, .workbuddy, .workbuddyAI, .antigravity],
                        "The first edit saves the blocks as they then appeared")
         all.shift(.deepseek, by: -1)
-        XCTAssertEqual(saved?.blocks, [.tasks, .deepseek, .codex, .workbuddy, .workbuddyAI])
+        XCTAssertEqual(saved?.blocks, [.tasks, .deepseek, .codex, .workbuddy, .workbuddyAI, .antigravity])
         all.move(.tasks, before: nil)
-        XCTAssertEqual(saved?.blocks, [.deepseek, .codex, .workbuddy, .workbuddyAI, .tasks])
+        XCTAssertEqual(saved?.blocks, [.deepseek, .codex, .workbuddy, .workbuddyAI, .antigravity, .tasks])
         all.toggle(.claude)
-        XCTAssertEqual(saved?.blocks, [.claude, .deepseek, .codex, .workbuddy, .workbuddyAI, .tasks],
+        XCTAssertEqual(saved?.blocks, [.claude, .deepseek, .codex, .workbuddy, .workbuddyAI, .antigravity, .tasks],
                        "An added block goes before the first that usually follows it")
 
         XCTAssertEqual(SettingsExpandedPanelPane.rows([.tasks, .codex, .claude, .deepseekSpend, .deepseek], arrange: .pair),

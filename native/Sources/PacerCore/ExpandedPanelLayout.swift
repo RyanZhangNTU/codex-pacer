@@ -8,6 +8,7 @@ public struct ExpandedPanelLayout: Equatable, Codable, Sendable {
     public enum Block: String, CaseIterable, Codable, Sendable, Identifiable {
         case tasks, codex, claude, deepseek, deepseekSpend, deepseekWeek, workbuddy
         case workbuddyAI = "workbuddy-ai"
+        case antigravity
         public var id: String { rawValue }
         public var label: String { L10n.text("panel.block." + rawValue) }
         public var detail: String { L10n.text("panel.block_detail." + rawValue) }
@@ -19,6 +20,7 @@ public struct ExpandedPanelLayout: Equatable, Codable, Sendable {
             case .tasks: nil
             case .codex: .codex
             case .claude: .claude
+            case .antigravity: .antigravity
             case .deepseek, .deepseekSpend, .deepseekWeek: .deepseek
             case .workbuddy: .workbuddy
             case .workbuddyAI: .workbuddyAI
@@ -36,6 +38,7 @@ public struct ExpandedPanelLayout: Equatable, Codable, Sendable {
             case .tasks: "text.alignleft"
             case .codex: "chevron.left.forwardslash.chevron.right"
             case .claude: "asterisk"
+            case .antigravity: "a.circle"
             case .deepseek: "water.waves"
             case .deepseekSpend: "chart.pie"
             case .deepseekWeek: "chart.xyaxis.line"
@@ -70,7 +73,7 @@ public struct ExpandedPanelLayout: Equatable, Codable, Sendable {
     /// content was Detailed. Services that are off keep their places, so the
     /// first edit saves a block that shows once its service is turned on.
     public static func automatic(providers: Set<AgentProvider>, deepseekDetailed: Bool) -> Self {
-        var blocks: [Block] = [.tasks, .codex, .claude, .deepseek, .workbuddy, .workbuddyAI]
+        var blocks: [Block] = [.tasks, .codex, .claude, .deepseek, .workbuddy, .workbuddyAI, .antigravity]
         let quotaProviders = providers.filter { HarnessRegistry.descriptor(for: $0)?.hasQuotaDisplay == true }
         if deepseekDetailed, quotaProviders == [.deepseek] { blocks += [.deepseekSpend, .deepseekWeek] }
         return Self(blocks: blocks)
@@ -220,6 +223,7 @@ public struct ExpandedPanelOptions: Codable, Equatable, Sendable {
     public var rowFields: Set<RowField> = Set(RowField.allCases)
     public var codexPeriods: Periods = .both
     public var claudePeriods: Periods = .both
+    public var antigravityPeriods: Periods = .both
     public var quotaArrange: Arrange = .pair
     /// Pace, reset and forecast beside a service that has a row to itself.
     public var quotaDetails = true
@@ -248,12 +252,14 @@ public struct ExpandedPanelOptions: Codable, Equatable, Sendable {
         switch provider {
         case .codex: codexPeriods
         case .claude: claudePeriods
+        case .antigravity: antigravityPeriods
         default: .both
         }
     }
 
     public mutating func setPeriods(_ value: Periods, for provider: AgentProvider) {
         if provider == .codex { codexPeriods = value } else if provider == .claude { claudePeriods = value }
+        else if provider == .antigravity { antigravityPeriods = value }
     }
 
     /// Whether a row draws the field in the chosen style.
@@ -265,7 +271,7 @@ public struct ExpandedPanelOptions: Codable, Equatable, Sendable {
     public func showsBudgetDial(hasBudget: Bool) -> Bool { hasBudget && deepseekDial == .budget }
 
     private enum CodingKeys: String, CodingKey {
-        case version, pageSize, rowStyle, rowFields, codexPeriods, claudePeriods, quotaArrange, quotaDetails, paceTick,
+        case version, pageSize, rowStyle, rowFields, codexPeriods, claudePeriods, antigravityPeriods, quotaArrange, quotaDetails, paceTick,
              codexResets, deepseekDial, deepseekPeak, spendTasks, spendElsewhere, weekLine, headerActions
     }
 
@@ -285,6 +291,7 @@ public struct ExpandedPanelOptions: Codable, Equatable, Sendable {
         rowFields = set(.rowFields, defaults.rowFields)
         codexPeriods = field(.codexPeriods, defaults.codexPeriods)
         claudePeriods = field(.claudePeriods, defaults.claudePeriods)
+        antigravityPeriods = field(.antigravityPeriods, defaults.antigravityPeriods)
         quotaArrange = field(.quotaArrange, defaults.quotaArrange)
         quotaDetails = field(.quotaDetails, defaults.quotaDetails)
         paceTick = field(.paceTick, defaults.paceTick)
@@ -306,6 +313,7 @@ public struct ExpandedPanelOptions: Codable, Equatable, Sendable {
         try values.encode(RowField.allCases.filter(rowFields.contains), forKey: .rowFields)
         try values.encode(codexPeriods, forKey: .codexPeriods)
         try values.encode(claudePeriods, forKey: .claudePeriods)
+        if antigravityPeriods != .both { try values.encode(antigravityPeriods, forKey: .antigravityPeriods) }
         try values.encode(quotaArrange, forKey: .quotaArrange)
         try values.encode(quotaDetails, forKey: .quotaDetails)
         try values.encode(paceTick, forKey: .paceTick)

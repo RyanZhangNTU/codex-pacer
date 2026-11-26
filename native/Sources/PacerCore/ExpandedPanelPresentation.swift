@@ -39,7 +39,7 @@ public enum ExpandedPanelPresentation {
             switch block {
             case .tasks:
                 result.append(Section(kind: .tasks))
-            case .codex, .claude, .deepseek, .workbuddy, .workbuddyAI:
+            case .codex, .claude, .antigravity, .deepseek, .workbuddy, .workbuddyAI:
                 var group = [block.provider ?? .codex]
                 if options.quotaArrange == .pair {
                     while index < visible.count, visible[index].isQuota, let provider = visible[index].provider {
@@ -102,6 +102,7 @@ public enum ExpandedPanelPresentation {
     public static func gauge(provider: AgentProvider, snapshot: QuotaSnapshot?, periods: ExpandedPanelOptions.Periods) -> Gauge {
         let fiveHour = QuotaDashboardPresentation.window(provider: provider, snapshot: snapshot, period: .fiveHour) != nil
         let weekly = QuotaDashboardPresentation.window(provider: provider, snapshot: snapshot, period: .weekly) != nil
+        if provider == .antigravity, fiveHour, !weekly { return Gauge(provider: provider, period: .fiveHour, split: false) }
         switch periods {
         case .both: return Gauge(provider: provider, period: .weekly, split: fiveHour)
         case .weekly: return Gauge(provider: provider, period: .weekly, split: false)

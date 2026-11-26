@@ -17,6 +17,20 @@ public struct MacFileSystem: PlatformFileSystem {
     public func entries(in directory: URL) throws -> [URL] {
         try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
     }
+    public func entries(in directory: URL, maximum: Int) throws -> [URL] {
+        var failed = false
+        guard let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil,
+            options: [.skipsSubdirectoryDescendants, .skipsHiddenFiles], errorHandler: { _, _ in failed = true; return false }) else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        var entries: [URL] = []
+        for case let file as URL in enumerator {
+            guard entries.count < maximum else { throw CocoaError(.fileReadTooLarge) }
+            entries.append(file)
+        }
+        guard !failed else { throw CocoaError(.fileReadUnknown) }
+        return entries
+    }
     public func read(_ url: URL, offset: UInt64, maximumBytes: Int) throws -> Data {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }

@@ -44,12 +44,12 @@ extension IslandModel {
     private func warningItems(warnings: Set<CompactIslandLayout.Warning>, wallet: DeepSeekWallet?) -> [CompactWarningPresentation.Item] {
         let enabled = Set(enabledProviders)
         let snapshots = Dictionary(uniqueKeysWithValues: enabledProviders.compactMap { provider in
-            providerQuota(provider).map { (provider, $0) }
+            fullQuota(provider).map { (provider, $0) }
         })
         let failed = Set(enabledProviders.filter { providerQuotaError($0) != nil })
         let windows = Set(HarnessRegistry.ids(where: \.hasQuotaWindows))
         let selections = Dictionary(uniqueKeysWithValues: enabledProviders.filter(windows.contains).map { provider in
-            (provider, QuotaWindowSelection(saved: defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID"),
+            (provider, QuotaWindowSelection(saved: defaults.string(forKey: QuotaWindowSelection.defaultsKey(for: provider)),
                 snapshot: providerQuota(provider)))
         })
         let alert = wallet.flatMap { DeepSeekAlertPresentation(wallet: $0,
@@ -114,6 +114,7 @@ extension IslandModel {
             metric: defaults.string(forKey: "compactMetric").flatMap(CompactBarPresentation.Metric.init(rawValue:)) ?? .remaining,
             codexWindow: QuotaWindowSelection(saved: defaults.string(forKey: "quotaWindowID"), snapshot: providerQuota(.codex)).rawValue,
             claudeWindow: QuotaWindowSelection(saved: defaults.string(forKey: "claudeQuotaWindowID"), snapshot: providerQuota(.claude)).rawValue,
+            antigravityWindow: defaults.string(forKey: QuotaWindowSelection.defaultsKey(for: .antigravity)),
             rings: QuotaRingSlot.allCases.map { slot in
                 guard let saved = defaults.string(forKey: slot.defaultsKey) else { return .automatic }
                 // A present empty or unknown preference previously meant no ring.
@@ -154,7 +155,7 @@ extension IslandModel {
     /// every chart point on each redraw only decided whether the placeholder shows, which
     /// the pane shows only without a cycle.
     func quotaHistoryPresentation(_ provider: AgentProvider) -> QuotaHistoryPresentation {
-        .init(provider: provider, snapshot: providerQuota(provider), weekly: dashboardQuota(provider: provider, period: .weekly),
+        .init(provider: provider, snapshot: fullQuota(provider), weekly: dashboardQuota(provider: provider, period: .weekly),
             chart: nil, error: providerQuotaError(provider), warning: providerHistoryWarning(provider),
             refreshing: providerRefreshing(provider), accountContext: "", now: now)
     }
