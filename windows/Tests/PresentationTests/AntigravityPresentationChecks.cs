@@ -59,7 +59,7 @@ internal static class AntigravityPresentationChecks
             Check(website?.AbsoluteUri == "https://antigravity.google/", "The module's website must use its descriptor URL");
             var guide = Module()!.ProgressGuide!;
             Check(guide.Stage == "allowTool" && guide.Steps.Count == 4 && guide.Steps[1].Title == ui.Text("progress_guide.plugin.restart")
-                && Name(Get<Button>(settings, Prefix + "progress_copy")).Contains(guide.Steps[2].CopyText!),
+                && SpokenName(Get<Button>(settings, Prefix + "progress_copy")).EndsWith(", " + guide.Steps[2].CopyText!, StringComparison.Ordinal),
                 "The plugin guide must explain restarting and approving the named server");
             CheckGuideStates(settings, ui, guide);
             settings.CapturePreview(Path.Combine(output, $"antigravity-settings-{language}-{(dark ? "dark" : "light")}.png"));
@@ -185,6 +185,8 @@ internal static class AntigravityPresentationChecks
 
     private static void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
     private static string Name(DependencyObject element) => AutomationProperties.GetName(element);
+    /// What UI Automation reads, after the control's own peer rewrites the name.
+    private static string SpokenName(UIElement element) => UIElementAutomationPeer.CreatePeerForElement(element)?.GetName() ?? "";
     private static Task Wait(DependencyObject root, string id) => PresentationWait.UntilAsync(
         () => Find<FrameworkElement>(root, id)?.IsVisible == true, "Expected visible control " + id);
     private static T Get<T>(DependencyObject root, string id) where T : FrameworkElement =>

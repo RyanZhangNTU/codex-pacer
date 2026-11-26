@@ -327,7 +327,8 @@ internal sealed partial class SettingsWindow
             {
                 string label = ui.Text("progress_guide.plugin.copy");
                 var copy = new Button { Content = label, VerticalAlignment = VerticalAlignment.Top };
-                Identify(copy, id + ".progress_copy", label + ", " + server);
+                // With string content, the button's automation name drops "_" as an access key marker; "__" keeps one.
+                Identify(copy, id + ".progress_copy", label + ", " + server.Replace("_", "__", StringComparison.Ordinal));
                 copy.Click += (_, _) => { try { Clipboard.SetText(server); } catch (System.Runtime.InteropServices.COMException) { ShowIssue("windows.progress.copy_failed"); } };
                 Grid.SetColumn(copy, 2); line.Children.Add(copy);
             }
