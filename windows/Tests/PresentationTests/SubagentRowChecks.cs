@@ -34,8 +34,10 @@ internal static class SubagentRowChecks
             new(id, "codex", title, phase, null, null, null, phase, "sparkle", null, "Sol 6.1", "high", null, false, null, "1:00", 0, false, failed, false, null, false);
         var approval = new EngineSubagentLine(Child("sub-wait", "Run migrations", "waitingForInput"), "approval", null, false, "", "Run migrations, Waiting for approval · Bash",
             Title: "Run migrations", Model: "Sonnet 5.5", StatusText: "Waiting for approval · Bash", Time: "2m");
-        var running = new EngineSubagentLine(Child("sub-run", "Add network tests", "running"), "running", "24.1", true, "", "worker Linnaeus, Add network tests, 24.1 t/s, 3m",
-            TypeTag: "worker", NameTag: "Linnaeus", Title: "Add network tests", Model: "Sol 6.1", Time: "3m");
+        // A Codex subagent, as in the Codex app: its task name as the colored tag, its role as the grey one,
+        // what it is doing as the title, and its model with its effort.
+        var running = new EngineSubagentLine(Child("sub-run", "Network tests", "running"), "running", "24.1", true, "", "Network tests, worker, Thinking, 24.1 t/s, 3m",
+            TypeTag: "Network tests", NameTag: "worker", Title: "Thinking", Model: "Sol 6.1 high", Time: "3m");
         var failed = new EngineSubagentLine(Child("sub-fail", "Search old docs", "completed", failed: true), "failed", null, false, "", "Explore, Search old docs, Failed, 30s",
             TypeTag: "Explore", Title: "Search old docs", Model: "Haiku 5.5", StatusText: "Failed", Time: "30s");
         string[] dots = ["attention", "running", "running", "failed", .. Enumerable.Repeat("completed", 8)];
@@ -72,14 +74,14 @@ internal static class SubagentRowChecks
                 "Three subagent lines, then the folded line under them");
             Check(lines.Take(3).All(line => Math.Abs(line.ActualHeight - TaskRow.DelegationHeight) < 0.5)
                 && Math.Abs(lines[3].ActualHeight - TaskRow.FoldedHeight) < 0.5, "Subagent lines take the Codex runs' heights");
-            Check(Readings(lines[1]) == "24.1 t/s · 3m · Sol 6.1" && Readings(lines[0]) == "Waiting for approval · Bash · 2m · Sonnet 5.5"
+            Check(Readings(lines[1]) == "24.1 t/s · 3m · Sol 6.1 high" && Readings(lines[0]) == "Waiting for approval · Bash · 2m · Sonnet 5.5"
                 && Readings(lines[2]) == "Failed · 30s · Haiku 5.5", "Speed or state, then time and model, joined by dots");
             Check(Runs(lines[1])[0].Foreground == PacerPalette.Primary && Runs(lines[1])[^1].Foreground == PacerPalette.Provider("codex")
                 && Runs(lines[0])[0].Foreground == PacerPalette.Attention && Runs(lines[2])[0].Foreground == PacerPalette.Danger
                 && Runs(lines[2])[^1].Foreground == PacerPalette.Secondary, "Fresh speed, waiting and failed states and the running model take their colors");
-            Check(Title(lines[1]).Text == "Add network tests" && Title(lines[1]).Foreground == PacerPalette.Primary && Title(lines[2]).Foreground == PacerPalette.Secondary,
+            Check(Title(lines[1]).Text == "Thinking" && Title(lines[1]).Foreground == PacerPalette.Primary && Title(lines[2]).Foreground == PacerPalette.Secondary,
                 "The title comes from the line, and an ended subagent's title steps back");
-            Check(Tags(lines[0]).Count == 0 && Tags(lines[1]).Select(tag => tag.Text).SequenceEqual(["worker", "Linnaeus"])
+            Check(Tags(lines[0]).Count == 0 && Tags(lines[1]).Select(tag => tag.Text).SequenceEqual(["Network tests", "worker"])
                 && Tags(lines[1])[0].Foreground == PacerPalette.Provider("codex") && Tags(lines[1])[1].Foreground == PacerPalette.Secondary
                 && Tags(lines[2]).Single().Foreground == PacerPalette.Secondary,
                 "The type tag takes the service's color while running and steps back once ended; the name tag stays quiet");
@@ -114,7 +116,9 @@ internal static class SubagentRowChecks
             // Narrow: each line keeps its tags whole and its title at 48 points or more, and drops readings from the end.
             window.Width = 330; row = await Shown(parent, null);
             var narrow = row.Subagents.Children.OfType<Grid>().Take(3).ToList();
-            Check(narrow.Any(line => Content(line).Chosen > 0) && narrow.All(line => Title(line).ActualWidth >= TaskLinePanel.TitleMinimum - 0.5)
+            // The shortest variant is the last resort: there the title gives way below its minimum, as on the Mac.
+            Check(narrow.Any(line => Content(line).Chosen > 0)
+                && narrow.Where(line => Content(line).Chosen < Content(line).VariantCount - 1).All(line => Title(line).ActualWidth >= TaskLinePanel.TitleMinimum - 0.5)
                 && narrow.All(line => SelfAndDescendants(Content(line)).OfType<Border>().All(tag => Math.Abs(tag.ActualWidth + tag.Margin.Left + tag.Margin.Right - tag.DesiredSize.Width) < 0.5))
                 && narrow.All(line => Math.Abs(Content(line).ShownReadings.ActualWidth - Content(line).ShownReadings.DesiredSize.Width) < 0.5),
                 "A narrow line shrinks its title to its minimum, keeps tags and readings whole, and drops the model before the time");
@@ -149,6 +153,15 @@ internal static class SubagentRowChecks
             row = await Shown(parent with { SubagentLines = [running with { Model = null }, failed with { Model = null, Time = null }] }, null);
             var spare = row.Subagents.Children.OfType<Grid>().Where(line => line.Tag is EngineSubagentLine).ToList();
             Check(Content(spare[0]).VariantCount == 2 && Content(spare[1]).VariantCount == 1, "A line builds only the reading variants that differ");
+            // An ended Codex subagent says nothing after its tags: its state is on the right.
+            var ended = new EngineSubagentLine(Child("sub-done", "", "completed"), "completed", null, false, "", "Fix login, worker, Completed, 4m",
+                TypeTag: "Fix login", NameTag: "worker", Title: "", Model: "Sol 6.1 high", StatusText: "Completed", Time: "4m");
+            row = await Shown(parent with { SubagentLines = [ended] }, null);
+            var endedLine = row.Subagents.Children.OfType<Grid>().First();
+            Check(Title(endedLine).Text.Length == 0 && Tags(endedLine).Select(tag => tag.Text).SequenceEqual(["Fix login", "worker"])
+                && Tags(endedLine).All(tag => tag.Foreground == PacerPalette.Secondary) && Readings(endedLine) == "Completed · 4m · Sol 6.1 high"
+                && Math.Abs(Content(endedLine).ShownReadings.ActualWidth - Content(endedLine).ShownReadings.DesiredSize.Width) < 0.5,
+                "An ended Codex subagent keeps its grey tags and whole readings with an empty title");
 
             // Without the subagents field: no dots, no lines, no height for them.
             var hidden = PanelOptions.Default with { RowFields = ["rate", "turnTime", "model"] };

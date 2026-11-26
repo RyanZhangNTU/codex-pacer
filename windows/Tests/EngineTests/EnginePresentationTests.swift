@@ -31,7 +31,9 @@ final class EnginePresentationTests: XCTestCase {
     func testSubagentLineWireCarriesSeparateTagsTitleAndShortModel() throws {
         var tasks = DemoScenario.subagentTasks(stage: .thinking, at: now)
         tasks[1].subagentDisplay = SubagentDisplay(spawn: ["agent_path": "/parent/check_rows", "agent_role": "explorer"], header: [:])
-        tasks[1].applyRuntime(["method": "metadata", "threadId": tasks[1].threadID!, "model": "gpt-6.2-sol", "at": now.timeIntervalSince1970])
+        // A new model without an effort clears the old one, so the change reports its effort too.
+        tasks[1].applyRuntime(["method": "metadata", "threadId": tasks[1].threadID!, "model": "gpt-6.2-sol", "reasoningEffort": "high",
+                               "at": now.timeIntervalSince1970])
         let wire = EnginePresentation(activities: tasks, requests: [], inbox: CompletionInbox(), hideProjects: false, at: now)
         let line = try XCTUnwrap(wire.rows.first?.subagentLines?.first { $0.typeTag == "Check rows" })
         var fields = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(line)) as? [String: Any])
