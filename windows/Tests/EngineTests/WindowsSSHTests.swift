@@ -1,5 +1,8 @@
 import Foundation
 import XCTest
+#if os(Windows)
+import WinSDK
+#endif
 @testable import PacerCore
 @testable import PacerEngineSupport
 
@@ -50,6 +53,21 @@ final class WindowsSSHTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: value).write(to: file)
     }
     private func target() -> RemoteActivityTarget { .init(id: "remote-ssh-discovered:alias-a", name: "Synthetic", alias: "alias-a", home: "~/.codex") }
+    /// Processes the synthetic ssh started as connections, not route lookups.
+    private func helperPIDs(_ root: URL) -> [UInt32] {
+        ((try? String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)) ?? "").split(separator: "\n").compactMap { line in
+            guard let row = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any], row["lookup"] as? Bool == false else { return nil }
+            return (row["pid"] as? NSNumber)?.uint32Value
+        }
+    }
+    #if os(Windows)
+    private func running(_ pid: UInt32) -> Bool {
+        guard let handle = OpenProcess(DWORD(PROCESS_QUERY_LIMITED_INFORMATION), false, pid) else { return false }
+        defer { CloseHandle(handle) }
+        var code: DWORD = 0
+        return GetExitCodeProcess(handle, &code) && code == DWORD(STILL_ACTIVE)
+    }
+    #endif
     private func wait(_ condition: @escaping () async -> Bool) async throws {
         if try await TestWait.until(condition) { return }
         XCTFail("Synthetic SSH boundary was not reached"); throw CodexClientError.invalidResponse
@@ -242,16 +260,25 @@ final class WindowsSSHTests: XCTestCase {
         try await wait { capture.snapshot()?.sources.contains { $0.transport == "ssh" && $0.available } == true }
         XCTAssertTrue(capture.snapshot()?.tasks.contains { $0.sessionID == self.thread } == true)
         XCTAssertFalse(String(describing: capture.snapshot()).contains("PRIVATE TASK SENTINEL"))
+        let helpers = helperPIDs(root)
+        XCTAssertFalse(helpers.isEmpty)
         _ = await runtime.receive(try command("configure", ["sshHostsOff": [id, "wsl:ignored", 42] as [Any]]))
         try await wait {
             guard let snapshot = capture.snapshot(), let page = snapshot.connections else { return false }
             return page.hosts.first?.modules.first?.state == "notMonitored" && page.sourceCount == 0 &&
                 page.sessionCount == 0 && !snapshot.tasks.contains { $0.sessionID == self.thread }
         }
+        #if os(Windows)
+        // Hiding the rows is not enough: the Codex monitor must close the host's helper.
+        try await wait { helpers.allSatisfy { !self.running($0) } }
+        #endif
+        let attemptsWhileOff = helperPIDs(root).count
         _ = await runtime.receive(try command("refreshTaskSources"))
         XCTAssertFalse(capture.snapshot()?.sources.contains { $0.transport == "ssh" } == true)
+        XCTAssertEqual(helperPIDs(root).count, attemptsWhileOff, "A host turned off is not connected again")
         _ = await runtime.receive(try command("configure", ["sshHostsOff": [] as [String]]))
         try await wait { capture.snapshot()?.tasks.contains { $0.sessionID == self.thread } == true }
+        XCTAssertGreaterThan(helperPIDs(root).count, attemptsWhileOff, "Turning the host back on connects it again")
         _ = await runtime.receive(try command("configure", ["monitorSSH": false]))
         XCTAssertFalse(capture.snapshot()?.sources.contains { $0.transport == "ssh" } == true)
         XCTAssertFalse(capture.snapshot()?.tasks.contains { $0.sessionID == thread } == true, "Disabled SSH callbacks cannot restore remote tasks")
