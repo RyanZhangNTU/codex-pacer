@@ -196,19 +196,43 @@ public partial class TaskRow : Button
             if (showModel && model != null) { if (any) Add(" · ", PacerPalette.Secondary); Add(model, active ? PacerPalette.Provider(row.Provider) : PacerPalette.Secondary); }
             return text;
         }
-        var content = new TaskLinePanel(tags, label, [Readings(true, true), Readings(false, true), Readings(false, false)]) { Margin = new Thickness(0, 0, 4, 0) };
+        // Only the variants that read differently: without a model, the full readings are already the shorter ones.
+        var variants = new List<FrameworkElement> { Readings(true, true) };
+        if (model != null) variants.Add(Readings(false, true));
+        if (time != null) variants.Add(Readings(false, false));
+        var content = new TaskLinePanel(tags, label, variants) { Margin = new Thickness(0, 0, 4, 0) };
         Grid.SetColumn(content, 2); line.Children.Add(content);
         line.MouseEnter += (_, _) => RefreshLineHighlight(line);
         line.MouseLeave += (_, _) => RefreshLineHighlight(line);
         return (line, icon);
     }
+    /// A tag is at most 120 points wide with its padding; a longer one keeps its start and end.
+    internal const double TagWidthLimit = 120, TagPadding = 6;
     /// A type or name on a child line: 10-point semibold in a 15-point capsule.
-    private static Border LineTag(string text, Brush ink, Brush? fill)
+    private Border LineTag(string text, Brush ink, Brush? fill)
     {
-        var tag = new Border { Height = 15, CornerRadius = new CornerRadius(7.5), Padding = new Thickness(6, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center,
-            Child = new TextBlock { Text = text, FontSize = 10, FontWeight = FontWeights.SemiBold, Foreground = ink, VerticalAlignment = VerticalAlignment.Center } };
+        string shown = MiddleTrim(text, TagWidthLimit - 2 * TagPadding, value => Measure(value, 10, FontWeights.SemiBold));
+        var tag = new Border { Height = 15, MaxWidth = TagWidthLimit, CornerRadius = new CornerRadius(7.5), Padding = new Thickness(TagPadding, 0, TagPadding, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock { Text = shown, FontSize = 10, FontWeight = FontWeights.SemiBold, Foreground = ink, VerticalAlignment = VerticalAlignment.Center } };
         if (fill != null) tag.Background = fill; else tag.SetResourceReference(Border.BackgroundProperty, "Island.Overlay05");
         return tag;
+    }
+    /// The text, or as much of its start and end as fits around an ellipsis, as the Mac's middle truncation.
+    internal static string MiddleTrim(string text, double width, Func<string, double> measure)
+    {
+        if (measure(text) <= width) return text;
+        var info = new StringInfo(text);
+        int count = info.LengthInTextElements;
+        string Join(int keep) => info.SubstringByTextElements(0, (keep + 1) / 2) + "…" + (keep / 2 == 0 ? "" : info.SubstringByTextElements(count - keep / 2, keep / 2));
+        string best = "…";
+        for (int low = 1, high = count - 1; low <= high;)
+        {
+            int keep = (low + high) / 2;
+            string candidate = Join(keep);
+            if (measure(candidate) <= width) { best = candidate; low = keep + 1; } else high = keep - 1;
+        }
+        return best;
     }
     /// One line per run: its mode as a tag, Claude's label, then speed, time and
     /// model with effort; no hover card. Screen readers get the run's details as
@@ -393,36 +417,42 @@ public partial class TaskRow : Button
         new FormattedText(value, PacerFonts.Culture(this), FlowDirection.LeftToRight,
             new Typeface(FontFamily, FontStyles.Normal, weight, FontStretches.Normal), size, Brushes.White,
             VisualTreeHelper.GetDpi(this).PixelsPerDip).WidthIncludingTrailingWhitespace;
-    /// The readings the task's own line keeps: 0 all, 1 without the model, 2 without the time either.
-    internal int ReadingsLevel { get; private set; }
-    /// A narrow row shrinks its title first, down to 48 points, as the Mac's TaskLineLayout;
-    /// past that the model goes, then the time, and the speed stays.
+    /// Whether the task's first line dropped its time, and its second line its model and effort.
+    internal bool DropsTime { get; private set; }
+    internal bool DropsModel { get; private set; }
+    /// A narrow row shrinks its title first, down to 48 points, as the Mac's TaskLineLayout.
+    /// Each line then decides on its own width: the first drops the time, keeping the speed;
+    /// the second drops the model and effort, keeping the cost.
     private void FitReadings()
     {
         var state = (TaskRowState)DataContext;
         double width = Lines.ActualWidth;
-        int level = 0;
+        bool dropTime = false, dropModel = false;
         if (width > 0)
         {
             var row = state.Value;
             double Text(string? value, double size, FontWeight weight) => Measure(value, size, weight);
             double title = Math.Min(TaskLinePanel.TitleMinimum, Text(row.Title, 13, FontWeights.SemiBold))
                 + (state.OneLineDotsVisible == Visibility.Visible ? 8 + 12 + 3 + DotsWidth(row, CompactDotLimit, value => Text(value, 10, FontWeights.Medium)) : 0);
-            double Rate(bool time) => state.OneLineStatusVisible == Visibility.Visible ? Text(row.Status, 11, FontWeights.Medium)
-                : Text(state.ShownRateText, state.RateSize, FontWeights.SemiBold) + Text(state.ShownRateUnit, 10, FontWeights.Medium)
-                    + (time ? Text(state.ShownSeparator + state.ShownTurnTime, 11, FontWeights.Medium) : 0);
-            double Model(bool model) => (state.CostVisible == Visibility.Visible ? Text(row.Cost, 11, FontWeights.Medium) + 7 + (row.PeakCost ? 9 : 0) : 0)
-                + (model && state.ModelVisible == Visibility.Visible
-                    ? Text(row.Model, 11, FontWeights.Medium) + (state.EffortVisible == Visibility.Visible ? 4 + Text(row.Effort, 11, FontWeights.Medium) : 0) : 0);
-            double status = Math.Min(TaskLinePanel.TitleMinimum, Text(row.Status, 11, FontWeights.Medium));
-            bool Fits(bool model, bool time) => width - 16 - Rate(time) >= title - 0.5 && (state.OneLine || width - 16 - Model(model) >= status - 0.5);
-            level = Fits(true, true) ? 0 : Fits(false, true) ? 1 : 2;
+            // A one-line row whose state leads shows no time to drop.
+            if (state.OneLineStatusVisible != Visibility.Visible && state.ShownTurnTime != null)
+            {
+                double rate = Text(state.ShownRateText, state.RateSize, FontWeights.SemiBold) + Text(state.ShownRateUnit, 10, FontWeights.Medium)
+                    + Text(state.ShownSeparator + state.ShownTurnTime, 11, FontWeights.Medium);
+                dropTime = width - 16 - rate < title - 0.5;
+            }
+            if (!state.OneLine && state.ModelVisible == Visibility.Visible)
+            {
+                double model = (state.CostVisible == Visibility.Visible ? Text(row.Cost, 11, FontWeights.Medium) + 7 + (row.PeakCost ? 9 : 0) : 0)
+                    + Text(row.Model, 11, FontWeights.Medium) + (state.EffortVisible == Visibility.Visible ? 4 + Text(row.Effort, 11, FontWeights.Medium) : 0);
+                dropModel = width - 16 - model < Math.Min(TaskLinePanel.TitleMinimum, Text(row.Status, 11, FontWeights.Medium)) - 0.5;
+            }
         }
-        ReadingsLevel = level;
-        TimeSeparator.Text = level < 2 ? state.ShownSeparator : "";
-        TimeRun.Text = level < 2 ? state.ShownTurnTime : null;
-        ModelText.Visibility = level == 0 && state.ModelVisible == Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;
-        EffortText.Visibility = level == 0 && state.EffortVisible == Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;
+        DropsTime = dropTime; DropsModel = dropModel;
+        TimeSeparator.Text = dropTime ? "" : state.ShownSeparator;
+        TimeRun.Text = dropTime ? null : state.ShownTurnTime;
+        ModelText.Visibility = !dropModel && state.ModelVisible == Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;
+        EffortText.Visibility = !dropModel && state.EffortVisible == Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;
     }
     /// What a child line's readings read in full: speed or state, then time and model.
     private static string ChildReadings(string? rate, string? status, string? time, string? model)
@@ -448,11 +478,12 @@ public partial class TaskRow : Button
             + (state.SubagentsVisible != Visibility.Visible ? 0 : state.HasDots ? 10 + 11 + 4 + Dots(DotLimit) : 24 + Text(row.SubagentText ?? "—", 11, FontWeights.Medium))
             + (state.SourceVisible == Visibility.Visible ? 10 + Text(row.SourceLabel, 11, FontWeights.Medium) + (row.SourceKind == null ? 0 : 14) : 0)
             + (state.DelegatedVisible == Visibility.Visible ? 20 + Text(row.DelegatedText, 10, FontWeights.SemiBold) : 0);
-        // A child line widens the panel up to its tags and title at 220 points, and its full readings, as the Mac's ChildTaskLine.
-        double Tag(string? value) => value == null ? 0 : Text(value, 10, FontWeights.SemiBold) + 12;
+        // A child line widens the panel by its tags, each up to 120 points, its title from 48 to 220, and its full
+        // readings, as the Mac's ChildTaskLine.
+        double Tag(string? value) => value == null ? 0 : Math.Min(TagWidthLimit, Text(value, 10, FontWeights.SemiBold) + 2 * TagPadding);
         double Child(string? typeTag, string? nameTag, string title, string readings) => 22 + 12 + 20 + 8
-            + Math.Min(220, Tag(typeTag) + Tag(nameTag) + (typeTag != null && nameTag != null ? TaskLinePanel.TagGap : 0)
-                + (typeTag != null || nameTag != null ? TaskLinePanel.TagGap : 0) + Text(title, 12, FontWeights.SemiBold))
+            + Tag(typeTag) + Tag(nameTag) + (typeTag != null && nameTag != null ? TaskLinePanel.TagGap : 0)
+            + (typeTag != null || nameTag != null ? TaskLinePanel.TagGap : 0) + Math.Clamp(Text(title, 12, FontWeights.SemiBold), TaskLinePanel.TitleMinimum, 220)
             + (readings.Length > 0 ? TaskLinePanel.Gap + Text(readings, 11, FontWeights.Medium) : 0) + 4 + 6;
         double runs = showsDelegations && row.DelegationsFolded != null ? 22 + 12 + 20 + 8 + Text(row.DelegationsFolded, 11, FontWeights.Medium) + 6 : 0;
         foreach (var run in showsDelegations ? row.Delegations ?? [] : [])

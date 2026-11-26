@@ -88,7 +88,8 @@ internal static class SubagentRowChecks
             Check(AutomationProperties.GetName(lines[1]) == running.AccessibilityText, "Each subagent line is named for screen readers");
             double lined = TaskRow.TwoLineHeight + 3 * TaskRow.DelegationHeight + TaskRow.FoldedHeight + TaskRow.DelegationRailBottom;
             Check(Math.Abs(TaskRow.RowHeight(parent, null) - lined) < 0.5 && Math.Abs(row.ActualHeight - lined) < 0.5, "The row's height counts its subagent lines");
-            Check(row.ReadingsLevel == 0 && row.ModelText.Visibility == Visibility.Visible, "A wide row keeps all its readings");
+            Check(!row.DropsTime && !row.DropsModel && row.ModelText.Visibility == Visibility.Visible && row.TimeRun.Text == "7:00", "A wide row keeps all its readings");
+            Check(lines.Take(3).All(line => Content(line).VariantCount == 3), "A line with a model and a time has three reading variants");
             // The task and its subagent lines are separate targets.
             row.SetOpenAction(() => { }, "Open", false);
             MouseEventArgs Pointer(RoutedEvent kind) => new(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = kind };
@@ -120,11 +121,34 @@ internal static class SubagentRowChecks
             Check(narrow.Where(line => Content(line).Chosen == 1).All(line => !Readings(line).Contains("Sol") && !Readings(line).Contains("Sonnet") && !Readings(line).Contains("Haiku"))
                 && narrow.Where(line => Content(line).Chosen == 2).All(line => Readings(line) is "24.1 t/s" or "Waiting for approval · Bash" or "Failed"),
                 "The model goes first, then the time; the speed or state stays");
-            // The task row itself: at this width it drops the model, then the time.
-            window.Width = 200; row = await Shown(parent with { SubagentLines = null, SubagentsFolded = null }, null);
-            Check(row.ReadingsLevel == 2 && row.ModelText.Visibility == Visibility.Collapsed && string.IsNullOrEmpty(row.TimeRun.Text),
+            // The task row itself: each line decides on its own width. A long time drops while the model still fits...
+            var bare = parent with { SubagentLines = null, SubagentsFolded = null };
+            row = await Shown(bare with { TurnTime = "12 hours 34 minutes 56 seconds" }, null);
+            Check(row.DropsTime && !row.DropsModel && string.IsNullOrEmpty(row.TimeRun.Text) && row.ModelText.Visibility == Visibility.Visible,
+                "The first line drops its time without taking the second line's model");
+            // ...and at the narrowest both go, while the speed stays.
+            window.Width = 200; row = await Shown(bare, null);
+            Check(row.DropsTime && row.DropsModel && row.ModelText.Visibility == Visibility.Collapsed && string.IsNullOrEmpty(row.TimeRun.Text),
                 "A narrow task row keeps its speed and drops the model and the time");
             window.Width = 460;
+            // A tag past 120 points keeps its start and end around an ellipsis; long tags widen the panel's probe.
+            string longName = "general-purpose-research-assistant-with-a-long-role";
+            var tagged = running with { TypeTag = longName, NameTag = longName, Title = new string('T', 120) };
+            row = await Shown(parent with { SubagentLines = [tagged] }, null);
+            var tagLine = row.Subagents.Children.OfType<Grid>().First();
+            var longTags = Tags(tagLine);
+            Check(longTags.Count == 2 && longTags.All(tag => tag.Text.StartsWith("gen", StringComparison.Ordinal) && tag.Text.EndsWith("role", StringComparison.Ordinal)
+                && tag.Text.Contains('…') && tag.Text.Length < longName.Length)
+                && SelfAndDescendants(Content(tagLine)).OfType<Border>().All(tag => tag.ActualWidth <= TaskRow.TagWidthLimit + 0.5),
+                "A long tag keeps its start and end around a middle ellipsis, at most 120 points wide");
+            Check(TaskRow.MiddleTrim("short", 100, value => value.Length * 6) == "short"
+                && TaskRow.MiddleTrim("abcdefghij", 30, value => value.Length * 6) == "ab…ij", "Middle truncation keeps as much of both ends as fits");
+            Check(row.IdealWidth() >= 22 + 12 + 20 + 8 + 2 * TaskRow.TagWidthLimit - 1 + 2 * TaskLinePanel.TagGap + 220,
+                "Each tag counts in the panel's width on its own, beside a title measured up to 220 points");
+            // Only the variants that read differently: no model leaves two, no model or time leaves one.
+            row = await Shown(parent with { SubagentLines = [running with { Model = null }, failed with { Model = null, Time = null }] }, null);
+            var spare = row.Subagents.Children.OfType<Grid>().Where(line => line.Tag is EngineSubagentLine).ToList();
+            Check(Content(spare[0]).VariantCount == 2 && Content(spare[1]).VariantCount == 1, "A line builds only the reading variants that differ");
 
             // Without the subagents field: no dots, no lines, no height for them.
             var hidden = PanelOptions.Default with { RowFields = ["rate", "turnTime", "model"] };

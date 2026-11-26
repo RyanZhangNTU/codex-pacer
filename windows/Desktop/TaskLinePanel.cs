@@ -21,6 +21,8 @@ internal sealed class TaskLinePanel : Panel
     /// The reading variant shown: 0 is the fullest.
     internal int Chosen { get; private set; }
     internal FrameworkElement ShownReadings => readings[Chosen];
+    /// How many reading variants the line has: only those that read differently.
+    internal int VariantCount => readings.Count;
     internal FrameworkElement Title => title;
 
     internal TaskLinePanel(FrameworkElement? tags, FrameworkElement title, IReadOnlyList<FrameworkElement> readings)
