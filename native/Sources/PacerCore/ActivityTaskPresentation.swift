@@ -210,16 +210,21 @@ public struct ActivityTaskRowPresentation: Sendable {
     public let delegations: [ActivityTaskRowPresentation]
     /// The older ended runs folded into one line above them.
     public let foldedDelegations: FoldedDelegations?
-    /// One dot per subagent of the current turn, oldest first, at most `subagentDotLimit`.
-    public let subagentDots: [SubagentDot]
-    /// Subagents beyond the dots.
-    public let subagentDotsMore: Int
+    /// One dot per subagent of the current turn: those waiting for the user, then
+    /// running, failed and done ones, each oldest first. A row draws as many as
+    /// fit (`subagentDots(limit:)`), so the ones it hides are the done ones.
+    public let subagentDotStates: [SubagentDot]
+    /// The dots a row of `limit` draws, and how many more it folds into "+n".
+    public func subagentDots(limit: Int) -> (shown: [SubagentDot], more: Int) {
+        (Array(subagentDotStates.prefix(limit)), max(0, subagentDotStates.count - limit))
+    }
     /// Its subagents' lines while the task works: running and waiting ones first,
     /// then the most recently ended, `subagentLineLimit` in all.
     public let subagentLines: [SubagentLine]
     /// The other subagents of the turn, folded into one line under them.
     public let foldedSubagents: FoldedSubagents?
-    public static let subagentLineLimit = 3, subagentDotLimit = 8
+    /// Lines under a task; dots in a two-line row and in a one-line row.
+    public static let subagentLineLimit = 3, subagentDotLimit = 8, compactSubagentDotLimit = 5
     public var delegatedCountText: String { L10n.text("delegation.badge", delegatedCount) }
     /// How many run lines a Claude task shows; running runs always show, up to the runs allowed at once.
     public static let delegationLineLimit = 3
@@ -234,6 +239,15 @@ public struct ActivityTaskRowPresentation: Sendable {
     }
     public enum SubagentDot: String, Sendable, Equatable {
         case running, attention, completed, failed
+        /// What a crowded row keeps first.
+        var priority: Int {
+            switch self {
+            case .attention: return 0
+            case .running: return 1
+            case .failed: return 2
+            case .completed: return 3
+            }
+        }
     }
     /// One subagent under its task: its icon and label from its own row, then
     /// its live speed and time, or how it ended.
@@ -267,8 +281,7 @@ public struct ActivityTaskRowPresentation: Sendable {
     }
     /// What a task's dots read aloud.
     public var subagentDotsAccessibility: String {
-        let total = subagentDots.count + subagentDotsMore
-        return L10n.text("subagent.dots_accessibility", total, subagentDots.filter { $0 == .running }.count)
+        L10n.text("subagent.dots_accessibility", subagentDotStates.count, subagentDotStates.filter { $0 == .running }.count)
     }
     /// The subagents a task shows: those of its current turn, and any still at work from before.
     static func subagentMembers(_ group: ActivityTaskGroup?) -> [SessionActivity] {
@@ -339,8 +352,8 @@ public struct ActivityTaskRowPresentation: Sendable {
                 stopped: folded.filter { $0.codexDelegation?.status == .stopped }.count)
         } else { delegations = []; foldedDelegations = nil }
         let children = Self.subagentMembers(group).map { Self.subagentLine($0, options: options, at: now) }
-        subagentDots = Array(children.map(\.dot).prefix(Self.subagentDotLimit))
-        subagentDotsMore = max(0, children.count - Self.subagentDotLimit)
+        // Stable: within each kind, the order the subagents started.
+        subagentDotStates = children.map(\.dot).enumerated().sorted { ($0.element.priority, $0.offset) < ($1.element.priority, $1.offset) }.map(\.element)
         if group?.isRunning == true || group?.isWaiting == true {
             let active = children.filter(\.isActive), ended = children.filter { !$0.isActive }
             let shownActive = Array(active.prefix(Self.subagentLineLimit))

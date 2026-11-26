@@ -135,7 +135,7 @@ final class ActivityTaskPresentationTests: XCTestCase {
                                            "status": "completed", "at": now.timeIntervalSince1970])
         }
         let row = try XCTUnwrap(ActivityTaskPresentation(activities: activities, requests: [], inbox: CompletionInbox(), at: now).rows.first)
-        XCTAssertEqual(row.subagentDots, [.completed, .completed, .running])
+        XCTAssertEqual(row.subagentDotStates, [.running, .completed, .completed], "Working ones first")
         XCTAssertEqual(row.subagentLines.map(\.state), [.running, .completed, .completed], "Working ones first")
         XCTAssertNil(row.foldedSubagents)
         XCTAssertNotNil(row.subagentLines[0].rateText)
@@ -163,7 +163,7 @@ final class ActivityTaskPresentationTests: XCTestCase {
         XCTAssertTrue(row.subagentLines.allSatisfy { $0.state == .running })
         XCTAssertEqual(row.foldedSubagents, .init(active: 0, ended: 4, failed: 0))
         XCTAssertEqual(row.foldedSubagents?.text, L10n.text("delegation.folded", 4))
-        XCTAssertEqual(row.subagentDots.count, 7)
+        XCTAssertEqual(row.subagentDotStates.count, 7)
         // Once nothing runs, the lines go and the dots stay until the task clears.
         let ended = activities.map { value -> SessionActivity in
             var value = value
@@ -173,6 +173,30 @@ final class ActivityTaskPresentationTests: XCTestCase {
         }
         let done = try XCTUnwrap(ActivityTaskPresentation(activities: ended, requests: [], inbox: CompletionInbox(), at: now.addingTimeInterval(2)).rows.first)
         XCTAssertTrue(done.subagentLines.isEmpty); XCTAssertNil(done.foldedSubagents)
-        XCTAssertEqual(done.subagentDots, Array(repeating: .completed, count: 7))
+        XCTAssertEqual(done.subagentDotStates, Array(repeating: .completed, count: 7))
+    }
+
+    func testACrowdedRowKeepsWaitingAndRunningDotsAndFoldsDoneOnes() throws {
+        var activities = DemoScenario.subagentTasks(stage: .thinking, at: now)
+        let parent = try XCTUnwrap(activities[0].threadID)
+        // Nine more that started earlier and are done: they would fill the row by age.
+        for index in 1...9 {
+            let thread = String(format: "019a0000-0000-7000-8000-%012d", 300 + index)
+            var child = SessionActivity(id: thread, phaseAwareRate: true, sessionID: thread)
+            child.updateParent(parent)
+            child.consumeLive(["method": "turn/started", "threadId": thread, "turnId": "early", "at": now.addingTimeInterval(-25).timeIntervalSince1970])
+            child.consumeLive(["method": "turn/completed", "threadId": thread, "turnId": "early", "status": "completed",
+                               "at": now.addingTimeInterval(-20).timeIntervalSince1970])
+            activities.insert(child, at: 1)
+        }
+        let row = try XCTUnwrap(ActivityTaskPresentation(activities: activities, requests: [], inbox: CompletionInbox(), at: now).rows.first)
+        XCTAssertEqual(row.subagentDotStates.count, 12)
+        let wide = row.subagentDots(limit: ActivityTaskRowPresentation.subagentDotLimit)
+        XCTAssertEqual(wide.shown, [.running, .running, .running] + Array(repeating: .completed, count: 5))
+        XCTAssertEqual(wide.more, 4, "The folded ones are done ones")
+        let narrow = row.subagentDots(limit: ActivityTaskRowPresentation.compactSubagentDotLimit)
+        XCTAssertEqual(narrow.shown, [.running, .running, .running, .completed, .completed])
+        XCTAssertEqual(narrow.more, 7)
+        XCTAssertEqual(row.subagentDotsAccessibility, L10n.text("subagent.dots_accessibility", 12, 3))
     }
 }

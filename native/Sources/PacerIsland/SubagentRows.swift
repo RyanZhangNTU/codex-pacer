@@ -6,6 +6,8 @@ import PacerCore
 /// failed, grey once done.
 struct SubagentDotsView: View {
     let presentation: ActivityTaskRowPresentation
+    /// A one-line row has less room than a two-line one.
+    var limit = ActivityTaskRowPresentation.subagentDotLimit
 
     static func color(_ dot: ActivityTaskRowPresentation.SubagentDot, provider: AgentProvider) -> Color {
         switch dot {
@@ -20,11 +22,12 @@ struct SubagentDotsView: View {
         HStack(spacing: 3) {
             Image(systemName: "person.2").font(.system(size: 9, weight: .semibold)).foregroundStyle(PacerPalette.secondary)
                 .padding(.trailing, 1)
-            ForEach(Array(presentation.subagentDots.enumerated()), id: \.offset) { _, dot in
+            let dots = presentation.subagentDots(limit: limit)
+            ForEach(Array(dots.shown.enumerated()), id: \.offset) { _, dot in
                 Circle().fill(Self.color(dot, provider: presentation.activity.provider)).frame(width: 5, height: 5)
             }
-            if presentation.subagentDotsMore > 0 {
-                Text("+\(presentation.subagentDotsMore)").font(.system(size: 10, weight: .medium)).monospacedDigit()
+            if dots.more > 0 {
+                Text("+\(dots.more)").font(.system(size: 10, weight: .medium)).monospacedDigit()
                     .foregroundStyle(PacerPalette.secondary)
             }
         }

@@ -127,7 +127,9 @@ struct TaskRowView: View {
                 statusIcon(measuring: measuring)
                 title(measuring: measuring)
                 if presentation.delegatedCount > 0 { DelegatedCountChip(text: presentation.delegatedCountText) }
-                if !presentation.subagentDots.isEmpty, options.shows(.subagents) { SubagentDotsView(presentation: presentation) }
+                if !presentation.subagentDotStates.isEmpty, options.shows(.subagents) {
+                    SubagentDotsView(presentation: presentation, limit: ActivityTaskRowPresentation.compactSubagentDotLimit)
+                }
                 if statusLeads {
                     Text(status).font(.system(size: 11, weight: .medium)).foregroundStyle(detailColor).lineLimit(1).fixedSize()
                 } else if showsRateLine {
@@ -191,7 +193,7 @@ struct TaskRowView: View {
             Text(status).foregroundStyle(detailColor).lineLimit(1).layoutPriority(1)
             // Codex for Claude runs this Claude task holds.
             if presentation.delegatedCount > 0 { DelegatedCountChip(text: presentation.delegatedCountText) }
-            if !presentation.subagentDots.isEmpty, options.shows(.subagents) {
+            if !presentation.subagentDotStates.isEmpty, options.shows(.subagents) {
                 SubagentDotsView(presentation: presentation)
             } else if subagents > 0, options.shows(.subagents) {
                 HStack(spacing: 3) {
