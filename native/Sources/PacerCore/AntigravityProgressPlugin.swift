@@ -180,12 +180,19 @@ package struct AntigravityProgressPlugin {
     /// entry or an unsafe path leaves that entire cache directory alone.
     private func removeGeneratedCaches() throws {
         let dataHome = target.home.deletingLastPathComponent().appendingPathComponent("antigravity", isDirectory: true)
+        let schema = CodexProgressEvidence.tool + ".json", notes = "instructions.md"
         for (path, schemas) in [("plugin_data/" + Self.folder, false), ("mcp/" + Self.server, true)] {
             let folder = dataHome.appendingPathComponent(path, isDirectory: true)
             guard storage.isDirectory(folder), let names = try? storage.names(in: folder) else { continue }
-            if schemas && names == [CodexProgressEvidence.tool + ".json"] {
-                let file = folder.appendingPathComponent(CodexProgressEvidence.tool + ".json")
+            // 2.35.2 also keeps the server's instructions beside the tool's schema.
+            if schemas && names.contains(schema) && names.isSubset(of: [schema, notes]) {
+                let file = folder.appendingPathComponent(schema), instructions = folder.appendingPathComponent(notes)
                 guard let data = try? bytes(file), Self.isProgressSchema(data) else { continue }
+                if names.contains(notes) {
+                    guard let text = (try? bytes(instructions)).flatMap({ String(data: $0, encoding: .utf8) }),
+                          text.trimmingCharacters(in: .whitespacesAndNewlines) == ProgressPrompt.toolDescription else { continue }
+                    try storage.remove(instructions)
+                }
                 try storage.remove(file)
             } else if !names.isEmpty { continue }
             try storage.removeEmptyDirectory(folder)

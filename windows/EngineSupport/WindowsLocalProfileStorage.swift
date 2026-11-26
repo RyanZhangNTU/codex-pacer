@@ -12,7 +12,9 @@ public struct WindowsLocalProfileStorage: ClaudeHookStorage {
         return Array((path.hasPrefix("\\\\?\\") ? path : "\\\\?\\" + path).utf16) + [0]
     }
 
-    public func validate(_ url: URL) throws {
+    public func validate(_ url: URL) throws { try validate(url, checksOwner: true) }
+
+    func validate(_ url: URL, checksOwner: Bool) throws {
         guard url.isFileURL, url.path.utf16.count < 32760,
               url.path.dropFirst().hasPrefix(":/"), !url.path.contains("\0") else {
             throw ClaudeHookInstaller.Failure.unsafePath
@@ -32,6 +34,7 @@ public struct WindowsLocalProfileStorage: ClaudeHookStorage {
             if error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND { return }
             throw ClaudeHookInstaller.Failure.unsafePath
         }
+        guard checksOwner else { return }
         var descriptor: PSECURITY_DESCRIPTOR?
         var owner: PSID?
         guard GetNamedSecurityInfoW(Self.wide(url), SE_FILE_OBJECT, DWORD(OWNER_SECURITY_INFORMATION),
@@ -65,10 +68,17 @@ public struct WindowsLocalProfileStorage: ClaudeHookStorage {
 /// directory locked while it is an MCP process's current working directory.
 package struct WindowsProgressPluginStorage: ProgressPluginStorage {
     private let base = WindowsLocalProfileStorage()
-    package init() {}
+
+    /// The user's profile folder is only the plugin's root, and Windows often
+    /// gives it to Administrators or SYSTEM. It must still be a plain folder;
+    /// everything Pacer reads or writes below it keeps the owner check.
+    private let profile: URL
+    package init(profile: URL = FileManager.default.homeDirectoryForCurrentUser) { self.profile = profile.standardizedFileURL }
 
     package func validate(_ url: URL) throws {
-        try base.validate(url)
+        let isProfile = url.standardizedFileURL.path.trimmingCharacters(in: ["/"])
+            .caseInsensitiveCompare(profile.path.trimmingCharacters(in: ["/"])) == .orderedSame
+        try base.validate(url, checksOwner: !isProfile)
         guard base.exists(url), !base.isDirectory(url) else { return }
         let file = CreateFileW(WindowsLocalProfileStorage.wide(url), DWORD(FILE_READ_ATTRIBUTES),
             DWORD(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE), nil, DWORD(OPEN_EXISTING),

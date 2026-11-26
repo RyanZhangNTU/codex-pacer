@@ -73,7 +73,7 @@ struct AntigravityProjection {
         guard let list = try JSONFieldView.document(data).fields(["steps"])["steps"] else { throw JSONFieldView.Failure.malformed }
         return try list.elements(maximumCount: 128).enumerated().map { position, element in
             let index = offset + position
-            let fields = try element.fields(["type", "status", "metadata", "requestedInteraction", "generic"])
+            let fields = try element.fields(["type", "status", "metadata", "requestedInteraction", "generic", "mcpTool"])
             guard let meta = try fields["metadata"]?.fields(["sourceTrajectoryStepInfo", "executionId", "createdAt", "viewableAt",
                                                               "finishedGeneratingAt", "completedAt", "internalMetadata", "requestedInteraction"]),
                   let owner = try meta["sourceTrajectoryStepInfo"]?.fields(["cascadeId", "trajectoryId", "stepIndex"]),
@@ -108,6 +108,15 @@ struct AntigravityProjection {
                    args["ServerName"]?.matchesStringLiteral(AntigravityProgressPlugin.server) == true,
                    args["ToolName"]?.matchesStringLiteral(CodexProgressEvidence.tool) == true,
                    let json = args["Arguments"]?.string(limit: 128) {
+                    percent = CodexProgressEvidence.percent(json)
+                }
+                // 2.35.2 retypes a finished call as MCP_TOOL; only a waiting call stays GENERIC.
+                if typedStatus == .done, name == "CORTEX_STEP_TYPE_MCP_TOOL",
+                   let tool = try? fields["mcpTool"]?.fields(["serverName", "toolCall"]),
+                   tool["serverName"]?.matchesStringLiteral(AntigravityProgressPlugin.server) == true,
+                   let call = try? tool["toolCall"]?.fields(["name", "argumentsJson"]),
+                   call["name"]?.matchesStringLiteral(CodexProgressEvidence.tool) == true,
+                   let json = call["argumentsJson"]?.string(limit: 128) {
                     percent = CodexProgressEvidence.percent(json)
                 }
                 if typedStatus == .waiting, wait == .approval,

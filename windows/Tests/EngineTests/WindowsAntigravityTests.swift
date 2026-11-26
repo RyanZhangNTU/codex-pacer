@@ -320,6 +320,16 @@ final class WindowsAntigravityTests: XCTestCase {
         }
     }
 
+    /// Windows often gives the profile folder to Administrators or SYSTEM; the
+    /// plugin's root must not need the user as owner, while a folder below it does.
+    func testPluginRootAcceptsTheProfileFolderWhateverItsOwner() throws {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        XCTAssertNoThrow(try WindowsProgressPluginStorage().validate(home))
+        XCTAssertNoThrow(try WindowsProgressPluginStorage(profile: home).validate(home.appendingPathComponent(".gemini-pacer-missing")))
+        let other = try directory()
+        XCTAssertNoThrow(try WindowsProgressPluginStorage(profile: other).validate(other))
+    }
+
     func testLockedPluginRemovalRetainsJournalUntilGeneratedCachesCanBeRemoved() throws {
         let profile = try directory(), reporter = profile.appendingPathComponent("pacer.exe").path
         let storage = WindowsProgressPluginStorage()
@@ -333,7 +343,10 @@ final class WindowsAntigravityTests: XCTestCase {
         let mcp = caches.appendingPathComponent("mcp/" + AntigravityProgressPlugin.server)
         let data = caches.appendingPathComponent("plugin_data/codex-pacer")
         for dir in [mcp, data] { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) }
-        try Data(#"{"properties":{"percent":{"type":"integer"}}}"#.utf8).write(to: mcp.appendingPathComponent("report_progress.json"))
+        // As Antigravity 2.35.2 writes them: the tool's schema and the server's instructions.
+        try Data(#"{"name":"report_progress","parameters":{"additionalProperties":false,"properties":{"percent":{"maximum":100,"minimum":0,"type":"integer"}},"required":["percent"],"type":"object"}}"#.utf8)
+            .write(to: mcp.appendingPathComponent("report_progress.json"))
+        try Data(ProgressPrompt.toolDescription.utf8).write(to: mcp.appendingPathComponent("instructions.md"))
         let child = Process(), input = Pipe()
         child.executableURL = URL(fileURLWithPath: try XCTUnwrap(ProcessInfo.processInfo.environment["ComSpec"] ?? ProcessInfo.processInfo.environment["COMSPEC"]))
         child.arguments = ["/d", "/q", "/c", "set /p fixture="]

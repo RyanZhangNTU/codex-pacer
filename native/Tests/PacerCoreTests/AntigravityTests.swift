@@ -37,7 +37,12 @@ private struct Step {
         var object: [String: Any] = ["type": "CORTEX_STEP_TYPE_" + type, "status": "CORTEX_STEP_STATUS_" + status,
                                      "metadata": meta, "generic": ["args": ["secret": "private-tool-sentinel"]],
                                      "userInput": ["userResponse": "private-prompt-sentinel"]]
-        if let arguments {
+        if let arguments, type == "MCP_TOOL" {
+            object["mcpTool"] = ["serverName": arguments["ServerName"] ?? "",
+                                 "toolCall": ["name": arguments["ToolName"] ?? "", "argumentsJson": arguments["Arguments"] ?? ""]]
+            meta["completedAt"] = timestamp(second + 1)
+            object["metadata"] = meta
+        } else if let arguments {
             object["generic"] = ["args": arguments]
             meta["completedAt"] = timestamp(second + 1)
             object["metadata"] = meta
@@ -279,6 +284,21 @@ final class AntigravityTests: XCTestCase {
         await m.refresh(); snapshot = await updates.last
         XCTAssertNil(snapshot.activities.first { $0.threadID == rootID }?.currentProgress)
         XCTAssertEqual(snapshot.activities.first { $0.threadID == childID }?.currentProgress?.percent, 49)
+        await m.stop()
+    }
+
+    /// Antigravity 2.35.2 records an allowed call as MCP_TOOL once it finishes.
+    func testProgressFromAFinishedMcpToolStep() async throws {
+        let f = try Fixture(), m = try f.monitor(), updates = Updates()
+        try f.write([input, report(#"{"percent":35}"#, at: 2, type: "MCP_TOOL"),
+                     report(#"{"percent":90}"#, at: 4, server: "other", type: "MCP_TOOL"),
+                     report(#"{"percent":91}"#, at: 5, tool: "other", type: "MCP_TOOL")], state: "RUNNING", at: 6)
+        await m.start(home: f.home, policy: .collapsed) { await updates.receive($0) }
+        await m.refresh()
+        let snapshot = await updates.last
+        let root = try XCTUnwrap(snapshot.activities.first { $0.threadID == rootID })
+        XCTAssertEqual(root.currentProgress?.percent, 35)
+        XCTAssertEqual(root.currentProgress?.reportedAt, epoch.addingTimeInterval(3))
         await m.stop()
     }
 
