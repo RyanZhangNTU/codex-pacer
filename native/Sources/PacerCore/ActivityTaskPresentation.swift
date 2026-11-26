@@ -210,6 +210,16 @@ public struct ActivityTaskRowPresentation: Sendable {
     public let delegations: [ActivityTaskRowPresentation]
     /// The older ended runs folded into one line above them.
     public let foldedDelegations: FoldedDelegations?
+    /// One dot per subagent of the current turn, oldest first, at most `subagentDotLimit`.
+    public let subagentDots: [SubagentDot]
+    /// Subagents beyond the dots.
+    public let subagentDotsMore: Int
+    /// Its subagents' lines while the task works: running and waiting ones first,
+    /// then the most recently ended, `subagentLineLimit` in all.
+    public let subagentLines: [SubagentLine]
+    /// The other subagents of the turn, folded into one line under them.
+    public let foldedSubagents: FoldedSubagents?
+    public static let subagentLineLimit = 3, subagentDotLimit = 8
     public var delegatedCountText: String { L10n.text("delegation.badge", delegatedCount) }
     /// How many run lines a Claude task shows; running runs always show, up to the runs allowed at once.
     public static let delegationLineLimit = 3
@@ -221,6 +231,76 @@ public struct ActivityTaskRowPresentation: Sendable {
             if failed > 0 { return L10n.text("delegation.folded_failed", ended, failed) }
             return L10n.text(stopped > 0 ? "delegation.folded_ended" : "delegation.folded", ended)
         }
+    }
+    public enum SubagentDot: String, Sendable, Equatable {
+        case running, attention, completed, failed
+    }
+    /// One subagent under its task: its icon and label from its own row, then
+    /// its live speed and time, or how it ended.
+    public struct SubagentLine: Sendable {
+        public enum State: String, Sendable, Equatable { case running, approval, input, completed, failed, stopped, unknown }
+        public let row: ActivityTaskRowPresentation
+        public let state: State
+        /// Only while it writes; a finished or tool-bound subagent shows none.
+        public let rateText: String?
+        public let rateIsFresh: Bool
+        /// Its time while it runs; otherwise its state and how long it took.
+        public let detail: String
+        public var dot: SubagentDot {
+            switch state {
+            case .running: return .running
+            case .approval, .input: return .attention
+            case .failed: return .failed
+            case .completed, .stopped, .unknown: return .completed
+            }
+        }
+        public var isActive: Bool { [.running, .approval, .input].contains(state) }
+        public var accessibilityText: String { [row.title, rateText.map { $0 + " t/s" }, detail].compactMap { $0 }.joined(separator: ", ") }
+    }
+    public struct FoldedSubagents: Equatable, Sendable {
+        public let active: Int, ended: Int, failed: Int
+        public var text: String {
+            if active > 0 { return L10n.text("subagent.folded_more", active + ended) }
+            if failed > 0 { return L10n.text("delegation.folded_failed", ended, failed) }
+            return L10n.text("delegation.folded", ended)
+        }
+    }
+    /// What a task's dots read aloud.
+    public var subagentDotsAccessibility: String {
+        let total = subagentDots.count + subagentDotsMore
+        return L10n.text("subagent.dots_accessibility", total, subagentDots.filter { $0 == .running }.count)
+    }
+    /// The subagents a task shows: those of its current turn, and any still at work from before.
+    static func subagentMembers(_ group: ActivityTaskGroup?) -> [SessionActivity] {
+        guard let group else { return [] }
+        let start = group.primary.turnStartedAt ?? .distantPast
+        return group.members.filter { member in
+            member.id != group.primary.id && !member.isCodexDelegation && !member.isInternalReview &&
+                ([.running, .waitingForInput].contains(member.phase) || (member.turnStartedAt ?? .distantPast) >= start)
+        }.sorted { ($0.turnStartedAt ?? .distantFuture, $0.id) < ($1.turnStartedAt ?? .distantFuture, $1.id) }
+    }
+    static func subagentLine(_ child: SessionActivity, options: TaskPresentationOptions, at now: Date) -> SubagentLine {
+        let row = ActivityTaskRowPresentation(activity: child, unread: false, options: options, at: now)
+        let state: SubagentLine.State
+        switch child.phase {
+        case .running: state = .running
+        case .waitingForInput: state = child.waitingForApproval ? .approval : .input
+        case .completed: state = .completed
+        case .interrupted: state = child.turnFailed ? .failed : .stopped
+        case .unknown: state = .unknown
+        }
+        let live = state == .running ? child.displayedOutputEstimate(at: now).flatMap { child.contributesLiveRate($0) ? $0 : nil } : nil
+        let detail: String
+        switch state {
+        case .running: detail = row.turnTime ?? ""
+        case .approval: detail = PendingAttentionRequest.Kind.approval.label
+        case .input: detail = PendingAttentionRequest.Kind.input.label
+        case .completed, .failed, .stopped, .unknown:
+            let word = L10n.text("subagent." + state.rawValue)
+            detail = row.turnTime.map { word + " · " + $0 } ?? word
+        }
+        return SubagentLine(row: row, state: state, rateText: live.map { String(format: "%.1f", $0.value) },
+                            rateIsFresh: live?.isFresh == true, detail: detail)
     }
     /// A run is running while its ledger says so and Codex has not ended its thread.
     static func isRunningDelegation(_ activity: SessionActivity) -> Bool {
@@ -258,11 +338,27 @@ public struct ActivityTaskRowPresentation: Sendable {
                 failed: folded.filter { [.failed, .timedOut].contains($0.codexDelegation?.status) }.count,
                 stopped: folded.filter { $0.codexDelegation?.status == .stopped }.count)
         } else { delegations = []; foldedDelegations = nil }
+        let children = Self.subagentMembers(group).map { Self.subagentLine($0, options: options, at: now) }
+        subagentDots = Array(children.map(\.dot).prefix(Self.subagentDotLimit))
+        subagentDotsMore = max(0, children.count - Self.subagentDotLimit)
+        if group?.isRunning == true || group?.isWaiting == true {
+            let active = children.filter(\.isActive), ended = children.filter { !$0.isActive }
+            let shownActive = Array(active.prefix(Self.subagentLineLimit))
+            // The most recently ended, in the order they started.
+            let recent = Set(ended.suffix(max(0, Self.subagentLineLimit - shownActive.count)).map(\.row.activity.id))
+            let lines = shownActive + ended.filter { recent.contains($0.row.activity.id) }, shown = Set(lines.map(\.row.activity.id))
+            subagentLines = lines
+            let hidden = children.filter { !shown.contains($0.row.activity.id) }
+            foldedSubagents = hidden.isEmpty ? nil : FoldedSubagents(active: hidden.filter(\.isActive).count,
+                ended: hidden.filter { !$0.isActive }.count, failed: hidden.filter { $0.state == .failed }.count)
+        } else { subagentLines = []; foldedSubagents = nil }
         phase = group?.isRunning == true ? .running : group?.isWaiting == true ? .waitingForInput : activity.observedPhase(at: now)
         title = Self.title(activity, hideProjects: options.hideProjects)
         var text = phase == .completed ? activity.endingLabel : activity.detail(at: now)
         if let link = activity.codexDelegation { text = Self.delegationStatus(link, title: title, phase: phase, detail: text) }
-        if group?.isRunning == true, activity.phase != .running, !activity.turnFailed { text = L10n.text("activity.running_long") }
+        if group?.isRunning == true, activity.phase != .running, !activity.turnFailed {
+            text = L10n.text(children.contains { $0.state == .running } ? "subagent.waiting_parent" : "activity.running_long")
+        }
         if let attention {
             if phase != .running { text = attention.label }
             else {

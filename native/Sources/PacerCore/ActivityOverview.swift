@@ -28,7 +28,10 @@ public struct ActivityOverview: Sendable {
         let rates = agents.compactMap { $0.tokensPerSecond(at: now) }
         // Never carry an old rate from a waiting, ended, stale or internal turn.
         tokensPerSecond = rates.isEmpty ? nil : rates.reduce(0, +)
-        let estimates = agents.compactMap { $0.displayedOutputEstimate(at: now) }
+        // A subagent adds its speed only while it writes, not its last reply's.
+        let estimates = agents.compactMap { agent in
+            agent.displayedOutputEstimate(at: now).flatMap { agent.parentThreadID == nil || agent.contributesLiveRate($0) ? $0 : nil }
+        }
         displayedRate = estimates.isEmpty ? nil : estimates.reduce(0) { $0 + $1.value }
         rateIsFresh = estimates.contains(where: \.isFresh)
     }

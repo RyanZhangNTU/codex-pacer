@@ -477,6 +477,24 @@ class Tailer:
                     rows.append(pathlib.Path(item.path))
                 return rows
         except OSError: return []
+    def subagent_label(self, file, cursor):
+        # Claude Code describes each subagent beside its transcript: its type and its launch's short description.
+        meta = file.with_name(file.stem + '.meta.json'); stamp = self.modified(meta)
+        if not stamp or cursor.get('metaStamp') == stamp: return
+        cursor['metaStamp'] = stamp
+        try:
+            if meta.stat().st_size > 16384: return
+            value = json.loads(meta.read_text(encoding='utf-8'))
+        except (OSError, ValueError): return
+        def clean(text, limit):
+            return ' '.join(text.split())[:limit] if isinstance(text, str) and text.strip() else None
+        kind = clean(value.get('agentType'), 48) if isinstance(value, dict) else None
+        if kind == 'general-purpose': kind = None
+        summary = clean(value.get('description'), 120) if isinstance(value, dict) else None
+        label = (kind + ' · ' + summary if kind else summary) if summary else kind
+        if not label: return
+        cursor['metaRow'] = {'origin':'transcript','kind':'metadata','sessionId':cursor['session'],'parentId':cursor['parent'],'at':stamp,'title':label}
+        self.dirty.add(file)
     def modified(self, path):
         try: return path.stat().st_mtime
         except OSError: return 0
@@ -509,7 +527,9 @@ class Tailer:
                 session = ident(file.stem)
                 if file.suffix != '.jsonl' or not session: continue
                 candidates.append((file, session, None, False))
-                for agent in self.entries(project/session/'subagents',64):
+                folder = project/session/'subagents'
+                agents = self.entries(folder,64)+[agent for run in self.entries(folder/'workflows',16) for agent in self.entries(run,64)]
+                for agent in sorted(agents,key=self.modified,reverse=True)[:64]:
                     if agent.suffix != '.jsonl' or not agent.stem.startswith('agent-'): continue
                     aid = ident(agent.stem[6:])
                     if aid: candidates.append((agent,aid,session,False))
@@ -521,6 +541,7 @@ class Tailer:
             if file not in desired: self.cursors.pop(file,None)
         for file, session, parent, owned in selected:
             if file not in self.cursors: self.cursors[file] = {'inode':0,'offset':0,'fragment':b'','session':session,'parent':parent,'owned':owned,'historicalEnd':None};self.dirty.add(file)
+            if parent: self.subagent_label(file, self.cursors[file])
         registered=self.registrations()
         if registered is not None:
             for file,cursor in self.cursors.items():
@@ -589,6 +610,7 @@ class Tailer:
             self.dirty.discard(file)
             if cursor is None: continue
             if 'registrationRow' in cursor:rows.append(cursor.pop('registrationRow'))
+            if 'metaRow' in cursor:rows.append(cursor.pop('metaRow'))
             try:
                 s=file.stat();reset=s.st_ino!=cursor['inode'] or cursor['offset']>s.st_size
                 if reset:

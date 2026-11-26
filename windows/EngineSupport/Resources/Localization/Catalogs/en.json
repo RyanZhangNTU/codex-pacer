@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "c9d02234472a4ec03f614751d3f73c0e90fd9070a9628746c84cf32f291dee75",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "162fba2f7f05e6c0b9f59d544f27cd360f7da81573d9caa83892cc397b9e9089",
     "windows/EngineSupport/Resources/Localization/en.json": "9c5c3afa9978273c9160fabc0506c301ea0cb77b9090d382d0ec78e963927bff"
   },
   "strings": {
@@ -1575,6 +1575,13 @@
     "settings.window_five_hour": "5 hours",
     "settings.window_weekly": "7 days",
     "source.ssh_retrying": "Pacer will retry these connections automatically.",
+    "subagent.completed": "Done",
+    "subagent.dots_accessibility": "%1$d subagents, %2$d running",
+    "subagent.failed": "Failed",
+    "subagent.folded_more": "%d more subagents",
+    "subagent.stopped": "Stopped",
+    "subagent.unknown": "Status unconfirmed",
+    "subagent.waiting_parent": "Waiting for subagents",
     "support.code.wechat": "WeChat",
     "support.code.wechat_hint": "Scan with WeChat",
     "support.coffee.detail": "Entirely optional. Nothing in Pacer depends on it.",

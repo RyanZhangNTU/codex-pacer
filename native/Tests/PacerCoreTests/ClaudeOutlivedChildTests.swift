@@ -21,6 +21,7 @@ final class ClaudeOutlivedChildTests: XCTestCase {
     private func read(_ rows: [[String: Any]], into state: inout ClaudeActivityState, batch: Bool) {
         if batch { state.consume(ClaudeActivityRecord.encode(["kind": "claudeBatch", "records": rows])!, now: now.addingTimeInterval(100)); return }
         for value in rows { state.consume(ClaudeActivityRecord.encode(value)!, now: now.addingTimeInterval(100)) }
+        state.confirmSubagentStops(now: now.addingTimeInterval(100))
         state.finalizeHistoricalBaseline(now: now.addingTimeInterval(100))
     }
     private func activity(_ state: ClaudeActivityState, _ thread: String) -> SessionActivity? { state.activities.first { $0.threadID == thread } }
@@ -32,9 +33,9 @@ final class ClaudeOutlivedChildTests: XCTestCase {
             // The launch was lost, as to a rotated spool after a restart.
             read([row("prompt", 0), row("subagentStart", 2, thread: child), row("toolStart", 3, thread: child, ["itemId": "child-tool", "attention": "none"]),
                   row("toolEnd", 4, thread: child, ["itemId": "child-tool"])], into: &state, batch: batch)
-            // Its ending names a launch Pacer never read, and a child's own Stop ends nothing.
-            read([row("agentNotification", 5, ["origin": "transcript", "itemId": "agent-tool", "agentId": child, "agentStatus": "completed"]),
-                  row("stopRequested", 5.5, thread: child, ["agents": 0])], into: &state, batch: batch)
+            // Its ending names a launch Pacer never read, and its own SubagentStop was lost with the spool.
+            read([row("agentNotification", 5, ["origin": "transcript", "itemId": "agent-tool", "agentId": child, "agentStatus": "completed"])],
+                 into: &state, batch: batch)
             XCTAssertEqual(activity(state, child)?.phase, .running, label)
             // Agents still in flight, no count, or a count not from the main thread's Stop hook prove nothing.
             for extra: [String: Any] in [["agents": 1], [:], ["origin": "transcript", "agents": 0], ["agents": "0"]] {

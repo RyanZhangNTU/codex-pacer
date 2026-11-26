@@ -321,6 +321,12 @@ struct ClaudeActivityState: Sendable {
     /// confirms the ending; a session that loaded no hooks never writes one.
     private struct ModelStop: Sendable { let turn: String; let at: Double; let failed: Bool }
     private var modelStops: [String: ModelStop] = [:]
+    private struct PendingSubagentStop: Sendable { let turn: String; let at: Double; let thread: String; let parent: String }
+    /// Subagents whose SubagentStop arrived and that have written nothing since.
+    private var pendingSubagentStops: [String: PendingSubagentStop] = [:]
+    /// How long a stopped subagent must stay quiet before its stop counts: a
+    /// blocking hook makes it go on, and its next record arrives within this.
+    static let subagentStopQuiet: TimeInterval = 10
     /// When the process behind each hookless root shut down (`cost-state`).
     /// Claude Code ends every agent of a session that exits, background ones too.
     private struct RootClosure: Sendable {
@@ -401,7 +407,21 @@ struct ClaudeActivityState: Sendable {
     }
     /// A baseline tail younger than 15 minutes may still be live. It is checked
     /// again once its evidence reaches that age; newer evidence releases it.
+    /// A subagent's SubagentStop ends its run, at the stop, once the child has
+    /// written nothing newer for `subagentStopQuiet` seconds.
+    mutating func confirmSubagentStops(now: Date) {
+        for (key, stop) in pendingSubagentStops {
+            guard let value = sessions[key], value.turnID == stop.turn, value.phase == .running else {
+                pendingSubagentStops.removeValue(forKey: key); continue
+            }
+            guard now.timeIntervalSince1970 - stop.at >= Self.subagentStopQuiet else { continue }
+            pendingSubagentStops.removeValue(forKey: key)
+            consumeRecord(["kind": "subagentStop", "origin": "subagentHook", "sessionId": stop.thread, "parentId": stop.parent,
+                           "promptId": stop.turn, "at": stop.at], now: now, attaching: false)
+        }
+    }
     mutating func expireUnconfirmedBaseline(now: Date = Date()) {
+        confirmSubagentStops(now: now)
         for (id, observed) in unconfirmedBaseline {
             guard let value = sessions[id], [.running, .waitingForInput].contains(value.phase), value.lastObserved == observed else {
                 unconfirmedBaseline.removeValue(forKey: id); continue
@@ -448,6 +468,8 @@ struct ClaudeActivityState: Sendable {
                 let historical = attaching || frame["attaching"] as? Bool == true || row["historical"] as? Bool == true
                 consumeRecord(row, now: now, attaching: historical); live = live || !historical
             }
+            // A helper batch is one whole read, so a child's later records are already in.
+            confirmSubagentStops(now: now)
             if frame["baselineFinal"] as? Bool == true { finalizeHistoricalBaseline(now: now) }
             // A helper batch is one read: the hooks come first, so its child
             // records apply before the root's ending ends their runs.
@@ -462,7 +484,7 @@ struct ClaudeActivityState: Sendable {
         if sessions.count > 128 {
             for id in sessions.keys.sorted(by: { (sessions[$0]?.lastObserved ?? .distantPast) > (sessions[$1]?.lastObserved ?? .distantPast) }).dropFirst(128) {
                 sessions.removeValue(forKey: id); hooks.remove(id); metrics.removeValue(forKey: id); historicalRunning.remove(id); observedMeters.removeValue(forKey: id); typedInterruptPrompts.removeValue(forKey: id); agentCompletions.removeValue(forKey: id); agentEnds.removeValue(forKey: id); agentLaunches.removeValue(forKey: id); previousRunStarts.removeValue(forKey: id); modelStops.removeValue(forKey: id)
-                sdkTurns.removeValue(forKey: id); pendingCheckpoints.removeValue(forKey: id)
+                sdkTurns.removeValue(forKey: id); pendingCheckpoints.removeValue(forKey: id); pendingSubagentStops.removeValue(forKey: id)
             }
         }
     }
@@ -655,6 +677,15 @@ struct ClaudeActivityState: Sendable {
         guard date >= (value.lastObserved ?? .distantPast) else { return }
         if origin == "hook" { hooks.insert(key) }
         if kind == "stopRequested" {
+            // A child's SubagentStop fires when it has finished its reply. Another
+            // hook can still block it, so it ends the child only once the child
+            // stays quiet (`confirmSubagentStops`). Workflow children and finished
+            // background ones otherwise read as running until the parent's typed
+            // result, a background notification or the root's idle Stop arrives.
+            if origin == "hook", let parent = value.parentThreadID, value.phase == .running, let turn = value.turnID {
+                pendingSubagentStops[key] = PendingSubagentStop(turn: turn, at: seconds, thread: thread, parent: parent)
+                return
+            }
             if origin == "transcript", record["unownedTurn"] as? Bool != true, !hooks.contains(key),
                [.running, .waitingForInput].contains(value.phase), let turn = value.turnID,
                (ClaudeActivityRecord.identifier(record["promptId"] as? String) ?? turn) == turn {
@@ -726,6 +757,7 @@ struct ClaudeActivityState: Sendable {
         let earlierTurn = value.turnID, earlierStart = value.turnStartedAt
         // Anything newer of the turn means the model's ending did not end it.
         modelStops.removeValue(forKey: key)
+        if let stop = pendingSubagentStops[key], seconds > stop.at { pendingSubagentStops.removeValue(forKey: key) }
         pendingCheckpoints.removeValue(forKey: key)
         switch kind {
         case "prompt":
@@ -977,5 +1009,19 @@ struct ClaudeActivityState: Sendable {
                 kind: kind, detectedAt: date, provider: .claude)
         }
         if requests.count > 128, let oldest = requests.min(by: { $0.value.detectedAt < $1.value.detectedAt })?.key { requests.removeValue(forKey: oldest) }
+    }
+}
+
+extension ClaudeActivityRecord {
+    /// A subagent's line label: its type, unless it is the general one, and the
+    /// launch's short description. Both come from Claude Code's own `.meta.json`.
+    static func subagentLabel(type: String?, description: String?) -> String? {
+        func clean(_ value: String?, _ limit: Int) -> String? {
+            let text = value?.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces)
+            return text.flatMap { $0.isEmpty ? nil : String($0.prefix(limit)) }
+        }
+        let kind = clean(type, 48).flatMap { $0 == "general-purpose" ? nil : $0 }
+        guard let summary = clean(description, 120) else { return kind }
+        return kind.map { $0 + " · " + summary } ?? summary
     }
 }

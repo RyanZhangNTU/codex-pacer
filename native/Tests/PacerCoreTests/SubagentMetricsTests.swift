@@ -237,4 +237,33 @@ final class SubagentMetricsTests: XCTestCase {
         XCTAssertEqual(grouped.first?.runningSubagentCount, 1)
         XCTAssertEqual(grouped.first?.displayedRate(at: start.addingTimeInterval(11))?.value, 80)
     }
+
+    func testASubagentAddsItsSpeedOnlyWhileItWrites() throws {
+        var parent = measured(1), child = measured(2, parent: 1, tokens: 300)
+        let at11 = start.addingTimeInterval(11), at40 = start.addingTimeInterval(40)
+        XCTAssertEqual(ActivityTaskGroup.make([parent, child]).first?.displayedRate(at: at11)?.value, 90)
+        // Still writing, though its last speed is old: it counts.
+        XCTAssertEqual(ActivityTaskGroup.make([parent, child]).first?.displayedRate(at: at40)?.value, 90)
+        // Waiting on its own tool with an old speed: only the task's own speed is left.
+        live(&child, "item/started", 12, ["itemId": "child-tool", "itemType": "commandExecution"])
+        XCTAssertEqual(ActivityTaskGroup.make([parent, child]).first?.displayedRate(at: at40)?.value, 60)
+        XCTAssertEqual(ActivityOverview(activities: [parent, child], at: at40).displayedRate, 60)
+        // Finished: it adds nothing, also once the task itself is done.
+        live(&child, "turn/completed", 41, ["status": "completed"])
+        XCTAssertEqual(ActivityTaskGroup.make([parent, child]).first?.displayedRate(at: start.addingTimeInterval(42))?.value, 60)
+        live(&parent, "turn/completed", 43, ["status": "completed"])
+        XCTAssertEqual(ActivityTaskGroup.make([parent, child]).first?.displayedRate(at: start.addingTimeInterval(44))?.value, 60)
+    }
+
+    func testASpawnedCodexAgentIsNamedForItsRoleAndNickname() throws {
+        func header(_ spawn: [String: Any]) throws -> SessionActivity {
+            var log = SessionActivity(id: id(2), phaseAwareRate: true)
+            log.consume(try JSONSerialization.data(withJSONObject: ["type": "session_meta", "payload": ["id": id(2), "cwd": "/synthetic/project",
+                "source": ["subagent": ["thread_spawn": spawn.merging(["parent_thread_id": id(1)]) { old, _ in old }]]]]))
+            return log
+        }
+        XCTAssertEqual(try header(["agent_nickname": "Linnaeus", "agent_role": "explorer"]).title, "explorer · Linnaeus")
+        XCTAssertEqual(try header(["agent_nickname": "Linnaeus", "agent_role": NSNull()]).title, "Linnaeus")
+        XCTAssertNil(try header([:]).title, "Without either it keeps the project name")
+    }
 }

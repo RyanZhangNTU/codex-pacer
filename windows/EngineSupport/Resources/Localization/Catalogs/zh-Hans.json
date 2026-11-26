@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "1b192e7a2670734002eb278108e7f39b94b3e70a095cf0fb475c283d07b466be",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "326d11e709767e41da99cceec672fefb159192f6317c38eb787228d14e93a7f2",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "3be42c2706a73f341c7e8c9070eaa88a32b6bccef9c648f36f6fca8c0b2f6111"
   },
   "strings": {
@@ -1575,6 +1575,13 @@
     "settings.window_five_hour": "5 \u5c0f\u65f6",
     "settings.window_weekly": "7 \u5929",
     "source.ssh_retrying": "\u5c06\u81ea\u52a8\u91cd\u8bd5\u8fd9\u4e9b SSH \u8fde\u63a5\u3002",
+    "subagent.completed": "\u5df2\u5b8c\u6210",
+    "subagent.dots_accessibility": "%1$d \u4e2a\u5b50\u4ee3\u7406\uff0c%2$d \u4e2a\u8fd0\u884c\u4e2d",
+    "subagent.failed": "\u5931\u8d25",
+    "subagent.folded_more": "\u53e6\u5916 %d \u4e2a\u5b50\u4ee3\u7406",
+    "subagent.stopped": "\u5df2\u505c\u6b62",
+    "subagent.unknown": "\u72b6\u6001\u672a\u786e\u8ba4",
+    "subagent.waiting_parent": "\u7b49\u5f85\u5b50\u4ee3\u7406",
     "support.code.wechat": "\u5fae\u4fe1\u8d5e\u8d4f",
     "support.code.wechat_hint": "\u7528\u5fae\u4fe1\u626b\u4e00\u626b",
     "support.coffee.detail": "\u5b8c\u5168\u81ea\u613f\uff0c\u4e0d\u5f71\u54cd\u4efb\u4f55\u529f\u80fd\u3002",

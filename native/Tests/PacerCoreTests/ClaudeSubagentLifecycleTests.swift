@@ -901,4 +901,31 @@ final class ClaudeSubagentLifecycleTests: XCTestCase {
             XCTAssertEqual(state.activities.first { $0.threadID == parent }?.phase, .running, order)
         } }
     }
+
+    func testAChildsOwnStopEndsItOnceQuietWhileABlockedOneGoesOn() throws {
+        for host in [String?.none, "remote-ssh-discovered:fixture"] {
+            var state = ClaudeActivityState(sourceID: host)
+            send("prompt", to: &state, at: 0)
+            for thread in ["done-child", "blocked-child"] { send("subagentStart", to: &state, thread: thread, at: 2) }
+            for thread in ["done-child", "blocked-child"] { send("stopRequested", to: &state, thread: thread, at: 3) }
+            // Another hook blocked this stop: the child goes on working.
+            send("toolStart", to: &state, thread: "blocked-child", at: 4, extra: ["itemId": "after-block", "attention": "none"])
+            state.confirmSubagentStops(now: now.addingTimeInterval(3 + ClaudeActivityState.subagentStopQuiet - 1))
+            XCTAssertEqual(state.activities.first { $0.threadID == "done-child" }?.phase, .running, "Not yet quiet long enough")
+            state.confirmSubagentStops(now: now.addingTimeInterval(3 + ClaudeActivityState.subagentStopQuiet))
+            let done = try XCTUnwrap(state.activities.first { $0.threadID == "done-child" })
+            XCTAssertEqual(done.phase, .completed)
+            XCTAssertEqual(done.phaseChangedAt, now.addingTimeInterval(3), "It ends at its own stop")
+            XCTAssertEqual(state.activities.first { $0.threadID == "blocked-child" }?.phase, .running)
+            XCTAssertEqual(ActivityTaskGroup.make(state.activities).first?.runningSubagentCount, 1)
+        }
+    }
+    func testSubagentLabelsNameTheTypeAndShortDescription() {
+        XCTAssertEqual(ClaudeActivityRecord.subagentLabel(type: "Explore", description: "Find the callers"), "Explore · Find the callers")
+        XCTAssertEqual(ClaudeActivityRecord.subagentLabel(type: "general-purpose", description: "Read the docs"), "Read the docs")
+        XCTAssertEqual(ClaudeActivityRecord.subagentLabel(type: "Plan", description: "  "), "Plan")
+        XCTAssertEqual(ClaudeActivityRecord.subagentLabel(type: nil, description: "Line one\nline two"), "Line one line two")
+        XCTAssertNil(ClaudeActivityRecord.subagentLabel(type: nil, description: nil))
+        XCTAssertEqual(ClaudeActivityRecord.subagentLabel(type: nil, description: String(repeating: "x", count: 500))?.count, 120)
+    }
 }

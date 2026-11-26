@@ -419,6 +419,13 @@
 
 "activity.subagents_running" = "%d subagents running";
 "activity.subagent_running" = "%d subagent running";
+"subagent.waiting_parent" = "Waiting for subagents";
+"subagent.completed" = "Done";
+"subagent.failed" = "Failed";
+"subagent.stopped" = "Stopped";
+"subagent.unknown" = "Status unconfirmed";
+"subagent.folded_more" = "%d more subagents";
+"subagent.dots_accessibility" = "%1$d subagents, %2$d running";
 
 // Collapsed bar component layout
 "layout.collapsed" = "Collapsed bar";

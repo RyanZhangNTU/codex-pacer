@@ -94,5 +94,23 @@ final class ClaudeActivityDirectoryWatchTests: XCTestCase {
         await monitor.shutdown()
     }
 
-
+    func testWorkflowAgentsAreFollowedAndNamedFromTheirMeta() throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.home) }
+        let run = fixture.sessionDirectory.appendingPathComponent("subagents/workflows/wf_fixture")
+        try FileManager.default.createDirectory(at: run, withIntermediateDirectories: true)
+        let agent = "a6c5b85e432a8b56d"
+        try Data().write(to: run.appendingPathComponent("agent-" + agent + ".jsonl"))
+        try JSONSerialization.data(withJSONObject: ["agentType": "Explore", "description": "Find the callers", "finished": false])
+            .write(to: run.appendingPathComponent("agent-" + agent + ".meta.json"))
+        var reader = ClaudeActivityReader(files: TestFileSystem())
+        let result = reader.read(home: fixture.home, discover: true)
+        let rows = result.records.compactMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        let label = try XCTUnwrap(rows.first { $0["kind"] as? String == "metadata" && $0["sessionId"] as? String == agent })
+        XCTAssertEqual(label["title"] as? String, "Explore · Find the callers")
+        XCTAssertEqual(label["parentId"] as? String, rootSession)
+        XCTAssertTrue(result.watchURLs.map(\.path).contains(run.path), "A new agent in the run is noticed")
+        // An unchanged meta file is not read again.
+        let again = reader.read(home: fixture.home, discover: true).records.compactMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        XCTAssertFalse(again.contains { $0["kind"] as? String == "metadata" && $0["sessionId"] as? String == agent })
+    }
 }

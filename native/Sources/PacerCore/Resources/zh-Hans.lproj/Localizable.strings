@@ -419,6 +419,13 @@
 
 "activity.subagents_running" = "%d 个子代理运行中";
 "activity.subagent_running" = "%d 个子代理运行中";
+"subagent.waiting_parent" = "等待子代理";
+"subagent.completed" = "已完成";
+"subagent.failed" = "失败";
+"subagent.stopped" = "已停止";
+"subagent.unknown" = "状态未确认";
+"subagent.folded_more" = "另外 %d 个子代理";
+"subagent.dots_accessibility" = "%1$d 个子代理，%2$d 个运行中";
 
 // Collapsed bar component layout
 "layout.collapsed" = "折叠栏";

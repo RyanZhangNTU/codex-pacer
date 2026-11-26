@@ -23,7 +23,9 @@ final class DemoScenarioTests: XCTestCase {
                     XCTAssertTrue(rate.isFresh)
                     total += rate.value
                 }
-                XCTAssertEqual(try XCTUnwrap(group.displayedRate(at: now)).value, total, accuracy: 0.0001)
+                // Once nothing runs, the row keeps its own last speed, not its finished subagents'.
+                let expected = stage == .completed ? try XCTUnwrap(tasks[0].displayedOutputEstimate(at: now)).value : total
+                XCTAssertEqual(try XCTUnwrap(group.displayedRate(at: now)).value, expected, accuracy: 0.0001)
                 XCTAssertEqual(group.runningSubagentCount, stage == .completed ? 0 : 3)
                 let overview = ActivityOverview(activities: tasks, at: now)
                 if stage == .completed {

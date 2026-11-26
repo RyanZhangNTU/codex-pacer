@@ -345,6 +345,11 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         let fresh = now < sample.expiresAt
         return OutputEstimate(value: sample.value, reportedAt: sample.reportedAt, isFresh: fresh)
     }
+    /// A subagent's speed counts toward its task while fresh or while it is
+    /// writing; a finished or tool-bound one adds nothing.
+    func contributesLiveRate(_ estimate: OutputEstimate) -> Bool {
+        estimate.isFresh || (phase == .running && [.thinking, .responding].contains(stage))
+    }
     public func displayedRateIsEstimated(at now: Date) -> Bool {
         if currentBackgroundWait != nil { return false }
         return (claudeCloud != nil && phase == .running) ||
@@ -754,6 +759,16 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             let rawSubagent = source?["subagent"] ?? source?["subAgent"]
             let subagent = rawSubagent as? [String: Any]
             let role = (subagent?["other"] as? String)?.lowercased()
+            // A spawned agent's line is named for its role and nickname, not the project.
+            if parentThreadID != nil, title == nil,
+               let spawn = (subagent?["thread_spawn"] ?? subagent?["threadSpawn"]) as? [String: Any] {
+                func clean(_ value: Any?) -> String? {
+                    (value as? String).map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(48)) }.flatMap { $0.isEmpty ? nil : $0 }
+                }
+                let nickname = clean(spawn["agent_nickname"] ?? payload["agent_nickname"]), agentRole = clean(spawn["agent_role"])
+                let label = [agentRole, nickname].compactMap { $0 }.joined(separator: " · ")
+                if !label.isEmpty { updateTitle(label) }
+            }
             let threadSource = (payload["thread_source"] as? String)?.lowercased()
             reviewSubthread = reviewSubthread || rawSubagent as? String == "review" || subagent?["review"] != nil
             autoReviewThread = autoReviewThread || ["guardian", "auto_review", "autoreview"].contains(role ?? "") ||
