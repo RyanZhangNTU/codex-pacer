@@ -16,6 +16,8 @@ struct ClaudeActivityReader {
     private var registrations = ClaudeTranscriptRegistrations()
     private var observationStarted: Date?
     private var observedFiles: Set<URL> = []
+    /// When each followed subagent's `.meta.json` was last read, for its label.
+    private var subagentMetaStamps: [URL: Date] = [:]
     static let initialReadBudget = 512 * 1024
     static let appendReadBudget = 128 * 1024
     static let maximumLiveBacklog = 8 * 1024 * 1024
@@ -34,6 +36,7 @@ struct ClaudeActivityReader {
         self.files = files; self.clock = clock
     }
     mutating func reset() {
+        subagentMetaStamps.removeAll()
         registrations = ClaudeTranscriptRegistrations()
         cursors.removeAll(); discoveryDirectories.removeAll(); observationStarted = nil; observedFiles.removeAll()
         scans = 0; fileReads = 0; bytesRead = 0; transcriptDocumentParses = 0
@@ -71,6 +74,7 @@ struct ClaudeActivityReader {
         var candidates: [(URL, Date, String, String?, Bool)] = []
         if discover {
             var seenFiles: Set<URL> = []
+            var workflowRuns: [URL: [URL]] = [:]
             scans += 1
             let projects = entries(root).filter { directory($0) }.sorted { modified($0) > modified($1) }.prefix(64)
             for project in projects {
@@ -89,7 +93,14 @@ struct ClaudeActivityReader {
                     candidates.append((file, modified(file), session, nil, false))
                     seenFiles.insert(file)
                     let agentFolder = project.appendingPathComponent(session + "/subagents")
-                    for agent in entries(agentFolder).prefix(64) where agent.pathExtension == "jsonl" {
+                    // Workflow runs keep their agents one folder down, one folder per run.
+                    let runs = entries(agentFolder.appendingPathComponent("workflows")).filter(directory)
+                        .sorted { modified($0) > modified($1) }.prefix(16)
+                    workflowRuns[agentFolder] = Array(runs)
+                    let agents = ([agentFolder] + runs).flatMap(entries).filter {
+                        $0.pathExtension == "jsonl" && $0.lastPathComponent.hasPrefix("agent-")
+                    }
+                    for agent in agents.sorted(by: { modified($0) > modified($1) }).prefix(64) {
                         let raw = agent.deletingPathExtension().lastPathComponent
                         guard raw.hasPrefix("agent-"), let id = ClaudeActivityRecord.identifier(String(raw.dropFirst(6))) else { continue }
                         candidates.append((agent, modified(agent), id, session, false))
@@ -112,6 +123,23 @@ struct ClaudeActivityReader {
                 let boundary = !initialObservation && !observedFiles.contains(url) ? observationStarted : nil
                 cursors[url] = Cursor(session: session, parent: parent, sanitized: sanitized, historicalEnd: nil, liveAfter: boundary)
             }
+            // Claude Code describes each subagent beside its transcript: its type
+            // and the short description its launch gave. That names its line.
+            subagentMetaStamps = subagentMetaStamps.filter { desired.contains($0.key) }
+            for (url, _, session, parent, _) in selected {
+                guard let parent else { continue }
+                let meta = url.deletingPathExtension().appendingPathExtension("meta.json"), stamp = modified(meta)
+                guard stamp != .distantPast, subagentMetaStamps[url] != stamp else { continue }
+                subagentMetaStamps[url] = stamp
+                guard let size = (try? meta.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size <= 16_384,
+                      let data = try? Data(contentsOf: meta), let fields = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+                let display = SubagentDisplay(claudeType: fields["agentType"] as? String, description: fields["description"] as? String)
+                var row: [String: Any] = ["kind": "metadata", "origin": "transcript", "sessionId": session, "parentId": parent,
+                                          "at": stamp.timeIntervalSince1970, "subagentMeta": true]
+                row["agentType"] = display.typeTag
+                row["description"] = display.title
+                if let bytes = ClaudeActivityRecord.encode(row) { records.append(bytes) }
+            }
             if let registered = registrations.sessions(home: home, files: files) {
                 for (url, cursor) in cursors where !cursor.sanitized && cursor.parent == nil {
                     let present = registered.contains(cursor.session)
@@ -133,13 +161,24 @@ struct ClaudeActivityReader {
             // root's project and nearest existing session/subagent parent so
             // later creation at either level triggers the same discovery path.
             var directories = [home, root, spool, home.appendingPathComponent("sessions")].map(nearestExistingDirectory)
+            var runsToWatch: [URL] = []
             for (file, _, session, parent, sanitized) in selected where !sanitized {
-                let project = parent == nil ? file.deletingLastPathComponent() :
-                    file.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                var project = file.deletingLastPathComponent()
+                if let parent {
+                    // `<session>/subagents/agent-*.jsonl`, or one Workflow run deeper.
+                    while project.lastPathComponent != parent, project.pathComponents.count > 2 { project = project.deletingLastPathComponent() }
+                    project = project.deletingLastPathComponent()
+                    if file.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent == "workflows" {
+                        directories.append(nearestExistingDirectory(file.deletingLastPathComponent()))
+                    }
+                }
                 let sessionDirectory = project.appendingPathComponent(parent ?? session)
-                directories += [project, sessionDirectory, sessionDirectory.appendingPathComponent("subagents")].map(nearestExistingDirectory)
+                let agents = sessionDirectory.appendingPathComponent("subagents")
+                directories += [project, sessionDirectory, agents, agents.appendingPathComponent("workflows")].map(nearestExistingDirectory)
+                runsToWatch += workflowRuns[agents] ?? []
             }
             directories += projects.prefix(2).map(nearestExistingDirectory)
+            directories += runsToWatch
             var seen: Set<URL> = []
             discoveryDirectories = Array(directories.filter { seen.insert($0).inserted }.prefix(Self.maximumDirectoryWatches))
         }

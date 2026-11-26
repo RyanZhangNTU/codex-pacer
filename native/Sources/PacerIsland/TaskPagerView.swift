@@ -25,7 +25,11 @@ struct TaskPagerView: View {
         return max(full, rows.map(height).reduce(0, +) + CGFloat(max(0, rows.count - 1)) * rowSpacing)
     }
     private func height(_ row: ActivityTaskRowPresentation) -> CGFloat {
-        rowHeight + DelegationList.height(row.delegations.count, folded: row.foldedDelegations != nil)
+        rowHeight + subagentHeight(row) + DelegationList.height(row.delegations.count, folded: row.foldedDelegations != nil)
+    }
+    /// A task's subagent lines show with its subagents field.
+    private func subagentHeight(_ row: ActivityTaskRowPresentation) -> CGFloat {
+        model.panelOptions.shows(.subagents) ? SubagentList.height(row.subagentLines.count, folded: row.foldedSubagents != nil) : 0
     }
 
     var header: some View {
@@ -68,6 +72,10 @@ struct TaskPagerView: View {
                                     model.open(activity)
                                 }
                                 .frame(height: rowHeight)
+                            if subagentHeight(row) > 0 {
+                                SubagentList(lines: row.subagentLines, folded: row.foldedSubagents, enabled: model.canOpen(activity),
+                                             open: { model.open(activity) })
+                            }
                             if !row.delegations.isEmpty || row.foldedDelegations != nil {
                                 DelegationList(rows: row.delegations, folded: row.foldedDelegations, enabled: model.canOpen(activity),
                                                open: { model.open(activity) }, stop: { model.stopDelegation($0) })

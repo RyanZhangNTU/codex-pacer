@@ -116,7 +116,13 @@ public struct CompactBarContext: Codable, Equatable, Sendable {
         // A running task's words follow its row (`SessionActivity.detail`): a
         // turn holding for background work says so instead of the last stage
         // it reached, such as its reply.
-        func stage(_ task: SessionActivity) -> Status {
+        func stage(_ task: SessionActivity, countSubagents: Bool = false) -> Status {
+            let group = groups.first { $0.primary.id == task.id }
+            // The count says more than the wait; the wait replaces a stale stage.
+            if countSubagents, let children = group?.runningSubagentCount, children > 0 {
+                return .count(children == 1 ? "activity.subagent_running" : "activity.subagents_running", children)
+            }
+            if group?.waitingForSubagents == true { return .text("subagent.waiting_parent") }
             if task.currentBackgroundWait != nil { return .text("activity.background_wait_compact") }
             return .text(task.stage == .tool ? "activity.tool_compact" : task.stage == .responding ? "activity.responding_compact" : "activity." + task.stage.rawValue)
         }
@@ -128,15 +134,14 @@ public struct CompactBarContext: Codable, Equatable, Sendable {
             ordinary = pending.count == 1 ? .text(ending.turnFailed ? "activity.failed" : ending.phase == .interrupted ? "activity.stopped_compact" : "activity.done_compact") : .count("activity.ended_compact", pending.count)
         } else if let waiting = overview.waiting.first { ordinary = .text(waiting.waitingForApproval ? "attention.approval" : "attention.input") }
         else if activeCount == 1, let task = overview.running.first {
-            let children = groups.first { $0.primary.id == task.id }?.runningSubagentCount ?? 0
-            ordinary = children > 0 ? .count(children == 1 ? "activity.subagent_running" : "activity.subagents_running", children) : stage(task)
+            ordinary = stage(task, countSubagents: true)
         } else { ordinary = activeCount == 0 ? .text("activity.idle") : .tasks(activeCount) }
         status = ordinary
         let latest = overview.running.max(by: {
             let left = $0.lastObserved ?? .distantPast, right = $1.lastObserved ?? .distantPast
             return left == right ? $0.id < $1.id : left < right
         })
-        latestStage = latest.map(stage)
+        latestStage = latest.map { stage($0) }
         if overview.running.count > 1, !attention, pending.isEmpty, let latest { displayStatus = stage(latest) } else { displayStatus = ordinary }
     }
     public func headerStatusText(language: AppLanguage) -> String { status.text(language) }

@@ -19,7 +19,7 @@ final class ClaudeOutlivedChildTests: XCTestCase {
     }
     /// One read: an SSH helper batch, or the native reader's frames and the end of its read.
     private func read(_ rows: [[String: Any]], into state: inout ClaudeActivityState, batch: Bool) {
-        if batch { state.consume(ClaudeActivityRecord.encode(["kind": "claudeBatch", "records": rows])!, now: now.addingTimeInterval(100)); return }
+        if batch { state.consume(ClaudeActivityRecord.encode(["kind": "claudeBatch", "baselineFinal": true, "records": rows])!, now: now.addingTimeInterval(100)); return }
         for value in rows { state.consume(ClaudeActivityRecord.encode(value)!, now: now.addingTimeInterval(100)) }
         state.finalizeHistoricalBaseline(now: now.addingTimeInterval(100))
     }
@@ -32,9 +32,9 @@ final class ClaudeOutlivedChildTests: XCTestCase {
             // The launch was lost, as to a rotated spool after a restart.
             read([row("prompt", 0), row("subagentStart", 2, thread: child), row("toolStart", 3, thread: child, ["itemId": "child-tool", "attention": "none"]),
                   row("toolEnd", 4, thread: child, ["itemId": "child-tool"])], into: &state, batch: batch)
-            // Its ending names a launch Pacer never read, and a child's own Stop ends nothing.
-            read([row("agentNotification", 5, ["origin": "transcript", "itemId": "agent-tool", "agentId": child, "agentStatus": "completed"]),
-                  row("stopRequested", 5.5, thread: child, ["agents": 0])], into: &state, batch: batch)
+            // Its ending names a launch Pacer never read, and its own SubagentStop was lost with the spool.
+            read([row("agentNotification", 5, ["origin": "transcript", "itemId": "agent-tool", "agentId": child, "agentStatus": "completed"])],
+                 into: &state, batch: batch)
             XCTAssertEqual(activity(state, child)?.phase, .running, label)
             // Agents still in flight, no count, or a count not from the main thread's Stop hook prove nothing.
             for extra: [String: Any] in [["agents": 1], [:], ["origin": "transcript", "agents": 0], ["agents": "0"]] {
@@ -82,8 +82,16 @@ final class ClaudeOutlivedChildTests: XCTestCase {
                   row("toolStart", 6, thread: child, ["itemId": "child-tool", "attention": "none"]),
                   row("toolStart", 6.5, thread: "foreground-child", ["itemId": "foreground-child-tool", "attention": "none"])], into: &state, batch: batch)
             XCTAssertEqual(ActivityTaskGroup.make(state.activities).first?.runningSubagentCount, 3, label)
+            read([row("subagentStart", 3, thread: "finished-child"), row("stopRequested", 5, thread: "finished-child")],
+                 into: &state, batch: batch)
+            XCTAssertEqual(activity(state, "finished-child")?.endedBySubagentHook, true, label)
             read([row(ending, 7, ["origin": "transcript"])], into: &state, batch: batch)
             XCTAssertEqual(activity(state, parent)?.phase, .interrupted, label)
+            let finished = try XCTUnwrap(activity(state, "finished-child"))
+            XCTAssertEqual(finished.phase, .completed, label)
+            XCTAssertFalse(finished.turnFailed)
+            XCTAssertFalse(finished.endedBySubagentHook)
+            XCTAssertEqual(finished.phaseChangedAt, now.addingTimeInterval(5), label)
             for (thread, last) in [(child, 6.0), ("foreground-child", 6.5)] {
                 let ended = try XCTUnwrap(activity(state, thread), label)
                 XCTAssertEqual(ended.phase, .interrupted, "\(thread), \(label)")

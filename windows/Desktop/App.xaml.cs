@@ -34,6 +34,8 @@ public partial class App : Application
     private IStartupRegistration? startupRegistration;
     private UiText? ui;
     private bool demo;
+    /// The demo's Codex task works with three subagents, as the Mac's `--demo-subagents`.
+    private bool demoSubagents;
     private string? demoPreferencesFile;
     private Guid? demoPreferencesScope;
     private bool? demoDark;
@@ -70,6 +72,7 @@ public partial class App : Application
             return;
         }
         demo = e.Args.Contains("--demo");
+        demoSubagents = demo && e.Args.Contains("--demo-subagents");
         int themeIndex = Array.IndexOf(e.Args, "--theme");
         if (themeIndex >= 0)
         {
@@ -353,7 +356,7 @@ public partial class App : Application
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException) { }
             await engine.StartAsync(executable, demo, language, configuration: preferences.EngineConfiguration(), referenceFixture: referenceFixture,
-                claudeRuntimeRoot: runtimeRoot, codexProgressRuntimeRoot: codexProgressRuntimeRoot, crashLog: crashLog);
+                claudeRuntimeRoot: runtimeRoot, codexProgressRuntimeRoot: codexProgressRuntimeRoot, crashLog: crashLog, demoSubagents: demoSubagents);
             ShellProjection.Ready();
             engineReady.TrySetResult();
             engineReadyTicks = Environment.TickCount64;
@@ -452,6 +455,7 @@ public partial class App : Application
         {
             start.ArgumentList.Add("--demo"); start.ArgumentList.Add("--language");
             start.ArgumentList.Add(preferences.Language == "system" ? (CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh" ? "zh-Hans" : "en") : preferences.Language);
+            if (demoSubagents) start.ArgumentList.Add("--demo-subagents");
         }
         if (demoPreferencesFile != null)
         {

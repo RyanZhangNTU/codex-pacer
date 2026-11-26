@@ -113,12 +113,98 @@ final class ExpandedPanelDisplayTests: XCTestCase {
         XCTAssertEqual(TaskRowView.height(.oneLine), 38)
         XCTAssertEqual(TaskRowView.height(.twoLine), 54)
 
+        func subagentWidth(_ description: String, type: String?, codexTask: String? = nil) async throws -> CGFloat {
+            var child = DemoScenario.subagentTasks(stage: .thinking, at: now)[1]
+            if let codexTask {
+                var spawn: [String: Any] = ["agent_path": "/root/" + codexTask]
+                if let type { spawn["agent_role"] = type }
+                child.subagentDisplay = SubagentDisplay(spawn: spawn, header: [:])
+            } else {
+                child.subagentDisplay = SubagentDisplay(claudeType: type, description: description)
+            }
+            let line = ActivityTaskRowPresentation.subagentLine(child, options: .init(), at: now)
+            return try await measure(SubagentList(lines: [line], enabled: true, open: {}))
+        }
+        let short = try await subagentWidth("Trace", type: nil)
+        let tagged = try await subagentWidth("Trace", type: "Explore")
+        let long = try await subagentWidth(String(repeating: "Wide ", count: 24), type: "Explore")
+        XCTAssertGreaterThan(tagged, short); XCTAssertGreaterThan(long, tagged)
+        XCTAssertLessThanOrEqual(long - tagged, 220 - 48 + 1, "Only the title has the 220 pt probe cap")
+        let wideTag = String(repeating: "W", count: 48)
+        let plugin = try await subagentWidth("Trace", type: "pr-review-toolkit:silent-failure-hunter")
+        XCTAssertEqual(plugin - short, 120 + 4, accuracy: 1)
+        // A Codex subagent: its task-name tag and its role tag, each truncated; its title is its state.
+        let oneTag = try await subagentWidth("", type: nil, codexTask: String(repeating: "w", count: 48))
+        let both = try await subagentWidth("", type: wideTag, codexTask: String(repeating: "w", count: 48))
+        XCTAssertEqual(both - oneTag, 120 + 4, accuracy: 1, "Each truncated tag and its gap add to the width")
+
         let withButtons = try await measure(TaskPagerView(model: model, actions: true).header)
         let alone = try await measure(TaskPagerView(model: model, actions: false).header)
         let controls = NSHostingView(rootView: IslandPanelControls(model: model).fixedSize()).fittingSize.width
         XCTAssertGreaterThanOrEqual(withButtons - alone, controls,
             "A task list below the first block keeps only its page controls")
         await model.shutdown()
+    }
+
+    func testOneAndTwoLineRowsReadTheDotsTheyDraw() throws {
+        let tasks = DemoScenario.subagentTasks(stage: .thinking, at: now)
+        let row = try XCTUnwrap(ActivityTaskPresentation(activities: tasks, requests: [], inbox: CompletionInbox(), at: now).rows.first)
+        XCTAssertEqual(SubagentDotsView.color(.failed, provider: .codex), PacerPalette.danger)
+        XCTAssertEqual(SubagentDotsView.color(.attention, provider: .claude), PacerPalette.attention)
+        for style in [ExpandedPanelOptions.RowStyle.oneLine, .twoLine] {
+            var options = ExpandedPanelOptions(); options.rowStyle = style
+            var view = TaskRowView(presentation: row, group: nil, now: now, enabled: true, accent: .blue, options: options) {}
+            XCTAssertTrue(view.showsSubagentDots); XCTAssertTrue(view.accessibilityText.contains(row.subagentDotsAccessibility))
+            view.options.rowFields.remove(.subagents)
+            XCTAssertFalse(view.showsSubagentDots); XCTAssertFalse(view.accessibilityText.contains(row.subagentDotsAccessibility))
+        }
+    }
+
+    func testLineCompressesTitleBeforeDroppingModelThenTime() throws {
+        // Distinct rendered heights identify which variant SwiftUI actually placed.
+        for (width, height) in [(300, 21), (158, 21), (157, 22), (107, 23)] {
+            let view = TaskLineLayout(measuring: false, hasModel: true, hasTime: true) { model, time in
+                HStack(spacing: 0) {
+                    Text(String(repeating: "long title ", count: 10)).lineLimit(1).frame(minWidth: 48, maxWidth: .infinity)
+                    Color.blue.frame(width: 20) // speed
+                    if time { Color.gray.frame(width: 40) }
+                    if model { Color.green.frame(width: 50) }
+                }
+                .frame(height: model ? 21 : time ? 22 : 23)
+            }
+            .frame(width: CGFloat(width)).fixedSize(horizontal: false, vertical: true)
+            XCTAssertEqual(try XCTUnwrap(ImageRenderer(content: view).cgImage).height, height, "width \(width)")
+        }
+    }
+
+    func testTwoLineRowFitsTimeAndModelIndependently() throws {
+        let id = "fixture-task"
+        var task = SessionActivity(id: id, sourceHost: String(repeating: "W", count: 16), sourceHostID: "fixture",
+                                   provider: .claude, sessionID: id)
+        task.applyRuntime(["method": "turn/started", "threadId": id, "turnId": "turn", "at": now.timeIntervalSince1970 - 90])
+        task.applyRuntime(["method": "metadata", "threadId": id, "model": "M", "at": now.timeIntervalSince1970])
+        let row = ActivityTaskRowPresentation(activity: task, unread: false, at: now)
+        func render(_ fields: Set<ExpandedPanelOptions.RowField>) throws -> Data {
+            var options = ExpandedPanelOptions(); options.rowFields = fields
+            let view = TaskRowView(presentation: row, group: nil, now: now, enabled: true, accent: .blue, options: options) {}
+            let lines = view.textLines(measuring: false).frame(width: 110).fixedSize(horizontal: false, vertical: true)
+            let image = try XCTUnwrap(ImageRenderer(content: lines).cgImage)
+            return try XCTUnwrap(image.dataProvider?.data as Data?)
+        }
+        // A mandatory source wider than line two still leaves time on line one.
+        let crowdedStatus = try render([.source, .turnTime, .model])
+        XCTAssertEqual(crowdedStatus, try render([.source, .turnTime]))
+        XCTAssertNotEqual(crowdedStatus, try render([.source]))
+        // The rate placeholder crowds time off line one. The short model fits on line two.
+        let crowdedRate = try render([.rate, .turnTime, .model])
+        XCTAssertEqual(crowdedRate, try render([.rate, .model]))
+        XCTAssertNotEqual(crowdedRate, try render([.rate]))
+    }
+
+    func testMinimumWidthOfAnEmptyLine() {
+        let host = NSHostingView(rootView: MinimumLineWidth { EmptyView() })
+        XCTAssertEqual(host.fittingSize, .zero)
+        host.layoutSubtreeIfNeeded()
     }
 
     func testSettingsPageSavesOnlyRealEditsAndSketchesPairedQuotas() {

@@ -98,6 +98,7 @@ internal static class Program
                 if (All("collapsed")) await Attempt("Compact TPS geometry", () => CollapsedLayoutChecks.CheckRateGeometry(projections));
                 if (All("collapsed")) await Attempt(nameof(CompactStatusMotionChecks), () => CompactStatusMotionChecks.Run());
                 if (All("island") || Has("collaboration")) await Attempt(nameof(DelegationRowChecks), () => DelegationRowChecks.Run(output));
+                if (All("island")) await Attempt(nameof(SubagentRowChecks), () => SubagentRowChecks.Run(output));
                 // Native mouse and keyboard input on an owned synthetic island; the cursor is restored afterwards.
                 // Hosted CI desktops do not deliver synthesized input, so this stays an explicit local group.
                 if (Has("position"))
