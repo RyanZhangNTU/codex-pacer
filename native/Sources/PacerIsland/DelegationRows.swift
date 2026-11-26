@@ -77,10 +77,7 @@ struct FoldedRunsLine: View {
     }
 }
 
-/// One run: its icon (state and progress ring), Claude's label, then speed,
-/// time, model and effort, always on the line and reaching its end; no hover
-/// card. While it runs, hovering lays Stop over the line's end, and the
-/// numbers under it fade out.
+/// Hovering a running line lays Stop over its trailing readings.
 struct DelegationLineView: View {
     let presentation: ActivityTaskRowPresentation
     let enabled: Bool
@@ -88,84 +85,31 @@ struct DelegationLineView: View {
     let stop: () -> Void
     @State private var hovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private var phase: ActivityPhase { presentation.phase }
 
-    /// The label and state stop widening the panel here, as on Windows.
-    static let measuredLabelWidth: CGFloat = 220
-    /// What surrounds a line's content: the rail and its inset before it, the margins after it.
-    /// Stop takes no room of its own.
-    private static let outerWidth: CGFloat = IslandMetrics.rowInset + 13 + 12 + 2 + 6
     /// Stop's size, and how far the numbers fade before it.
     private static let stopSize: CGFloat = 20, fadeWidth: CGFloat = 10
     private var showsStop: Bool { hovered && presentation.canStopDelegation }
 
     var body: some View {
-        Button(action: open) { content(measuring: false) }
-            .buttonStyle(.plain).disabled(!enabled)
-            .mask { fade }
-            .accessibilityLabel(accessibilityText)
-            .accessibilityHint(L10n.text(enabled ? "common.open_chat" : "activity.no_link"))
-            // VoiceOver reaches Stop without hovering, as an action of the line.
-            .accessibilityActions {
-                if presentation.canStopDelegation { Button(L10n.text("delegation.stop"), action: stop) }
-            }
-            .overlay(alignment: .trailing) { if showsStop { stopButton.transition(.opacity) } }
-            .padding(.trailing, 2)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovered && enabled ? PacerPalette.hover : .clear))
-        .background {
-            // The panel widens to show a run's state, like a task row's title.
-            content(measuring: true).fixedSize(horizontal: true, vertical: false)
-                .background(GeometryReader { geometry in
-                    Color.clear.preference(key: ExpandedContentIdealWidth.self, value: geometry.size.width + Self.outerWidth)
-                })
-                .hidden().allowsHitTesting(false).accessibilityHidden(true)
+        Button(action: open) {
+            ChildTaskLine(row: presentation, typeTag: presentation.modeTag,
+                active: ActivityTaskRowPresentation.isRunningDelegation(presentation.activity),
+                rate: presentation.rateText, fresh: presentation.rate?.isFresh == true,
+                time: presentation.turnTime, model: presentation.model + (presentation.effort.map { " " + $0 } ?? ""))
         }
+        .buttonStyle(.plain).disabled(!enabled)
+        .mask { fade }
+        .accessibilityLabel(accessibilityText)
+        .accessibilityHint(L10n.text(enabled ? "common.open_chat" : "activity.no_link"))
+        // VoiceOver reaches Stop without hovering, as an action of the line.
+        .accessibilityActions {
+            if presentation.canStopDelegation { Button(L10n.text("delegation.stop"), action: stop) }
+        }
+        .overlay(alignment: .trailing) { if showsStop { stopButton.transition(.opacity) } }
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovered && enabled ? PacerPalette.hover : .clear))
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .animation(reduceMotion ? nil : .easeOut(duration: TaskRowInteraction.hoverDuration), value: hovered)
-    }
-
-    /// The width probe draws no icon, so only the shown line keeps the run's motion.
-    private func content(measuring: Bool) -> some View {
-        HStack(spacing: 8) {
-            if measuring {
-                Color.clear.frame(width: 20, height: 20)
-            } else {
-                TaskStatusIconView(id: presentation.activity.id, ring: presentation.progressRing, face: TaskRowView.face(presentation),
-                                   color: TaskRowView.color(presentation), animates: !reduceMotion, completionPulseOnly: true)
-                    .frame(width: TaskStatusIconNSView.diameter, height: TaskStatusIconNSView.diameter)
-                    .scaleEffect(20 / TaskStatusIconNSView.diameter)
-                    .frame(width: 20, height: 20)
-                    .accessibilityHidden(true)
-            }
-            Text(presentation.title).font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(presentation.dimmed ? PacerPalette.secondary : PacerPalette.primary)
-                .lineLimit(1).truncationMode(.tail)
-                .frame(maxWidth: measuring ? Self.measuredLabelWidth : .infinity, alignment: .leading)
-            trailing
-        }
-        .padding(.leading, 2).padding(.vertical, 5)
-        .contentShape(Rectangle())
-    }
-
-    /// Speed and time as on a task row, then the model in Codex's color.
-    private var trailing: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 0) {
-            if let rate = presentation.rateText {
-                Text(rate).font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(presentation.rate?.isFresh == true && !presentation.dimmed ? PacerPalette.primary : PacerPalette.secondary)
-                Text(presentation.turnTime != nil ? " t/s · " : " t/s  ").font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(PacerPalette.secondary)
-            }
-            if let time = presentation.turnTime {
-                Text(time + "  ").font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(phase == .running ? PacerPalette.primary.opacity(0.78) : PacerPalette.secondary)
-            }
-            Text(presentation.model + (presentation.effort.map { " " + $0 } ?? ""))
-                .font(.system(size: 11, weight: .medium)).foregroundStyle(AgentProvider.codex.tint)
-                .opacity(presentation.dimmed ? 0.7 : 1)
-        }
-        .monospacedDigit().lineLimit(1).fixedSize()
     }
 
     /// The whole line, or with Stop showing, the line fading out just before it.

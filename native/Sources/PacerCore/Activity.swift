@@ -28,12 +28,50 @@ public enum ActivityStage: String, Sendable {
     }
 }
 
+/// Display-only fields from a child transcript's sidecar or spawn header.
+public struct SubagentDisplay: Equatable, Sendable {
+    public let typeTag: String?
+    public let nameTag: String?
+    public let title: String?
+
+    private static func text(_ value: String?, limit: Int) -> String? {
+        guard let value else { return nil }
+        let words = value.components(separatedBy: CharacterSet.whitespacesAndNewlines.union(.controlCharacters))
+        let text = String(words.filter { !$0.isEmpty }.joined(separator: " ").prefix(limit))
+        return text.isEmpty ? nil : text
+    }
+
+    init(claudeType: String?, description: String?) {
+        let type = Self.text(claudeType, limit: 48)
+        typeTag = type == "general-purpose" ? nil : type
+        nameTag = nil
+        title = Self.text(description, limit: 120)
+    }
+
+    init(spawn: [String: Any], header: [String: Any]) {
+        func word(_ key: String) -> String? {
+            guard let word = (spawn[key] ?? header[key]) as? String, word.utf8.count <= 48,
+                  word.range(of: #"^[\p{L}\p{N}_-]+\z"#, options: .regularExpression) != nil else { return nil }
+            return word
+        }
+        let role = word("agent_role")
+        typeTag = role == "default" ? nil : role
+        nameTag = word("agent_nickname")
+        let path = (spawn["agent_path"] ?? header["agent_path"]) as? String
+        let leaf = path?.split(separator: "/", omittingEmptySubsequences: false).last.map(String.init)
+        title = leaf.flatMap {
+            $0.range(of: #"^[a-z0-9_]{1,64}\z"#, options: .regularExpression) == nil ? nil : $0
+        } ?? nameTag
+    }
+}
+
 public struct SessionActivity: Equatable, Sendable, Identifiable {
     public private(set) var id: String
     public let provider: AgentProvider
     public let sourceHost: String?
     public let sourceHostID: String?
     public private(set) var title: String?
+    public internal(set) var subagentDisplay: SubagentDisplay?
     private(set) var titleWasExplicitlyCleared = false
     public var project: String
     /// A public provider label for collectors that do not read task titles.
@@ -104,6 +142,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     mutating func setCloudReplyRate(_ rate: OutputEstimate?) { cloudReplyRate = rate }
     public private(set) var phase: ActivityPhase = .unknown
     public private(set) var turnID: String?
+    /// Start of the Claude request when a background wake opened another turn.
+    var continuedRequestStart: Date?
+    private(set) var endedBySubagentHook = false
     public private(set) var turnStartedAt: Date?
     public private(set) var lastObserved: Date?
     public private(set) var phaseChangedAt: Date?
@@ -359,6 +400,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     public mutating func mergeDisplayMetadata(from other: SessionActivity) {
         guard canonicalized().id == other.canonicalized().id else { return }
         if parentThreadID == nil { parentThreadID = other.parentThreadID }
+        if subagentDisplay == nil { subagentDisplay = other.subagentDisplay }
+        if continuedRequestStart == nil, turnID == other.turnID { continuedRequestStart = other.continuedRequestStart }
         if navigationDirectory == nil { navigationDirectory = other.navigationDirectory }
         if desktopSessionID == nil { desktopSessionID = other.desktopSessionID }
         if rolloutURL == nil { rolloutURL = other.rolloutURL }
@@ -759,15 +802,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             let rawSubagent = source?["subagent"] ?? source?["subAgent"]
             let subagent = rawSubagent as? [String: Any]
             let role = (subagent?["other"] as? String)?.lowercased()
-            // A spawned agent's line is named for its role and nickname, not the project.
-            if parentThreadID != nil, title == nil,
+            if parentThreadID != nil,
                let spawn = (subagent?["thread_spawn"] ?? subagent?["threadSpawn"]) as? [String: Any] {
-                func clean(_ value: Any?) -> String? {
-                    (value as? String).map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(48)) }.flatMap { $0.isEmpty ? nil : $0 }
-                }
-                let nickname = clean(spawn["agent_nickname"] ?? payload["agent_nickname"]), agentRole = clean(spawn["agent_role"])
-                let label = [agentRole, nickname].compactMap { $0 }.joined(separator: " · ")
-                if !label.isEmpty { updateTitle(label) }
+                subagentDisplay = SubagentDisplay(spawn: spawn, header: payload)
             }
             let threadSource = (payload["thread_source"] as? String)?.lowercased()
             reviewSubthread = reviewSubthread || rawSubagent as? String == "review" || subagent?["review"] != nil
@@ -923,10 +960,12 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             latencyTurnID = id; latencyStart = nil; retainedLatency = nil
             firstTokenReportedAt = nil
         }
+        if turnID != id { continuedRequestStart = nil }
         // An unknown ID during reconnect does not prove the old turn ended.
         if let id { identifyTurn(id) }
         subagentStates = [:]; subagentStatesObservedAt = nil; projectedRate = false
         hasLiveEvidence = false; liveTurnStarted = false; liveStatusOnly = false
+        endedBySubagentHook = false
         turnID = id
         turnStartedAt = date
         phase = .running
@@ -939,6 +978,14 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         generationRate.start(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil; backgroundWaitObservedAt = nil
         performanceMeter.start(turnID: id, at: date, observed: observed)
         phaseChangedAt = date
+    }
+
+    /// A blocked SubagentStop continues the same launch, including any parent
+    /// result already bound to its turn. Only this provisional ending can reopen.
+    mutating func reopenSubagentStop(at date: Date) {
+        guard endedBySubagentHook, let turnID, let threadID else { return }
+        retiredTurns.removeAll { $0 == turnID }
+        applyRuntime(["method": "turn/attached", "threadId": threadID, "turnId": turnID, "at": date.timeIntervalSince1970])
     }
 
     private mutating func retireTurn(_ id: String?) {
@@ -963,7 +1010,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         turnID = nil
         codexSteps = CodexTurnSteps(); codexRootTurnID = nil
         codexGoal = nil; codexHeldEnding = nil
-        turnStartedAt = nil
+        turnStartedAt = nil; continuedRequestStart = nil; endedBySubagentHook = false
         lastObserved = nil
         phaseChangedAt = nil
         toolCalls.removeAll()
@@ -1214,6 +1261,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             isHistoricalCompletion = false
             identifyTurn(eventTurn); liveStatusOnly = false
             retireTurn(eventTurn)
+            endedBySubagentHook = provider == .claude && parentThreadID != nil && event["subagentHook"] as? Bool == true
             // Older streams omit status. The owned terminal event still ends
             // the turn, with explicit failure and interruption kept distinct.
             phase = status == "failed" || status == "interrupted" ? .interrupted : .completed

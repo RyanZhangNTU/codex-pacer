@@ -70,6 +70,7 @@ struct EngineTaskRow: Codable, Equatable {
     var delegationsFolded: String? = nil
     /// On a run's row: the Claude task it opens, and whether Stop shows.
     var parentID: String? = nil
+    var modeTag: String? = nil
     var canStop: Bool? = nil
     /// The run's hover card: label and value pairs.
     var detailLines: [[String]]? = nil
@@ -108,6 +109,7 @@ struct EngineTaskRow: Codable, Equatable {
         if !value.subagentLines.isEmpty { subagentLines = value.subagentLines.map(EngineSubagentLine.init) }
         subagentsFolded = value.foldedSubagents?.text
         if let link = value.delegation {
+            modeTag = value.modeTag
             parentID = link.parentID; canStop = value.canStopDelegation
             detailLines = value.delegationDetail.map { [$0.label, $0.value] }
         }
@@ -215,8 +217,16 @@ struct EngineSubagentLine: Codable, Equatable {
     let rateIsFresh: Bool
     let detail: String
     let accessibilityText: String
+    var typeTag: String? = nil
+    var nameTag: String? = nil
+    var title: String? = nil
+    var model: String? = nil
+    var statusText: String? = nil
+    var time: String? = nil
     init(_ value: ActivityTaskRowPresentation.SubagentLine) {
         row = EngineTaskRow(value.row); state = value.state.rawValue; rateText = value.rateText
+        typeTag = value.typeTag; nameTag = value.nameTag; title = value.row.title; model = value.model
+        statusText = value.statusText; time = value.time
         rateIsFresh = value.rateIsFresh; detail = value.detail; accessibilityText = value.accessibilityText
     }
 }

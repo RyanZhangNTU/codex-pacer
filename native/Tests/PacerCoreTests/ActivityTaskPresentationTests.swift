@@ -162,7 +162,7 @@ final class ActivityTaskPresentationTests: XCTestCase {
         XCTAssertEqual(row.subagentLines.count, ActivityTaskRowPresentation.subagentLineLimit)
         XCTAssertTrue(row.subagentLines.allSatisfy { $0.state == .running })
         XCTAssertEqual(row.foldedSubagents, .init(active: 0, ended: 4, failed: 0))
-        XCTAssertEqual(row.foldedSubagents?.text, L10n.text("delegation.folded", 4))
+        XCTAssertEqual(row.foldedSubagents?.text, L10n.text("subagent.folded_done", 4))
         XCTAssertEqual(row.subagentDotStates.count, 7)
         // Once nothing runs, the lines go and the dots stay until the task clears.
         let ended = activities.map { value -> SessionActivity in
@@ -174,6 +174,40 @@ final class ActivityTaskPresentationTests: XCTestCase {
         let done = try XCTUnwrap(ActivityTaskPresentation(activities: ended, requests: [], inbox: CompletionInbox(), at: now.addingTimeInterval(2)).rows.first)
         XCTAssertTrue(done.subagentLines.isEmpty); XCTAssertNil(done.foldedSubagents)
         XCTAssertEqual(done.subagentDotStates, Array(repeating: .completed, count: 7))
+    }
+
+    func testEndedLinesAreSelectedByEndTimeAndParentOnlyChildStaysGrey() throws {
+        var children = DemoScenario.subagentTasks(stage: .thinking, at: now)
+        var parent = children.removeFirst()
+        let synthetic = "019a0000-0000-7000-8000-000000000700"
+        parent.consumeLive(["method": "subagents/updated", "turnId": "demo-turn", "threadId": parent.threadID!,
+                            "states": [synthetic: "completed"], "at": now.addingTimeInterval(1).timeIntervalSince1970])
+        let projected = try XCTUnwrap(ActivityTaskGroup.make([parent]).first)
+        let dot = ActivityTaskRowPresentation(activity: parent, group: projected, unread: false, at: now)
+        XCTAssertNil(projected.members.first { $0.threadID == synthetic }?.turnStartedAt)
+        XCTAssertEqual(dot.subagentDotStates, [.completed]); XCTAssertEqual(dot.subagentLines.first?.state, .completed)
+        XCTAssertEqual(dot.subagentDotsAccessibility, L10n.text("subagent.dots_accessibility_singular", 1, 0))
+        // The oldest start finishes last and a later start finishes first.
+        for index in children.indices {
+            let at = now.addingTimeInterval([30, 0, 20][index])
+            children[index].consumeLive(["method": "turn/completed", "threadId": children[index].threadID!, "turnId": "demo-turn",
+                                         "status": "interrupted", "at": at.timeIntervalSince1970])
+        }
+        let group = try XCTUnwrap(ActivityTaskGroup.make([parent] + children).first)
+        let row = ActivityTaskRowPresentation(activity: parent, group: group, unread: false, at: now.addingTimeInterval(31))
+        XCTAssertEqual(Set(row.subagentLines.compactMap(\.row.activity.threadID)), Set([synthetic, children[0].threadID!, children[2].threadID!]))
+        XCTAssertEqual(row.foldedSubagents?.text, L10n.text("subagent.folded_ended_singular", 1))
+    }
+
+    func testFoldedSubagentsUseTheirOwnOutcomeAndCount() {
+        typealias Fold = ActivityTaskRowPresentation.FoldedSubagents
+        for count in [1, 2] {
+            let suffix = count == 1 ? "_singular" : ""
+            XCTAssertEqual(Fold(active: count, ended: 0, failed: 0).text, L10n.text("subagent.folded_more" + suffix, count))
+            XCTAssertEqual(Fold(active: 0, ended: count, failed: 0).text, L10n.text("subagent.folded_done" + suffix, count))
+            XCTAssertEqual(Fold(active: 0, ended: count, failed: 0, stopped: 1).text, L10n.text("subagent.folded_ended" + suffix, count))
+            XCTAssertEqual(Fold(active: 0, ended: count, failed: 1).text, L10n.text("subagent.folded_failed" + suffix, count, 1))
+        }
     }
 
     func testACrowdedRowKeepsWaitingAndRunningDotsAndFoldsDoneOnes() throws {

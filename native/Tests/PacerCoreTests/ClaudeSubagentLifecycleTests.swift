@@ -920,12 +920,72 @@ final class ClaudeSubagentLifecycleTests: XCTestCase {
             XCTAssertEqual(ActivityTaskGroup.make(state.activities).first?.runningSubagentCount, 1)
         }
     }
-    func testSubagentLabelsNameTheTypeAndShortDescription() {
-        XCTAssertEqual(ClaudeActivityRecord.subagentLabel(type: "Explore", description: "Find the callers"), "Explore · Find the callers")
-        XCTAssertEqual(ClaudeActivityRecord.subagentLabel(type: "general-purpose", description: "Read the docs"), "Read the docs")
-        XCTAssertEqual(ClaudeActivityRecord.subagentLabel(type: "Plan", description: "  "), "Plan")
-        XCTAssertEqual(ClaudeActivityRecord.subagentLabel(type: nil, description: "Line one\nline two"), "Line one line two")
-        XCTAssertNil(ClaudeActivityRecord.subagentLabel(type: nil, description: nil))
-        XCTAssertEqual(ClaudeActivityRecord.subagentLabel(type: nil, description: String(repeating: "x", count: 500))?.count, 120)
+    func testProvisionalEndingReopensOnlyOnLaterWorkAndParentEndIsFinal() throws {
+        for ending in ["agentResult", "idle", "notification"] {
+            var state = ClaudeActivityState()
+            func childPhase() -> ActivityPhase? { state.activities.first { $0.threadID == child }?.phase }
+            send("prompt", to: &state, at: 0)
+            send("toolStart", to: &state, at: 1, extra: ["agentTool": true, "itemId": "launch"])
+            send("subagentStart", to: &state, thread: child, at: 2)
+            if ending == "notification" {
+                send("agentResult", to: &state, at: 3, extra: ["itemId": "launch", "agentId": child, "agentStatus": "async_launched"])
+            }
+            send("stopRequested", to: &state, thread: child, at: 4)
+            func batch(final: Bool, attaching: Bool = false) {
+                state.consume(ClaudeActivityRecord.encode(["kind": "claudeBatch", "attaching": attaching, "baselineFinal": final, "records": []])!,
+                              now: now.addingTimeInterval(100))
+            }
+            batch(final: false, attaching: true); batch(final: false)
+            XCTAssertEqual(childPhase(), .running)
+            batch(final: true)
+            XCTAssertEqual(childPhase(), .completed)
+            send("thinking", to: &state, thread: child, at: 4)
+            XCTAssertEqual(childPhase(), .completed)
+            // The reader can see the next stop in the spool before the work leading up to it.
+            if ending == "idle" { send("stopRequested", to: &state, thread: child, at: 21) }
+            send(ending == "idle" ? "toolStart" : "thinking", to: &state, thread: child, at: 20,
+                 extra: ["origin": "transcript", "promptId": "later-parent-prompt"])
+            XCTAssertEqual(childPhase(), .running)
+            if ending != "idle" { send("stopRequested", to: &state, thread: child, at: 21) }
+            state.expireUnconfirmedBaseline(now: now.addingTimeInterval(40))
+            XCTAssertEqual(childPhase(), .completed)
+            switch ending {
+            case "idle": send("stopRequested", to: &state, at: 42, extra: ["agents": 0]); batch(final: true)
+            case "notification":
+                send("agentNotification", to: &state, at: 42, extra: ["origin": "transcript", "agentId": child, "itemId": "launch", "agentStatus": "failed"])
+            default:
+                send("agentResult", to: &state, at: 42, extra: ["itemId": "launch", "agentId": child, "agentStatus": "completed"])
+            }
+            send("toolStart", to: &state, thread: child, at: 45)
+            XCTAssertEqual(childPhase(), ending == "notification" ? .interrupted : .completed, ending)
+        }
+    }
+
+    func testWakesKeepFinishedSubagentsUntilAnIndependentPrompt() throws {
+        var state = ClaudeActivityState()
+        send("prompt", to: &state, at: 0)
+        send("subagentStart", to: &state, thread: child, at: 1)
+        send("subagentStop", to: &state, thread: child, at: 2)
+        func dots() throws -> [ActivityTaskRowPresentation.SubagentDot] {
+            let group = try XCTUnwrap(ActivityTaskGroup.make(state.activities).first)
+            return ActivityTaskRowPresentation(activity: group.primary, group: group, unread: false, at: now).subagentDotStates
+        }
+        for offset in [10, 20] {
+            send("prompt", to: &state, at: Double(offset), extra: ["promptId": "wake-\(offset)", "wake": true])
+            XCTAssertEqual(try dots(), [.completed])
+        }
+        send("waiting", to: &state, at: 21, extra: ["promptId": "wake-20", "wakeups": 1])
+        send("prompt", to: &state, at: 22, extra: ["promptId": "typed-while-waiting"])
+        XCTAssertEqual(try dots(), [.completed])
+        send("prompt", to: &state, at: 33, extra: ["promptId": "independent"])
+        XCTAssertEqual(try dots(), [])
+    }
+
+    func testClaudeSubagentMetadataIsBoundedAndOmitsGeneralPurpose() {
+        let display = SubagentDisplay(claudeType: "general-purpose", description: " Line one\nline two ")
+        XCTAssertNil(display.typeTag); XCTAssertNil(display.nameTag); XCTAssertEqual(display.title, "Line one line two")
+        XCTAssertNil(SubagentDisplay(claudeType: "Plan", description: "  ").title)
+        let bounded = SubagentDisplay(claudeType: String(repeating: "a", count: 60), description: String(repeating: "x", count: 500))
+        XCTAssertEqual(bounded.typeTag?.count, 48); XCTAssertEqual(bounded.title?.count, 120)
     }
 }

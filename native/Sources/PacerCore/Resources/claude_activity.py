@@ -491,9 +491,10 @@ class Tailer:
         kind = clean(value.get('agentType'), 48) if isinstance(value, dict) else None
         if kind == 'general-purpose': kind = None
         summary = clean(value.get('description'), 120) if isinstance(value, dict) else None
-        label = (kind + ' · ' + summary if kind else summary) if summary else kind
-        if not label: return
-        cursor['metaRow'] = {'origin':'transcript','kind':'metadata','sessionId':cursor['session'],'parentId':cursor['parent'],'at':stamp,'title':label}
+        row = {'origin':'transcript','kind':'metadata','sessionId':cursor['session'],'parentId':cursor['parent'],'at':stamp,'subagentMeta':True}
+        if kind: row['agentType'] = kind
+        if summary: row['description'] = summary
+        cursor['metaRow'] = row
         self.dirty.add(file)
     def modified(self, path):
         try: return path.stat().st_mtime
@@ -520,6 +521,7 @@ class Tailer:
         return set(row[1] for row in updated.values())
     def discover(self):
         self.scans += 1; root = self.home / 'projects'; candidates = []; dirs = [self.home, root, self.home/'pacer']
+        session_dirs = {}; run_dirs = {}
         for project in sorted(self.entries(root, 256), key=self.modified, reverse=True)[:64]:
             if not project.is_dir(): continue
             dirs.append(project)
@@ -528,11 +530,17 @@ class Tailer:
                 if file.suffix != '.jsonl' or not session: continue
                 candidates.append((file, session, None, False))
                 folder = project/session/'subagents'
-                agents = self.entries(folder,64)+[agent for run in self.entries(folder/'workflows',16) for agent in self.entries(run,64)]
+                workflows = folder/'workflows'
+                runs = sorted((p for p in self.entries(workflows,256) if p.is_dir()),key=self.modified,reverse=True)[:16]
+                session_dirs[file] = folder
+                run_dirs[folder] = runs
+                agents = (p for directory in [folder]+runs for p in self.entries(directory,256)
+                          if p.suffix == '.jsonl' and p.stem.startswith('agent-'))
                 for agent in sorted(agents,key=self.modified,reverse=True)[:64]:
-                    if agent.suffix != '.jsonl' or not agent.stem.startswith('agent-'): continue
                     aid = ident(agent.stem[6:])
-                    if aid: candidates.append((agent,aid,session,False))
+                    if aid:
+                        candidates.append((agent,aid,session,False))
+                        session_dirs[agent] = folder
         events = self.home/'pacer'/'events.jsonl'
         if events.is_file(): candidates.append((events,'hooks',None,True))
         selected = sorted(candidates,key=lambda row:self.modified(row[0]),reverse=True)[:32]
@@ -552,7 +560,15 @@ class Tailer:
                 cursor['registered']=present;cursor['registrationEndedAt']=None if present else at
                 cursor['registrationRow']={'origin':'reader','kind':'registrationStarted' if present else 'registrationEnded','sessionId':cursor['session'],'at':at}
                 self.dirty.add(file)
-        watches = desired.union(dirs[:4])
+        # Directory watches are shallow. Keep selected roots and watch even a
+        # newly created, still-empty run before its first transcript appears.
+        directories = dirs[:4]; runs = []
+        for file,_,_,_ in selected:
+            folder = session_dirs.get(file)
+            if folder:
+                directories.extend((folder.parent.parent,folder.parent,folder,folder/'workflows',file.parent))
+                runs.extend(run_dirs.get(folder,[]))
+        watches = desired.union(list(dict.fromkeys(p for p in directories+runs if p.is_dir()))[:99])
         if (self.home/'sessions').is_dir():watches.add(self.home/'sessions')
         for wd,path in list(self.watches.items()):
             if path not in watches:

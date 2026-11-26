@@ -425,6 +425,15 @@
 "subagent.stopped" = "已停止";
 "subagent.unknown" = "状态未确认";
 "subagent.folded_more" = "另外 %d 个子代理";
+"subagent.ended" = "已结束";
+"subagent.folded_more_singular" = "另外 %d 个子代理";
+"subagent.folded_done" = "另外 %d 个子代理已完成";
+"subagent.folded_done_singular" = "另外 %d 个子代理已完成";
+"subagent.folded_ended" = "另外 %d 个子代理已结束";
+"subagent.folded_ended_singular" = "另外 %d 个子代理已结束";
+"subagent.folded_failed" = "另外 %1$d 个子代理已结束 · %2$d 个失败";
+"subagent.folded_failed_singular" = "另外 %1$d 个子代理已结束 · %2$d 个失败";
+"subagent.dots_accessibility_singular" = "%1$d 个子代理，%2$d 个运行中";
 "subagent.dots_accessibility" = "%1$d 个子代理，%2$d 个运行中";
 
 // Collapsed bar component layout

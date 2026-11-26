@@ -103,9 +103,11 @@ struct TaskRowView: View {
         return [enabled ? openHelp : L10n.text("activity.no_link"), costHelp].compactMap { $0 }.joined(separator: " ")
     }
 
-    private var accessibilityText: String {
+    var showsSubagentDots: Bool { options.rowFields.contains(.subagents) && !presentation.subagentDotStates.isEmpty }
+
+    var accessibilityText: String {
         let state = [unread ? L10n.text("common.not_viewed") : nil, status, progressRing?.accessibilityText, turnTime,
-                     subagents > 0 ? subagentText : nil, presentation.delegatedCount > 0 ? presentation.delegatedCountText : nil]
+                     showsSubagentDots ? presentation.subagentDotsAccessibility : (subagents > 0 ? subagentText : nil), presentation.delegatedCount > 0 ? presentation.delegatedCountText : nil]
         let model = [modelLabel, effortLabel.map { L10n.text("model.effort_help", $0) }].compactMap { $0 }.joined(separator: " ")
         return activity.provider.displayName + ", " + L10n.text("activity.row_accessibility", name,
             state.compactMap { $0 }.joined(separator: ", "), sourceName ?? L10n.text("common.local")) + ", " + model + (activity.claudeCloud == nil || rate != nil ? ", " + performanceText : "")
@@ -122,43 +124,42 @@ struct TaskRowView: View {
     private var statusLeads: Bool { attention != nil || phase == .waitingForInput || activity.turnFailed }
 
     @ViewBuilder private func rowContent(measuring: Bool) -> some View {
-        if oneLine {
-            HStack(spacing: 8) {
-                statusIcon(measuring: measuring)
-                title(measuring: measuring)
-                if presentation.delegatedCount > 0 { DelegatedCountChip(text: presentation.delegatedCountText) }
-                if !presentation.subagentDotStates.isEmpty, options.shows(.subagents) {
-                    SubagentDotsView(presentation: presentation, limit: ActivityTaskRowPresentation.compactSubagentDotLimit)
-                }
-                if statusLeads {
-                    Text(status).font(.system(size: 11, weight: .medium)).foregroundStyle(detailColor).lineLimit(1).fixedSize()
-                } else if showsRateLine {
-                    rateLine
-                }
-            }
-            .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
-        } else {
-            HStack(spacing: 10) {
-                statusIcon(measuring: measuring)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .firstTextBaseline, spacing: 16) {
+        HStack(spacing: oneLine ? 8 : 10) {
+            statusIcon(measuring: measuring)
+            TaskLineLayout(measuring: measuring) { showModel, showTime in
+                if oneLine {
+                    HStack(spacing: 8) {
                         title(measuring: measuring)
-                        if showsRateLine { rateLine }
+                        if presentation.delegatedCount > 0 { DelegatedCountChip(text: presentation.delegatedCountText) }
+                        if showsSubagentDots {
+                            SubagentDotsView(presentation: presentation, limit: ActivityTaskRowPresentation.compactSubagentDotLimit)
+                        }
+                        if statusLeads {
+                            Text(status).font(.system(size: 11, weight: .medium)).foregroundStyle(detailColor).lineLimit(1).fixedSize()
+                        } else if showsRateLine { rateLine(showTime: showTime) }
                     }
-                    HStack(alignment: .firstTextBaseline, spacing: 16) {
-                        statusLine.frame(maxWidth: measuring ? nil : .infinity, alignment: .leading)
-                        if showsModelLine { modelLine }
+                } else {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(alignment: .firstTextBaseline, spacing: 16) {
+                            title(measuring: measuring)
+                            if showsRateLine { rateLine(showTime: showTime) }
+                        }
+                        HStack(alignment: .firstTextBaseline, spacing: 16) {
+                            statusLine.frame(maxWidth: measuring ? nil : .infinity, alignment: .leading)
+                            if showsModelLine { modelLine(showModel: showModel) }
+                        }
                     }
                 }
             }
-            .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
         }
+        .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
     }
 
     private func title(measuring: Bool) -> some View {
         Text(name).font(.system(size: 13, weight: .semibold))
             .foregroundStyle(dimmed ? PacerPalette.secondary : PacerPalette.primary).lineLimit(1)
-            .frame(maxWidth: measuring ? Self.measuredTitleWidth : .infinity, alignment: .leading)
+            .truncationMode(.tail)
+            .frame(minWidth: 48, maxWidth: measuring ? Self.measuredTitleWidth : .infinity, alignment: .leading)
     }
 
     /// The ring and the state share one icon, 28 points or 22 in a one-line
@@ -193,7 +194,7 @@ struct TaskRowView: View {
             Text(status).foregroundStyle(detailColor).lineLimit(1).layoutPriority(1)
             // Codex for Claude runs this Claude task holds.
             if presentation.delegatedCount > 0 { DelegatedCountChip(text: presentation.delegatedCountText) }
-            if !presentation.subagentDotStates.isEmpty, options.shows(.subagents) {
+            if showsSubagentDots {
                 SubagentDotsView(presentation: presentation)
             } else if subagents > 0, options.shows(.subagents) {
                 HStack(spacing: 3) {
@@ -216,7 +217,7 @@ struct TaskRowView: View {
         .font(.system(size: 11, weight: .medium))
     }
 
-    private var rateLine: some View {
+    private func rateLine(showTime: Bool) -> some View {
         let showsRate = options.shows(.rate)
         return HStack(alignment: .firstTextBaseline, spacing: 0) {
             if showsRate, let rate {
@@ -227,7 +228,7 @@ struct TaskRowView: View {
                 Text(L10n.text("performance.awaiting_usage")).font(.system(size: 11, weight: .medium))
                     .foregroundStyle(PacerPalette.tertiary)
             }
-            if let turnTime, options.shows(.turnTime) {
+            if showTime, let turnTime, options.shows(.turnTime) {
                 if showsRate, rate != nil || activity.claudeCloud == nil {
                     Text(" · ").font(.system(size: 11, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
                 }
@@ -238,7 +239,7 @@ struct TaskRowView: View {
         .monospacedDigit().lineLimit(1).fixedSize()
     }
 
-    private var modelLine: some View {
+    private func modelLine(showModel: Bool) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
             if let cost, options.shows(.cost) {
                 HStack(alignment: .center, spacing: 4) {
@@ -249,7 +250,7 @@ struct TaskRowView: View {
                 }
                 .padding(.trailing, 3)
             }
-            if options.shows(.model) {
+            if showModel, options.shows(.model) {
                 Text(modelLabel)
                 if let effortLabel { Text(effortLabel).opacity(0.62) }
             }

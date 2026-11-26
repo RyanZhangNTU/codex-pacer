@@ -76,41 +76,19 @@ struct SubagentLineView: View {
     @State private var hovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var row: ActivityTaskRowPresentation { line.row }
-    private var ended: Bool { !line.isActive }
-    private var detailColor: Color {
+
+    private var statusInk: Color? {
         switch line.state {
         case .approval, .input: return PacerPalette.attention
         case .failed: return PacerPalette.danger
-        default: return PacerPalette.secondary
+        default: return nil
         }
     }
 
     var body: some View {
         Button(action: open) {
-            HStack(spacing: 8) {
-                TaskStatusIconView(id: row.activity.id, ring: row.progressRing, face: TaskRowView.face(row),
-                                   color: TaskRowView.color(row), animates: !reduceMotion, completionPulseOnly: true)
-                    .frame(width: TaskStatusIconNSView.diameter, height: TaskStatusIconNSView.diameter)
-                    .scaleEffect(20 / TaskStatusIconNSView.diameter)
-                    .frame(width: 20, height: 20)
-                    .accessibilityHidden(true)
-                Text(row.title).font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(ended ? PacerPalette.secondary : PacerPalette.primary)
-                    .lineLimit(1).truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                HStack(alignment: .firstTextBaseline, spacing: 0) {
-                    if let rate = line.rateText {
-                        Text(rate).font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(line.rateIsFresh ? PacerPalette.primary : PacerPalette.secondary)
-                        Text(line.detail.isEmpty ? " t/s" : " t/s · ").font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(PacerPalette.secondary)
-                    }
-                    Text(line.detail).font(.system(size: 10, weight: .medium)).foregroundStyle(detailColor)
-                }
-                .monospacedDigit().lineLimit(1).fixedSize()
-            }
-            .padding(.leading, 2).padding(.trailing, 4).padding(.vertical, 5)
-            .contentShape(Rectangle())
+            ChildTaskLine(row: row, typeTag: line.typeTag, nameTag: line.nameTag, active: line.isActive,
+                rate: line.rateText, fresh: line.rateIsFresh, status: line.statusText, statusInk: statusInk, time: line.time, model: line.model)
         }
         .buttonStyle(.plain).disabled(!enabled)
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovered && enabled ? PacerPalette.hover : .clear))

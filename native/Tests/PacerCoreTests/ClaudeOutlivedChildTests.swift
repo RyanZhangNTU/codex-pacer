@@ -19,9 +19,8 @@ final class ClaudeOutlivedChildTests: XCTestCase {
     }
     /// One read: an SSH helper batch, or the native reader's frames and the end of its read.
     private func read(_ rows: [[String: Any]], into state: inout ClaudeActivityState, batch: Bool) {
-        if batch { state.consume(ClaudeActivityRecord.encode(["kind": "claudeBatch", "records": rows])!, now: now.addingTimeInterval(100)); return }
+        if batch { state.consume(ClaudeActivityRecord.encode(["kind": "claudeBatch", "baselineFinal": true, "records": rows])!, now: now.addingTimeInterval(100)); return }
         for value in rows { state.consume(ClaudeActivityRecord.encode(value)!, now: now.addingTimeInterval(100)) }
-        state.confirmSubagentStops(now: now.addingTimeInterval(100))
         state.finalizeHistoricalBaseline(now: now.addingTimeInterval(100))
     }
     private func activity(_ state: ClaudeActivityState, _ thread: String) -> SessionActivity? { state.activities.first { $0.threadID == thread } }

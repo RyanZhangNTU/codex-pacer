@@ -203,8 +203,6 @@ public actor ClaudeActivityMonitor {
         // settle only once the reader has caught up.
         if !result.records.isEmpty { localReleasePending = true }
         if result.caughtUp, localReleasePending { local.releaseCompletedRequests(now: clock()); localReleasePending = false }
-        // After a whole read, so a stopped child's later records are already in.
-        local.confirmSubagentStops(now: clock())
         if result.caughtUp { local.finalizeHistoricalBaseline(now: clock()) }
         if let status = ClaudeActivityRecord.encode(["kind": "status", "connected": result.available, "watchingLogs": !watchURLs.isEmpty, "scans": localReader.scans]) { local.consume(status, now: clock()) }
         if !result.available { local.unavailable() }

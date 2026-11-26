@@ -113,12 +113,55 @@ final class ExpandedPanelDisplayTests: XCTestCase {
         XCTAssertEqual(TaskRowView.height(.oneLine), 38)
         XCTAssertEqual(TaskRowView.height(.twoLine), 54)
 
+        func subagentWidth(_ description: String, type: String?) async throws -> CGFloat {
+            var child = DemoScenario.subagentTasks(stage: .thinking, at: now)[1]
+            child.subagentDisplay = SubagentDisplay(claudeType: type, description: description)
+            let line = ActivityTaskRowPresentation.subagentLine(child, options: .init(), at: now)
+            return try await measure(SubagentList(lines: [line], enabled: true, open: {}))
+        }
+        let short = try await subagentWidth("Trace", type: nil)
+        let tagged = try await subagentWidth("Trace", type: "Explore")
+        let long = try await subagentWidth(String(repeating: "Wide ", count: 24), type: "Explore")
+        XCTAssertGreaterThan(tagged, short); XCTAssertGreaterThan(long, tagged)
+        XCTAssertLessThanOrEqual(long - short, 220 - 48 + 1, "Tags share the measured label cap")
+
         let withButtons = try await measure(TaskPagerView(model: model, actions: true).header)
         let alone = try await measure(TaskPagerView(model: model, actions: false).header)
         let controls = NSHostingView(rootView: IslandPanelControls(model: model).fixedSize()).fittingSize.width
         XCTAssertGreaterThanOrEqual(withButtons - alone, controls,
             "A task list below the first block keeps only its page controls")
         await model.shutdown()
+    }
+
+    func testOneAndTwoLineRowsReadTheDotsTheyDraw() throws {
+        let tasks = DemoScenario.subagentTasks(stage: .thinking, at: now)
+        let row = try XCTUnwrap(ActivityTaskPresentation(activities: tasks, requests: [], inbox: CompletionInbox(), at: now).rows.first)
+        XCTAssertEqual(SubagentDotsView.color(.failed, provider: .codex), PacerPalette.danger)
+        XCTAssertEqual(SubagentDotsView.color(.attention, provider: .claude), PacerPalette.attention)
+        for style in [ExpandedPanelOptions.RowStyle.oneLine, .twoLine] {
+            var options = ExpandedPanelOptions(); options.rowStyle = style
+            var view = TaskRowView(presentation: row, group: nil, now: now, enabled: true, accent: .blue, options: options) {}
+            XCTAssertTrue(view.showsSubagentDots); XCTAssertTrue(view.accessibilityText.contains(row.subagentDotsAccessibility))
+            view.options.rowFields.remove(.subagents)
+            XCTAssertFalse(view.showsSubagentDots); XCTAssertFalse(view.accessibilityText.contains(row.subagentDotsAccessibility))
+        }
+    }
+
+    func testLineCompressesTitleBeforeDroppingModelThenTime() throws {
+        // Distinct rendered heights identify which variant SwiftUI actually placed.
+        for (width, height) in [(300, 21), (158, 21), (157, 22), (107, 23)] {
+            let view = TaskLineLayout(measuring: false) { model, time in
+                HStack(spacing: 0) {
+                    Text(String(repeating: "long title ", count: 10)).lineLimit(1).frame(minWidth: 48, maxWidth: .infinity)
+                    Color.blue.frame(width: 20) // speed
+                    if time { Color.gray.frame(width: 40) }
+                    if model { Color.green.frame(width: 50) }
+                }
+                .frame(height: model ? 21 : time ? 22 : 23)
+            }
+            .frame(width: CGFloat(width)).fixedSize(horizontal: false, vertical: true)
+            XCTAssertEqual(try XCTUnwrap(ImageRenderer(content: view).cgImage).height, height, "width \(width)")
+        }
     }
 
     func testSettingsPageSavesOnlyRealEditsAndSketchesPairedQuotas() {
