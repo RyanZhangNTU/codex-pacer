@@ -2,6 +2,9 @@ import Foundation
 import SQLite3
 import XCTest
 @testable import PacerCore
+#if os(Windows)
+import WinSDK
+#endif
 
 private let rootID = "11111111-1111-4111-8111-111111111111"
 private let childID = "22222222-2222-4222-8222-222222222222"
@@ -129,6 +132,22 @@ private final class Fixture {
     func closeDatabases() {
         for db in connections.values { sqlite3_close(db) }
         connections.removeAll()
+    }
+    /// Sets a file's modification time while the fixture's SQLite connection
+    /// may still hold it. Windows refuses Foundation's attribute write then,
+    /// because SQLite opens the database without sharing attribute writes.
+    func setModified(_ url: URL, _ date: Date) throws {
+        #if os(Windows)
+        let handle = CreateFileW(Array(url.path.utf16) + [0], DWORD(FILE_WRITE_ATTRIBUTES),
+                                 DWORD(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE), nil, DWORD(OPEN_EXISTING), 0, nil)
+        guard handle != INVALID_HANDLE_VALUE else { throw CocoaError(.fileWriteNoPermission) }
+        defer { CloseHandle(handle) }
+        let ticks = UInt64((date.timeIntervalSince1970 + 11_644_473_600) * 10_000_000)
+        var time = FILETIME(dwLowDateTime: DWORD(truncatingIfNeeded: ticks), dwHighDateTime: DWORD(truncatingIfNeeded: ticks >> 32))
+        guard SetFileTime(handle, nil, nil, &time) else { throw CocoaError(.fileWriteNoPermission) }
+        #else
+        try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
+        #endif
     }
     func checkpointAndClose() throws {
         try sql("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -308,7 +327,7 @@ final class AntigravityTests: XCTestCase {
             UPDATE conversation_summaries SET last_modified_time='\(sentinel)', last_user_input_time='\(sentinel)',
                    step_count=0, last_user_input_step_index=-1
             """)
-        try FileManager.default.setAttributes([.modificationDate: epoch], ofItemAtPath: f.store.conversationURL(rootID).path)
+        try f.setModified(f.store.conversationURL(rootID), epoch)
         try FileManager.default.removeItem(at: f.store.transcriptURL(rootID))
         try FileManager.default.removeItem(at: f.home.appendingPathComponent("daemon/hub_34001.json"))
         let row = try XCTUnwrap(f.store.summaries().first)

@@ -82,6 +82,23 @@ internal static class ConversationApplicationChecks
         Check(!await workBuddy.OpenAsync(Local(workBuddyURL, "https://www.workbuddy.ai/", "workbuddy")) &&
               !await workBuddy.OpenAsync(new(context, "workbuddy", "host", null, null, 12, 34)) &&
               workBuddyCalls.Count == 1, "Only the validated conversation reaches the WorkBuddy launcher");
+
+        WindowsConversationApplication.Register([new EngineModule("antigravity", "automatic", true, true,
+            Launch: new("antigravity", "Google", ["Programs/antigravity/Antigravity.exe"], null))]);
+        int opens = 0;
+        var antigravity = new WindowsConversationApplication(_ => false, openApplication: provider =>
+        {
+            opens++;
+            return Task.FromResult(provider == "antigravity");
+        });
+        var appOnly = new EngineNavigationPlan(context, "antigravity", "application", null, null, null, null);
+        Check(await antigravity.OpenAsync(appOnly) && WindowsConversationApplication.CanOpenApplication("antigravity") &&
+            !WindowsConversationApplication.CanOpenConnectors("antigravity"), "Antigravity opens without a destination");
+        foreach (var mixed in new[] { appOnly with { Url = "antigravity://chat/" + session }, appOnly with { WebUrl = web },
+            appOnly with { Pid = 12 }, appOnly with { Started = 34 }, appOnly with { Terminal = "fixture" } })
+            Check(!await antigravity.OpenAsync(mixed), "Antigravity accepted navigation arguments");
+        Check(opens == 1, "Only the argument-free application plan reaches the launcher");
+        WindowsConversationApplication.Register(null);
     }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
 }

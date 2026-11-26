@@ -61,6 +61,7 @@ struct EngineCommand: Decodable {
         var stale: Bool?
         /// Data folders chosen in Settings for local modules, by module ID.
         /// An empty path restores the default.
+        var harnessQuotaGroups: [String: String]?
         var harnessHomes: [String: String]?
         /// Modules whose task rows leave out the credits each turn used.
         var hiddenTurnCredits: [String]?
@@ -333,6 +334,27 @@ struct EngineQuota: Codable, Equatable {
     }
 }
 
+struct EngineGroupedQuota: Codable, Equatable {
+    struct Bucket: Codable, Equatable {
+        let id: String
+        let name: String?
+        let windows: [EngineQuota.Window]
+    }
+    let provider: String
+    let capturedAt: Double
+    let accountScope: String?
+    let buckets: [Bucket]
+
+    init(_ value: QuotaSnapshot, provider: AgentProvider, at now: Date) {
+        self.provider = provider.rawValue
+        capturedAt = value.capturedAt.timeIntervalSince1970
+        accountScope = value.accountScope
+        buckets = value.buckets.map { bucket in
+            Bucket(id: bucket.id, name: bucket.name, windows: EngineQuota(value.showing(bucket), provider: provider, at: now).windows)
+        }
+    }
+}
+
 struct EngineNotice: Codable, Equatable {
     struct Action: Codable, Equatable { let kind: String; let title: String; var reference: String? = nil }
     let id: String
@@ -474,6 +496,7 @@ struct EngineSnapshot: Codable, Equatable {
     let navigationError: EngineNavigationFailure?
     let openingActivityIDs: [String]?
     var expandedPanel: EngineExpandedPanel? = nil
+    var groupedQuota: [EngineGroupedQuota]? = nil
     var accountCredits: [EngineAccountCredits]? = nil
     /// Codex task tracking through Pacer's hooks; nil while Codex is not managed.
     var codexHooks: EngineCodexHooks? = nil

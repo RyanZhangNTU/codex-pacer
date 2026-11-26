@@ -70,7 +70,7 @@ The local definition registers the app, its data folder, the Gemini and Claude/G
 - **Local quota coordinator.** A monitor implementing `LocalHarnessQuotaSource` publishes a coordinator factory when it verifies a session and clears it on loss. The host supplies the history store and installation credential, refreshes through `LocalHarnessQuotaCoordinator`, and rejects updates from a retired owner. A descriptor’s `quotaGroups` selects the island bucket. History and quota warnings receive the full snapshot.
 - **Owned progress plugin.** A definition with `installsProgressPlugin` selects the plugin installer in `progressTarget`. Installation and cleanup use the fixed customization profile, independent of the chosen task folder. The guide can open the app and copy its server name. A completed call to the owned tool attributes progress to the calling task.
 
-The Mac host is enabled. Windows host work and acceptance are tracked in [Windows engine development](windows-engine.md#antigravity).
+The Windows engine uses the same monitor and quota coordinator. Its installation and listener checks are described in [Windows engine development](windows-engine.md#antigravity).
 
 ## WorkBuddy and WorkBuddy AI
 

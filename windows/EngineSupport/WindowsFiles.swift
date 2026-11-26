@@ -2,6 +2,7 @@
 import Foundation
 import PacerCore
 import CWindowsSupport
+import WinSDK
 
 enum WindowsFiles {
     // Win32 IO gets the extended path; stored URLs and source identities stay
@@ -61,6 +62,30 @@ public struct WindowsFileSystem: PlatformFileSystem {
     }
     public func entries(in directory: URL) throws -> [URL] {
         try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+    }
+    public func entries(in directory: URL, maximum: Int) throws -> [URL] {
+        var entry = WIN32_FIND_DATAW()
+        let pattern = directory.appendingPathComponent("*", isDirectory: false)
+        let search = FindFirstFileW(WindowsFiles.wide(pattern), &entry)
+        guard search != INVALID_HANDLE_VALUE else {
+            if GetLastError() == ERROR_FILE_NOT_FOUND { return [] }
+            throw CocoaError(.fileReadUnknown)
+        }
+        defer { FindClose(search) }
+        var files: [URL] = []
+        var visited = 0
+        repeat {
+            let name = withUnsafeBytes(of: &entry.cFileName) { bytes in
+                String(decoding: bytes.bindMemory(to: UInt16.self).prefix { $0 != 0 }, as: UTF16.self)
+            }
+            guard name != "." && name != ".." else { continue }
+            guard visited < maximum else { throw CocoaError(.fileReadTooLarge) }
+            visited += 1
+            guard entry.dwFileAttributes & DWORD(FILE_ATTRIBUTE_HIDDEN) == 0, !name.hasPrefix(".") else { continue }
+            files.append(directory.appendingPathComponent(name, isDirectory: entry.dwFileAttributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) != 0))
+        } while FindNextFileW(search, &entry)
+        guard GetLastError() == ERROR_NO_MORE_FILES else { throw CocoaError(.fileReadUnknown) }
+        return files
     }
     public func read(_ url: URL, offset: UInt64, maximumBytes: Int) throws -> Data {
         let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: WindowsFiles.extendedPath(WindowsCodexExecutableDiscovery.path(url))))

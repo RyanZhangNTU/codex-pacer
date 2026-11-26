@@ -386,7 +386,7 @@ internal sealed partial class SettingsWindow
                 issue.Text = ui.Text("progress_guide.restart.failed").Replace("%@", module.DisplayName ?? provider, StringComparison.Ordinal);
                 issue.Visibility = Visibility.Visible;
                 // Once the user quits it, Pacer opens it again, as the hint says.
-                if (!await WindowsConversationApplication.WaitForExitAsync(executables, TimeSpan.FromMinutes(3))
+                if (!await WindowsConversationApplication.WaitForExitAsync(provider, executables, TimeSpan.FromMinutes(3))
                     || !await WindowsConversationApplication.ReopenForGuideAsync(provider)) return true;
                 issue.Visibility = Visibility.Collapsed;
             }
@@ -566,9 +566,11 @@ internal sealed partial class SettingsWindow
     internal static async Task CheckHarnessAppAsync(EngineClient client, PreferencesSession session, string provider, bool polling)
     {
         if (client.IsConnectionClosed || client.LatestSnapshot?.Modules?.FirstOrDefault(value => value.Provider == provider)
-                is not { Enabled: true, ProgressConnector: true, ProgressSetup: "configured" or "missingHome" } module ||
-            (polling && module.ProgressGuide is not { Waiting: true }) ||
-            session.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal)) return;
+                is not { ProgressConnector: true } module) return;
+        if (module.ProgressSetup != "removalPending" &&
+            (!module.Enabled || module.ProgressSetup is not ("configured" or "missingHome") ||
+             (polling && module.ProgressGuide is not { Waiting: true }) ||
+             session.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal))) return;
         // The app reads its MCP file when it starts, so the card needs to know
         // whether it runs and since when. The engine reads which page it shows
         // from the app's log.
@@ -583,7 +585,7 @@ internal sealed partial class SettingsWindow
     private static async Task CheckHarnessAppOnceAsync(EngineClient client, string checkedProvider, EngineModule module)
     {
         var checkedAt = DateTime.UtcNow;
-        var (running, started) = await Task.Run(() => AppPresence(module.Launch?.Executables));
+        var (running, started) = await Task.Run(() => AppPresence(module.Launch?.Executables, provider: checkedProvider));
         // A check that ran while Pacer restarted the app, or that saw it closed
         // while Pacer opened it, is stale: it would send the card back a step.
         if (restartingHarnessApps.Contains(checkedProvider)
@@ -604,10 +606,12 @@ internal sealed partial class SettingsWindow
     }
 
     /// Whether any of the app's executables runs, and when its earliest process
-    /// started (seconds since 1970). Reads only process names and start times.
-    internal static (bool Running, double? StartedAt) AppPresence(IReadOnlyList<string>? executables)
+    /// started (seconds since 1970).
+    internal static (bool Running, double? StartedAt) AppPresence(IReadOnlyList<string>? executables, string? provider = null)
     {
         if (executables is not { Count: > 0 }) return (false, null);
+        string? verified = provider == "antigravity" ? WindowsAntigravityInstallation.Resolve() : null;
+        if (provider == "antigravity" && verified == null) return (false, null);
         bool running = false; DateTime? earliest = null;
         foreach (string name in executables.Select(path => System.IO.Path.GetFileNameWithoutExtension(path.Replace('/', '\\')))
                      .Where(name => name.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase))
@@ -619,6 +623,7 @@ internal sealed partial class SettingsWindow
             {
                 using (process)
                 {
+                    if (verified != null && !WindowsConversationApplication.Matches(process, verified)) continue;
                     running = true;
                     try { var start = process.StartTime.ToUniversalTime(); if (earliest == null || start < earliest) earliest = start; }
                     catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { }

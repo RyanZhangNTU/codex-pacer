@@ -1,9 +1,21 @@
 import Foundation
 
+package enum AntigravityHubCandidateLimit {
+    case all(upTo: Int)
+    case newest(Int)
+}
+
 /// Only the host can attest the hub's owner, server executable, listener and process start identity.
 package protocol AntigravityLocalHost: Sendable {
+    var maximumHubDirectoryEntries: Int { get }
+    var hubCandidateLimit: AntigravityHubCandidateLimit { get }
     func serverIdentity(hub: URL, pid: Int32, httpPort: UInt16) -> String?
     func post(_ request: AntigravityLocalRequest) async throws -> (Int, Data)
+}
+
+extension AntigravityLocalHost {
+    package var maximumHubDirectoryEntries: Int { 256 }
+    package var hubCandidateLimit: AntigravityHubCandidateLimit { .all(upTo: 16) }
 }
 
 package struct AntigravityLocalRequest: Sendable {
@@ -75,7 +87,7 @@ package actor AntigravityLocalClient {
 
     private func discoverBinding() -> Binding? {
         guard let host = io.antigravity, io.files.metadata(directory)?.isDirectory == true,
-              let entries = try? io.files.entries(in: directory, maximum: 256) else { return nil }
+              let entries = try? io.files.entries(in: directory, maximum: host.maximumHubDirectoryEntries) else { return nil }
         let candidates = entries.compactMap { url -> (URL, UInt16, PlatformFileMetadata)? in
             let name = url.lastPathComponent
             guard name.hasPrefix("hub_"), name.hasSuffix(".json"),
@@ -83,10 +95,20 @@ package actor AntigravityLocalClient {
                   let stamp = io.files.metadata(url), stamp.isRegularFile, (1...4096).contains(stamp.size) else { return nil }
             return (url, port, stamp)
         }
-        // Beyond the cap uniqueness cannot be proven.
-        guard candidates.count <= 16 else { return nil }
+        let count: Int
+        switch host.hubCandidateLimit {
+        case .all(let maximum):
+            guard candidates.count <= maximum else { return nil }
+            count = candidates.count
+        case .newest(let maximum):
+            count = maximum
+        }
+        let newest = candidates.sorted { lhs, rhs in
+            if lhs.2.modified == rhs.2.modified { return lhs.1 < rhs.1 }
+            return lhs.2.modified > rhs.2.modified
+        }
         var result: Binding?
-        for (file, port, stamp) in candidates.sorted(by: { $0.2.modified > $1.2.modified }) {
+        for (file, port, stamp) in newest.prefix(count) {
             guard let data = try? io.files.read(file, offset: 0, maximumBytes: 4097),
                   let fields = try? JSONFieldView.document(data, maximumBytes: 4096).fields(["httpPort", "pid", "csrfToken"]),
                   fields["httpPort"]?.integer() == Int(port),

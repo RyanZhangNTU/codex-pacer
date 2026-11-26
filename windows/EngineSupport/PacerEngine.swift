@@ -72,6 +72,9 @@ public enum PacerEngine {
         let runtime = EngineRuntime(demo: demo, now: clock,
             dismissalStore: readOnly ? nil : .applicationDefault,
             notificationStore: notificationStore,
+            antigravityHost: demo || readOnly ? nil : WindowsAntigravityLocalHost(),
+            localQuotaDirectory: demo || readOnly ? nil : FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("CodexPacerIsland/CurrentCycle", isDirectory: true),
             quotaServices: demo ? nil : readOnly ? (quotaDiagnostics ? .readOnlyDiagnostics : nil) : .live, desktopServices: demo ? nil : .platformLive,
             balanceServices: readOnly ? (quotaDiagnostics ? .readOnlyDiagnostics : nil) : demo ? .demo(now: clock) : .live,
             claudeServices: quotaDiagnostics ? .readOnlyDiagnostics : nil,
@@ -302,9 +305,18 @@ actor EngineRuntime {
     private var supportedProviders: [AgentProvider] {
         HarnessRegistry.legacyIDs + (clientSupportsHarnessModules ? localHarnesses.definitions.map(\.descriptor.id) : [])
     }
+    private let antigravityHost: (any AntigravityLocalHost)?
+    private let localQuotaDirectory: URL?
+    private var localQuotaStores: [AgentProvider: QuotaHistoryStore] = [:]
+    private var localQuotaSources: [AgentProvider: UUID] = [:]
+    private var localQuotaOwners: [AgentProvider: UUID] = [:]
+    private var localQuotaCoordinators: [AgentProvider: any LocalHarnessQuotaCoordinator] = [:]
+    private var localQuota: [AgentProvider: LocalHarnessQuotaState] = [:]
+    private var localQuotaHistory: [AgentProvider: EngineQuotaHistory] = [:]
+    private var harnessQuotaGroups: [String: String] = [:]
     private let localHarnessDefinitions: [LocalHarnessDefinition]
     private lazy var localHarnesses = LocalHarnessMonitors(platform: .windows,
-        io: .init(files: WindowsFileSystem(), events: WindowsActivityLogWatcher(), now: now), registered: localHarnessDefinitions)
+        io: .init(files: WindowsFileSystem(), events: WindowsActivityLogWatcher(), antigravity: antigravityHost, now: now), registered: localHarnessDefinitions)
     private typealias ActivityAdapters = HarnessActivityAdapters<@Sendable () async -> Void>
     private lazy var activityAdapters: ActivityAdapters = makeActivityAdapters()
 
@@ -500,6 +512,8 @@ actor EngineRuntime {
     init(demo: Bool, now: @escaping @Sendable () -> Date = { Date() },
          dismissalStore: CompletionDismissalStore? = .applicationDefault,
          notificationStore: EngineNotificationRegistry.Store? = nil,
+         antigravityHost: (any AntigravityLocalHost)? = nil,
+         localQuotaDirectory: URL? = nil,
          quotaServices: CodexQuotaServices? = nil,
          desktopServices: CodexDesktopServices? = nil,
          balanceServices: DeepSeekBalanceServices? = nil,
@@ -529,6 +543,7 @@ actor EngineRuntime {
          },
          output: @escaping @Sendable (Data) -> Void = { try? FileHandle.standardOutput.write(contentsOf: $0) },
          demoSubagents: Bool = false) {
+        self.antigravityHost = antigravityHost; self.localQuotaDirectory = localQuotaDirectory
         self.demo = demo; self.now = now; self.output = output; self.quotaServices = quotaServices; self.desktopServices = desktopServices
         self.allowsStorageRecovery = allowsStorageRecovery; self.demoSubagents = demo && demoSubagents
         self.sourceSettings = sourceSettings
@@ -685,7 +700,9 @@ actor EngineRuntime {
                 if let profile = input.wslProfile, let services = wslServices,
                    !(await services.validate(profile, provider: target.provider)) { throw ActivityNavigationError.unavailable }
                 let plan: EngineNavigationPlan
-                if localHarnesses.definition(for: target.provider) != nil {
+                if target.provider == .antigravity {
+                    plan = .init(applicationContext: context, provider: target.provider)
+                } else if localHarnesses.definition(for: target.provider) != nil {
                     guard let url = harnessActivities[target.provider]?.conversationURLs[target.id] else {
                         throw ActivityNavigationError.unavailable
                     }
@@ -860,7 +877,10 @@ actor EngineRuntime {
                 }
             }
             // Once the app has made its folder, setup continues without a retry.
-            if [.missingHome, .removalPending].contains(localProgressStatuses[provider]?.setup) { scheduleLocalHarnessProgress(definition, force: true) }
+            if localProgressStatuses[provider]?.setup == .missingHome ||
+                (localProgressStatuses[provider]?.setup == .removalPending && command.params?.appRunning == false && localProgressTasks[provider] == nil) {
+                scheduleLocalHarnessProgress(definition, force: true)
+            }
             else { scheduleLocalHarnessProgress(definition, inspectOnly: true) }
         case "inspectProviderHome":
             guard let name = command.params?.provider, let provider = AgentProvider(rawValue: name),
@@ -954,6 +974,7 @@ actor EngineRuntime {
         case "resumeAfterSleep":
             await resumeAfterSleep()
         case "refresh":
+            for provider in localQuotaCoordinators.keys { refreshLocalQuota(provider, force: true) }
             await quotaMonitor?.refreshIfDue(expanded: expanded, force: true)
             _ = await claudeQuotaMonitor?.refreshIfDue(expanded: expanded, force: true)
             await claudeCloudMonitor?.refresh()
@@ -1068,6 +1089,7 @@ actor EngineRuntime {
             if !value, codexMetricsPending { scheduleCodexMetrics() }
             if !demo {
                 restartPresentationClock()
+                if value { for provider in localQuotaCoordinators.keys { refreshLocalQuota(provider, force: false) } }
                 await quotaMonitor?.refreshIfDue(expanded: value, expansion: value)
                 _ = await claudeQuotaMonitor?.refreshIfDue(expanded: value, expansion: value)
                 if value { await refresh(discover: false) } else { publish(notices: []) }
@@ -1225,8 +1247,12 @@ actor EngineRuntime {
         if let selectedProgress { disabledHarnessProgress = selectedProgress }
         if let selectedHiddenCredits { hiddenTurnCredits = selectedHiddenCredits }
         if let selectedCredits { creditSettings = selectedCredits }
-        // A moved data folder changes the module's source identity, which
-        // resets it through the lifecycle plan below.
+        if let groups = parameters.harnessQuotaGroups {
+            harnessQuotaGroups = groups.filter { key, value in
+                localHarnesses.definitions.contains { $0.descriptor.quotaGroups.map { $0.defaultsKey == key && $0.ids.contains(value) } == true }
+            }
+        }
+        // A moved data folder resets its monitor through the lifecycle plan below.
         if let selectedHomes { harnessHomeOverrides = selectedHomes }
         moduleSettings = updatedSettings; installation = detected
         if parameters.providerModes != nil { moduleConfigurationActive = true }
@@ -1431,9 +1457,65 @@ actor EngineRuntime {
         let home = localHarnessHome(definition)
         if harnessActivities.isBound(provider) { await monitor.refresh(); return }
         harnessActivities.bind(provider, home: home, generation: context)
+        if let source = monitor as? any LocalHarnessQuotaSource, localQuotaDirectory != nil {
+            let binding = UUID()
+            localQuotaSources[provider] = binding
+            await source.observeQuota { [weak self] factory in
+                await self?.bindLocalQuota(provider, factory: factory, home: home, binding: binding, version: context)
+            }
+            guard active, localQuotaSources[provider] == binding, lifecycle.version(provider) == context else { return }
+        }
         await monitor.start(home: home, policy: expanded ? .expanded : .collapsed) { [weak self] snapshot in
             await self?.receiveHarness(provider, snapshot: snapshot, version: context)
         }
+    }
+
+    private func retireLocalQuota(_ provider: AgentProvider) {
+        localQuotaOwners[provider] = nil
+        localQuotaCoordinators.removeValue(forKey: provider)?.invalidateSource()
+        ownedWork.cancel(.init(.quota, provider: provider))
+        localQuota[provider] = nil
+        localQuotaHistory[provider] = nil
+    }
+
+    private func bindLocalQuota(_ provider: AgentProvider, factory: LocalQuotaFactory?, home: URL, binding: UUID, version: UInt64) async {
+        guard active, enabled.contains(provider), lifecycle.version(provider) == version, localQuotaSources[provider] == binding,
+              let root = localQuotaDirectory else { return }
+        retireLocalQuota(provider)
+        let owner = UUID()
+        localQuotaOwners[provider] = owner
+        if projectionReady { publish(notices: []) }
+        if let store = localQuotaStores[provider] { _ = await store.flush() }
+        guard let factory, active, enabled.contains(provider), lifecycle.version(provider) == version,
+              localQuotaOwners[provider] == owner, localQuotaSources[provider] == binding else { return }
+        let directory = root.appendingPathComponent(provider.rawValue.capitalized, isDirectory: true)
+        let store = localQuotaStores[provider] ?? QuotaHistoryStore(directory: directory, files: WindowsRecoveringHistoryFiles(kind: .quota))
+        localQuotaStores[provider] = store
+        let credential = DeepSeekHistoryCredential(saltFile: root.appendingPathComponent("local-history-salt-v1.bin"), files: WindowsFileSystem())
+        localQuotaCoordinators[provider] = factory(home, credential, store) { [weak self] state, notices in
+            await self?.receiveLocalQuota(provider, state: state, notices: notices, owner: owner, version: version)
+        }
+        refreshLocalQuota(provider, force: true)
+    }
+
+    private func receiveLocalQuota(_ provider: AgentProvider, state: LocalHarnessQuotaState, notices: [IslandNotice], owner: UUID, version: UInt64) {
+        guard active, enabled.contains(provider), lifecycle.version(provider) == version, localQuotaOwners[provider] == owner else { return }
+        localQuota[provider] = state
+        localQuotaHistory[provider, default: .init()].receive(snapshot: state.snapshot, history: state.history, warning: state.warning)
+        if projectionReady { publish(notices: notices) }
+    }
+
+    private func refreshLocalQuota(_ provider: AgentProvider, force: Bool) {
+        let key = ApplicationWorkRegistry.Key(.quota, provider: provider)
+        guard active, let coordinator = localQuotaCoordinators[provider], ownedWork.task(key) == nil,
+              ProviderQuotaRefreshPolicy.isDue(lastAttempt: localQuota[provider]?.lastAttempt, expanded: expanded,
+                  failures: localQuota[provider]?.failures ?? 0, now: now(), force: force) else { return }
+        let ticket = ownedWork.begin(key, version: lifecycle.version(provider)), expanded = self.expanded
+        let task = Task { [weak self] in
+            await coordinator.refresh(expanded: expanded, force: force)
+            await self?.finishOwnedWork(ticket)
+        }
+        ownedWork.attach(task, to: ticket)
     }
 
     private func resetLocalHarness(_ provider: AgentProvider) async {
@@ -1491,7 +1573,9 @@ actor EngineRuntime {
         if let daily = demo && provider == .workbuddy ? DemoScenario.workbuddyDaily(at: now()) : harnessActivities[provider]?.usage?.daily {
             module.week = HarnessWeekPresentation.week(provider: provider, daily: daily, now: now())
         }
-        if let definition, let scheme = definition.conversationScheme, let publisher = definition.macSigningOrganization {
+        if provider == .antigravity, let definition {
+            module.launch = .init(scheme: "antigravity", publisher: "Google", executables: definition.windowsExecutables, connectorsPath: nil)
+        } else if let definition, let scheme = definition.conversationScheme, let publisher = definition.macSigningOrganization {
             module.launch = .init(scheme: scheme, publisher: publisher, executables: definition.windowsExecutables,
                                   connectorsPath: definition.connectorsPath)
         }
@@ -2196,7 +2280,7 @@ actor EngineRuntime {
                 // Mac's start/wake is an explicit request, without bypassing a
                 // signed-out/challenge or failed-disconnect connection state.
                 case .deepseek: _ = await balanceMonitor?.refreshIfDue(active: active, requested: force)
-                default: break
+                default: refreshLocalQuota(provider, force: force)
                 }
             case .activity(let provider): await bindActivityMonitor(provider)
             case .discoverActivityRoutes(let provider): await activityAdapters[provider]?.discoverRoutes?()
@@ -2225,6 +2309,7 @@ actor EngineRuntime {
     }
 
     private func resetSourceState(_ provider: AgentProvider) {
+        if localQuotaSources.removeValue(forKey: provider) != nil { retireLocalQuota(provider) }
         localStreamStatuses[provider] = nil
         notificationActivities.removeAll { $0.provider == provider }
         inbox.remove(provider: provider)
@@ -2317,7 +2402,7 @@ actor EngineRuntime {
         #endif
         // The metadata projection changes on every clock tick. Do not reopen
         // transcript files or rescan source directories while nothing is written.
-        guard activities.contains(where: { [.running, .waitingForInput].contains($0.phase) }) || !quota.isEmpty || codexQuota != nil || claudeQuotaState?.snapshot != nil || enabled.contains(.deepseek) && walletSource != nil else { return }
+        guard activities.contains(where: { [.running, .waitingForInput].contains($0.phase) }) || !quota.isEmpty || localQuota.values.contains(where: { $0.snapshot != nil }) || codexQuota != nil || claudeQuotaState?.snapshot != nil || enabled.contains(.deepseek) && walletSource != nil else { return }
         if refreshTask == nil { publish(notices: []) } else { handOffToCollect(localSnapshot: false) }
     }
     #if os(Windows)
@@ -3248,6 +3333,13 @@ actor EngineRuntime {
                 transport: demo ? "demo" : state.mode == .apiKey ? "https" : "webview",
                 reason: state.error?.localizedDescription))
         }
+        var groupedQuota: [EngineGroupedQuota] = []
+        for definition in localHarnesses.definitions where enabled.contains(definition.descriptor.id) {
+            let provider = definition.descriptor.id
+            guard let groups = definition.descriptor.quotaGroups, let full = localQuota[provider]?.snapshot else { continue }
+            snapshots[provider] = groups.selected(full, saved: harnessQuotaGroups[groups.defaultsKey])
+            groupedQuota.append(EngineGroupedQuota(full, provider: provider, at: date))
+        }
         snapshots = snapshots.filter { enabled.contains($0.key) }
         var presentationOptions = TaskPresentationOptions(hideProjects: hideProjects,
                 hostApplications: hostTracking.labels(for: visibleActivities, activities: activities, inbox: inbox) {
@@ -3268,6 +3360,10 @@ actor EngineRuntime {
                 if let error = claudeVerification.error(state) { failedProviders.insert(.claude); quotaErrors[.claude] = error }
                 if state.refreshing { refreshingProviders.insert(.claude) }
                 if snapshots[.claude] != nil { sourceTexts[.claude] = state.source?.label }
+        }
+        for (provider, state) in localQuota where enabled.contains(provider) {
+            if let error = state.error { failedProviders.insert(provider); quotaErrors[provider] = error }
+            if state.refreshing { refreshingProviders.insert(provider) }
         }
         if snapshots[.codex] != nil { sourceTexts[.codex] = L10n.text("quota.source_codex") }
         let codexSSH = enabled.contains(.codex) ? desktopState.flatMap { $0.context == lifecycle.version(.codex) ? $0 : nil } : nil
@@ -3302,6 +3398,12 @@ actor EngineRuntime {
             history[.claude] = claudeHistory.presentation(provider: .claude, snapshot: snapshots[.claude], weekly: weekly,
                 error: quotaErrors[.claude], refreshing: refreshing, now: date)
         }
+        for (provider, state) in localQuota where enabled.contains(provider) {
+            let weekly = QuotaDashboardPresentation.Reading(provider: provider, period: .weekly, snapshot: snapshots[provider],
+                failed: state.error != nil, refreshing: state.refreshing, now: date)
+            history[provider] = localQuotaHistory[provider]?.presentation(provider: provider, snapshot: state.snapshot, weekly: weekly,
+                error: state.error, refreshing: state.refreshing, now: date)
+        }
         let dashboard = EngineQuotaDashboard(enabled: enabled, snapshots: snapshots,
             failed: failedProviders, refreshing: refreshingProviders, sourceText: sourceTexts, errorText: quotaErrors, history: history, at: date)
         if projectionReady {
@@ -3311,7 +3413,7 @@ actor EngineRuntime {
             navigation.update(activities: visibleActivities, requests: visibleRequests, inbox: inbox,
                 cloudContext: cloudNavigationContext) { activity in
                 guard !activity.isInternalReview, !activity.isIgnoredCodexSession else { return false }
-                if activity.provider == .deepseek { return true }
+                if activity.provider == .deepseek || activity.provider == .antigravity { return true }
                 if demo { return true }
                 if localHarnesses.definition(for: activity.provider) != nil {
                     return harnessActivities[activity.provider]?.conversationURLs[activity.id] != nil
@@ -3340,7 +3442,7 @@ actor EngineRuntime {
             let hidden = activityState.hiddenActivityIDs(activityVisibility)
             candidates.removeAll { hidden.contains($0.canonicalized().id) }
             notificationNavigation.update(activities: candidates, requests: visibleRequests, inbox: inbox, cloudContext: cloudNavigationContext) {
-                ([.codex, .claude].contains($0.provider) || harnessActivities[$0.provider]?.conversationURLs[$0.id] != nil)
+                ([.codex, .claude, .antigravity].contains($0.provider) || harnessActivities[$0.provider]?.conversationURLs[$0.id] != nil)
                     && !$0.isInternalReview && !$0.isIgnoredCodexSession
             }
             for (context, operation) in navigationOpens where navigationEntry(context: context) == nil {
@@ -3373,6 +3475,7 @@ actor EngineRuntime {
         case .needsApproval?, .needsCodexUpdate?: if codexHooksOpenSettings { hooks?.opensSettings = true }
         default: break
         }
+        snapshot.groupedQuota = groupedQuota.isEmpty ? nil : groupedQuota
         snapshot.codexHooks = hooks
         snapshot.codexDelegation = codexDelegationStatus(at: date, presentation: taskPresentation, codexQuota: snapshots[.codex])
         refreshCodexHookActivity()
@@ -3465,9 +3568,13 @@ actor EngineRuntime {
         let codexRemote = codexRemoteProgress
         codexRemoteProgressInput = nil
         let deadline = ShutdownDeadline()
+        for provider in localQuotaSources.keys { retireLocalQuota(provider) }
+        localQuotaSources.removeAll()
+        let stores = Array(localQuotaStores.values)
         let harnesses = localHarnesses.detach()
         harnessActivities.detachLocalBindings()
         var operations: [ApplicationLifecycleCoordinator.Resource: ApplicationLifecycleCoordinator.Cleanup] = [
+            .localQuota: { for store in stores { _ = await store.flush() } },
             .codexQuota: { await quota?.stop() }, .claudeQuota: { await claude?.stop() },
             .cloud: { if sleeping { await cloud?.suspend() } else { await cloud?.stop() } },
             .balance: { await balance?.stop() }, .remoteSetup: { await remoteSetup?.shutdown(); await codexRemote?.shutdown() }
@@ -3586,7 +3693,8 @@ actor EngineRuntime {
         case .deepseek:
             fields += [deepseekSettings.selection.rawValue, DeepSeekAuthMode.detect(home: deepseekHome)?.rawValue ?? ""]
         default:
-            guard let source = harnessActivities[provider]?.scope else { return nil }
+            let local = scope == "quota" && localQuotaSources[provider] != nil
+            guard let source = local ? localQuota[provider]?.snapshot?.accountScope : harnessActivities[provider]?.scope else { return nil }
             fields.append(source)
         }
         if scope == "quota" {

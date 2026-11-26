@@ -68,6 +68,18 @@ final class WindowsHTTPStream: WindowsHTTPRead, @unchecked Sendable {
         return result == 0 ? .success(Int(status)) : .failure(Self.failure(Int64(result)))
     }
 
+    func openLocalPost(port: UInt16, path: String, headers: [String: String], body: Data, deadline: UInt64) throws -> Int {
+        guard let handle = current(), path.hasPrefix("/"), Self.valid(path),
+              let fields = Self.headerBlock(headers.map { ($0.key, $0.value) }) else { throw Failure.failed }
+        var status: UInt32 = 0
+        let result = body.withUnsafeBytes { bytes in
+            pacer_http_local_post(handle, port, Array(path.utf16) + [0], fields, bytes.bindMemory(to: UInt8.self).baseAddress,
+                                  bytes.count, deadline, &status)
+        }
+        guard result == 0 else { throw Self.failure(Int64(result)) }
+        return Int(status)
+    }
+
     func header(_ name: String) -> String? {
         guard let handle = current(), Self.valid(name), !name.isEmpty else { return nil }
         var value = [UInt16](repeating: 0, count: 1024)

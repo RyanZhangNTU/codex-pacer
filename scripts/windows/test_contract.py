@@ -191,6 +191,19 @@ class CoreBoundaryTests(unittest.TestCase):
                 contract.release_boundary(broken)
 
 
+class GroupedQuotaContractTests(unittest.TestCase):
+    def test_legacy_quota_and_optional_grouped_snapshots_are_compatible(self):
+        engine = (contract.ROOT / "windows/EngineSupport/EngineProtocol.swift").read_text(encoding="utf-8")
+        desktop = (contract.ROOT / "windows/Desktop/EngineModels.cs").read_text(encoding="utf-8")
+        contract.grouped_quota_contract(engine, desktop)
+        for before, after in (("GroupedQuota = null", "RequiredGroups"), ("IReadOnlyList<EngineQuota> Quota", "string Quota"),
+                              ("IReadOnlyList<EngineQuotaBucket> Buckets", "string Buckets")):
+            with self.subTest(before=before), self.assertRaises(ValueError):
+                contract.grouped_quota_contract(engine, desktop.replace(before, after))
+        with self.assertRaises(ValueError):
+            contract.grouped_quota_contract(engine.replace("var groupedQuota: [EngineGroupedQuota]?", "var groups: [EngineGroupedQuota]"), desktop)
+
+
 class WindowsArchitectureTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

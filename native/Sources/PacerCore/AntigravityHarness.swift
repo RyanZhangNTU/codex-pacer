@@ -5,7 +5,8 @@ enum AntigravityHarness {
         brand: .init(dark: .init(0xA5CAFF), light: .init(0x285CAD), accentLift: 0.32, accentLuminance: 0.105),
         website: URL(string: "https://antigravity.google/"), balance: .quotaWindows, hasRateDisplay: true,
         hasTaskProgress: true, progressConnector: true, quotaGroups: AntigravityQuotaGroup.options),
-        platforms: [.macOS], home: ".gemini/antigravity", detectsDataDirectory: true, dataFile: "conversation_summaries.db", windowsExecutables: [],
+        platforms: [.macOS, .windows], home: ".gemini/antigravity", detectsDataDirectory: true, dataFile: "conversation_summaries.db",
+        windowsExecutables: ["antigravity/Antigravity.exe", "Programs/antigravity/Antigravity.exe"],
         macApplicationNames: ["Antigravity"], macBundleIdentifiers: ["com.google.antigravity"], macTeamIdentifier: "EQHXZ8M8AV",
         installsProgressPlugin: true,
         makeMonitor: { AntigravityMonitor(io: $0) })

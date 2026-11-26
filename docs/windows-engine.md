@@ -46,9 +46,11 @@ Foundation on Windows reports GMT as the current zone. The host passes the user'
 
 ## Antigravity
 
-The Windows survey of 2.35.2 found the same SQLite stores, hub file and typed step/usage shapes as on the Mac. The module remains Mac-only pending host integration. Identify the installation from `%LOCALAPPDATA%\Programs\antigravity\Antigravity.exe` or the registered `HKCU\Software\Classes\antigravity` handler, and verify the app’s version resource (ProductName Antigravity, CompanyName Google). The app and its bundled `resources\bin\language_server.exe` are Authenticode-unsigned, so `ResolveSignedHandler`’s publisher check cannot identify them. Bind the server to that verified installation, its live process identity and the loopback listener. Old hub files survive process exit.
+Antigravity 2.35.2 installs an unsigned Electron application and an unsigned language server. The engine and desktop look for the app in the current user's Google Antigravity uninstall entry, the current user's protocol registration, then `%LOCALAPPDATA%\Programs\antigravity\Antigravity.exe`. They verify the fixed drive, regular files, product and company version strings, and the bundled `resources\bin\language_server.exe`. The desktop starts the verified executable with no arguments. The guide asks the main window to close before reopening it.
 
-Wire the local quota coordinator, both groups, app-only navigation, WPF module controls and notices before enabling the Windows definition. Verify a task, a child, waits, cancellation, a retained final rate, scoped quota and an allowed progress report on Windows. Restart Antigravity to load the plugin on this platform. Verify removal after exit releases the reporter’s locked working directory, including the generated data and schema caches.
+Antigravity leaves old hub files behind on Windows. The engine lists up to 4096 directory entries and checks the 32 most recently modified hub candidates. Exactly one of those candidates must pass verification. Its file must have one link and belong to the current user. Before sending a request, the engine verifies the process user, image path, creation time and ownership of the IPv4 loopback listener. Each WinHTTP POST connects directly to that listener and has two seconds to finish, including reading the bounded, uncompressed response.
+
+The `quota` projection follows the group saved in `harnessQuotaGroups` under the descriptor's defaults key. Gemini is the default. The optional `groupedQuota` snapshot, History and quota alerts cover both groups. Restart Antigravity to load its Pacer plugin. If its reporter still holds the plugin directory open during removal, the engine retries each minute and when the desktop reports that Antigravity has exited.
 
 ## WorkBuddy
 

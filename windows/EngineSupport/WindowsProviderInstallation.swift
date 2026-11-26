@@ -43,7 +43,10 @@ enum WindowsProviderInstallation {
     static func detect(userHome: URL, environment: [String: String], applicationURLs: [AgentProvider: [URL]]?,
                        systemBinDirectories: [String],
                        packageLocations: (String) -> [URL] = { WindowsPackageLocations.find(family: $0) },
-                       registeredHandlers: (String) -> [String] = WindowsURLHandler.paths) -> ProviderInstallationDetection {
+                       registeredHandlers: (String) -> [String] = WindowsURLHandler.paths,
+                       antigravityApp: ([String: String]) -> URL? = { environment in
+                           WindowsAntigravityInstallation.shared.resolve { WindowsAntigravityInstallation.candidates(environment: environment) }
+                       }) -> ProviderInstallationDetection {
         let codexApps = applicationURLs?[.codex] ?? packageLocations("OpenAI.Codex_2p2nqsd0c76g0")
         // Registered MSIX identity is authoritative for installation. Some
         // packages deny binary reads, even though the app is available to launch.
@@ -76,6 +79,15 @@ enum WindowsProviderInstallation {
         let deepseek = desktop || app(applicationURLs?[.deepseek] ?? [], paths: ["app/dsh.exe", "dsh.exe"]) || cli("dsh") || hasSessions
         let additional = HarnessRegistry.localHarnesses.filter { definition in
             guard definition.platforms.contains(.windows) else { return false }
+            if definition.descriptor.id == .antigravity {
+                let home = definition.resolveHome(override: WindowsEnvironment.value(definition.homeEnvironmentKey, in: environment),
+                    isAbsolute: WindowsCodexExecutableDiscovery.absolute, userHome: userHome)
+                if definition.hasLocalData(home: home) { return true }
+                if let applicationURLs {
+                    return WindowsAntigravityInstallation().resolve { applicationURLs[.antigravity] ?? [] } != nil
+                }
+                return antigravityApp(environment) != nil
+            }
             if let supplied = applicationURLs?[definition.descriptor.id] { return supplied.contains(where: executable) }
             // Explicit application lists make installation probes deterministic in tests.
             guard applicationURLs == nil else { return false }

@@ -8,7 +8,7 @@ public enum WindowsLocalProfileOwner {
         EqualSid(owner, user) || elevated && administratorsEnabled && EqualSid(owner, administrators)
     }
 
-    static func validate(_ owner: PSID) throws {
+    static func validate(_ owner: PSID, exactUser: Bool = false) throws {
         var token: HANDLE?
         guard OpenProcessToken(GetCurrentProcess(), DWORD(TOKEN_QUERY | TOKEN_DUPLICATE), &token), let token else {
             throw ClaudeHookInstaller.Failure.unsafePath
@@ -23,6 +23,7 @@ public enum WindowsLocalProfileOwner {
             throw ClaudeHookInstaller.Failure.unsafePath
         }
         if EqualSid(owner, sid) { return }
+        guard !exactUser else { throw ClaudeHookInstaller.Failure.unsafePath }
         var elevation = TOKEN_ELEVATION(), returned: DWORD = 0
         guard GetTokenInformation(token, TokenElevation, &elevation, DWORD(MemoryLayout<TOKEN_ELEVATION>.size), &returned), elevation.TokenIsElevated != 0 else {
             throw ClaudeHookInstaller.Failure.unsafePath
