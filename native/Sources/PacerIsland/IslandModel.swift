@@ -955,7 +955,7 @@ final class IslandModel: ObservableObject {
                 if !definition.installsProgressPlugin, state?.setup == .configured, self.localHarnessProgressStatuses[id]?.reported == true { state?.reported = true }
                 self.localHarnessProgressStatuses[id] = state
                 self.localHarnessProgressTasks[id] = nil
-                self.updateProgressApprovalFloat(id)
+                self.updateProgressGuideFloat(id)
                 // A report can land while the installation is finishing.
                 if definition.installsProgressPlugin, let snapshot = self.localHarnessActivities[id],
                    snapshot.activities.compactMap({ $0.currentProgress?.reportedAt }).max() != reportAt {
@@ -1053,13 +1053,18 @@ final class IslandModel: ObservableObject {
     /// The projection keys Pacer approvals by conversation and step, across polling gaps.
     private var shownProgressApprovals: Set<String> = []
 
-    private func updateProgressApprovalFloat(_ provider: AgentProvider) {
+    private var shownMissedConversations: Set<String> = []
+
+    private func updateProgressGuideFloat(_ provider: AgentProvider) {
         guard provider == .antigravity, !sleeping, !stopped, !demo || demoArguments?.contains("--demo-antigravity-guide") == true,
-              let snapshot = localHarnessActivities[provider], snapshot.requestsProgressApproval,
-              progressGuide(provider)?.floatPicture == .antigravityApproval else { return }
-        let pending = snapshot.requests.lazy.filter(\.requestsProgressApproval).map(\.id)
-        guard pending.contains(where: { !shownProgressApprovals.contains($0) }) else { return }
-        shownProgressApprovals.formUnion(pending)
+              let snapshot = localHarnessActivities[provider], let guide = progressGuide(provider) else { return }
+        if guide.stage == .conversationMissedTool, let miss = snapshot.missedProgressConversation {
+            guard shownMissedConversations.insert(miss.id).inserted else { return }
+        } else if guide.floatPicture == .antigravityApproval {
+            let pending = snapshot.requests.lazy.filter(\.requestsProgressApproval).map(\.id)
+            guard pending.contains(where: { !shownProgressApprovals.contains($0) }) else { return }
+            shownProgressApprovals.formUnion(pending)
+        } else { return }
         if harnessGuideFloat.provider != provider { showHarnessFloat(provider, on: nil) }
     }
 
@@ -1184,7 +1189,8 @@ final class IslandModel: ObservableObject {
                                     addedAt: state?.addedAt, removedAt: state?.removedAt, app: localHarnessApps[provider],
                                     view: harnessAppViews[provider], openedConnectors: harnessOpenedConnectors[provider] != nil,
                                     pluginPlatform: localHarnesses.definition(for: provider)?.installsProgressPlugin == true ? .macOS : nil,
-                                    requestsApproval: localHarnessActivities[provider]?.requestsProgressApproval == true, language: language)
+                                    requestsApproval: localHarnessActivities[provider]?.requestsProgressApproval == true,
+                                    missedConversation: localHarnessActivities[provider]?.missedProgressConversation, language: language)
     }
 
     /// The ⓘ text, also while the ring is off and there is no card to word it.
@@ -2993,7 +2999,7 @@ final class IslandModel: ObservableObject {
         combineActivities()
         localHarnessRevision &+= 1
         noteLocalHarnessProgress(provider, snapshot: snapshot)
-        updateProgressApprovalFloat(provider)
+        updateProgressGuideFloat(provider)
     }
     private func resetLocalHarness(_ provider: AgentProvider) {
         if let store = localHistoryStores[provider] {
@@ -3342,9 +3348,9 @@ final class IslandModel: ObservableObject {
         guard demo else { return }
         localHarnessActivities.replace(.antigravity, with: snapshot)
         localHarnessProgressStatuses[.antigravity] = setup
-        updateProgressApprovalFloat(.antigravity)
+        updateProgressGuideFloat(.antigravity)
     }
-    func setDemoStage(_ stage: DemoTaskStage) {
+    func setDemoStage(_ stage: DemoTaskStage, missedProgressTool: Bool = false) {
         guard demo else { return }
         redrawClock(demoClock())
         let demoArguments = demoArguments ?? []
@@ -3361,11 +3367,14 @@ final class IslandModel: ObservableObject {
         }
         if demoArguments.contains("--demo-antigravity") {
             let guideDemo = demoArguments.contains("--demo-antigravity-guide")
-            let snapshot = DemoScenario.antigravityTasks(at: now, requestsProgressApproval: !guideDemo || stage == .responding)
+            var snapshot = DemoScenario.antigravityTasks(at: now, requestsProgressApproval: !guideDemo || stage == .responding)
+            if guideDemo, stage == .tool, missedProgressTool {
+                snapshot.missedProgressConversation = .init(id: "demo-missed-conversation", firstInputAt: now)
+            }
             observed += snapshot.activities
             demoRequests += snapshot.requests
             applyDemoAntigravityProgress(snapshot, setup: .init(guideDemo && stage == .thinking ? .settingUp : .configured,
-                                                               reported: guideDemo && stage == .completed))
+                                                               reported: guideDemo && stage == .completed, addedAt: now.addingTimeInterval(-120)))
         }
         discoveredCodexTargets = [.init(id: ConnectionSource.sshPrefix + "demo", name: "SSH", alias: "demo", home: "~/.codex")]
         discoveredClaudeTargets = []; claudeRemoteTargets = []

@@ -219,6 +219,7 @@
 "demo.chat_heading" = "会话跳转演示";
 "demo.chat_title" = "会话跳转 · 演示";
 "demo.label" = "演示";
+"demo.antigravity_missed_tool" = "对话未加载进度工具";
 "demo.menu" = "演示：%@";
 "demo.optimize" = "优化应用界面";
 "demo.return" = "返回状态岛";
@@ -1867,7 +1868,7 @@
 "progress_guide.plugin.conversation" = "打开 Antigravity，新建对话，粘贴下面这句话。";
 "progress_guide.plugin.example" = "用终端命令查一下今天的日期和这台电脑的名字，然后用一句话告诉我。";
 "progress_guide.action.copy" = "复制";
-"progress_guide.plugin.conversation_again" = "如果没有出现使用 Pacer 工具的提示，就再新建一个对话，重新粘贴这句话。";
+"progress_guide.plugin.conversation_missed_tool" = "这个对话没有加载 Pacer 的进度工具，请再新建一个对话，粘贴同一句话。";
 "progress_guide.plugin.restart" = "重启 Antigravity，载入进度工具。";
 "progress_guide.plugin.restarting" = "正在重启 %@…";
 "progress_guide.plugin.allow" = "当 Antigravity 针对 Pacer 的进度工具询问“%1$@”时，点击第 3 项“%2$@”。";

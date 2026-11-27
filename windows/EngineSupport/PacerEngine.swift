@@ -1607,7 +1607,11 @@ actor EngineRuntime {
                 ringOn: enabled.contains(provider) && !disabledHarnessProgress.contains(provider), name: descriptor.name,
                 addedAt: state?.addedAt, removedAt: state?.removedAt, app: localHarnessApps[provider], view: localHarnessViews[provider],
                 openedConnectors: openedHarnessConnectors[provider] != nil, pluginPlatform: definition?.installsProgressPlugin == true ? .windows : nil,
-                requestsApproval: harnessActivities[provider]?.requestsProgressApproval == true)
+                requestsApproval: harnessActivities[provider]?.requestsProgressApproval == true,
+                missedConversation: harnessActivities[provider]?.missedProgressConversation)
+            if module.progressGuide?.stage == .conversationMissedTool {
+                module.missedProgressConversation = harnessActivities[provider]?.missedProgressConversation
+            }
             if let guide = module.progressGuide, let pending = HarnessProgressGuide.pendingFloat(stage: guide.stage, name: descriptor.name) {
                 module.pendingFloat = .init(title: pending.title, next: pending.next)
             }

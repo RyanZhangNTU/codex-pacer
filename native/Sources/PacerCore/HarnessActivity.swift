@@ -1,11 +1,22 @@
 import Foundation
 
+package struct MissedProgressConversation: Codable, Equatable, Sendable {
+    package let id: String
+    package let firstInputAt: Date
+
+    package init(id: String, firstInputAt: Date) {
+        self.id = id
+        self.firstInputAt = firstInputAt
+    }
+}
+
 /// A provider's bounded projection after reconciling its own logs and streams.
 public struct HarnessActivity: Equatable, Sendable {
     public var activities: [SessionActivity]
     public var requests: [PendingAttentionRequest]
     public var status: HarnessSourceStatus?
     package var requestsProgressApproval: Bool { requests.contains(where: \.requestsProgressApproval) }
+    package var missedProgressConversation: MissedProgressConversation?
     package var scope: String?
     package var conversationURLs: [String: URL] = [:]
     package var usage: HarnessUsage?
@@ -208,7 +219,8 @@ package struct HarnessActivityFeed: Sendable {
                     removedActivityIDs: Set(rows.keys).subtracting(value.activities.map(\.id)),
                     requests: value.requests.filter { requests[$0.id] != $0 },
                     removedRequestIDs: Set(requests.keys).subtracting(value.requests.map(\.id)),
-                    status: value.status, conversationURLs: value.conversationURLs == previous.conversationURLs ? nil : value.conversationURLs,
+                    status: value.status, missedProgressConversation: value.missedProgressConversation,
+                    conversationURLs: value.conversationURLs == previous.conversationURLs ? nil : value.conversationURLs,
                     usage: value.usage == previous.usage ? .unchanged : .replace(value.usage)
                 ))
             }

@@ -435,12 +435,109 @@ final class AntigravityTests: XCTestCase {
         await m.stop()
     }
 
+    func testMissedToolRequiresACompleteRootHistoryAndAPostInstallFirstInput() async throws {
+        let f = try Fixture(), m = try f.monitor(), updates = Updates()
+        await m.start(home: f.home, policy: .collapsed) { await updates.receive($0) }
+        var sources = HarnessActivitySources()
+        sources.bind(.antigravity, home: f.home, generation: 1)
+        func observe(_ steps: [Step], at second: Int) async throws -> HarnessActivity {
+            try f.write(steps, state: "RUNNING", at: second)
+            await m.refresh()
+            let snapshot = await updates.last
+            return try XCTUnwrap(sources.receive(.antigravity, snapshot: snapshot)?.activity)
+        }
+        let other = report("{}", at: 3, server: "other", type: "MCP_TOOL")
+        try f.write([input, other], state: "RUNNING", at: 4, id: childID, parent: rootID)
+        var snapshot = try await observe([input, planner, Step("RUN_COMMAND", "RUNNING", 3)], at: 4)
+        XCTAssertNil(snapshot.missedProgressConversation, "Neither a planner nor a child's finished tool qualifies")
+        let oldInput = Step("USER_INPUT", "DONE", -10)
+        snapshot = try await observe([oldInput, input, other], at: 5)
+        let beforeInstall = try XCTUnwrap(snapshot.missedProgressConversation)
+        XCTAssertEqual(beforeInstall.firstInputAt, epoch.addingTimeInterval(-10))
+        func stage(_ miss: MissedProgressConversation, installed: Date?) -> HarnessProgressGuide.Stage? {
+            HarnessProgressGuide(setup: .configured, connection: nil, reported: false, ringOn: true, name: "Antigravity",
+                                 addedAt: installed, pluginPlatform: .macOS, missedConversation: miss)?.stage
+        }
+        XCTAssertEqual(stage(beforeInstall, installed: epoch), .newConversation)
+        snapshot = try await observe([input, other], at: 6)
+        let miss = try XCTUnwrap(snapshot.missedProgressConversation)
+        XCTAssertEqual(miss.id, rootID)
+        XCTAssertEqual(stage(miss, installed: epoch), .conversationMissedTool)
+        XCTAssertEqual(stage(miss, installed: miss.firstInputAt), .newConversation)
+        XCTAssertEqual(stage(miss, installed: nil), .newConversation)
+
+        snapshot = try await observe([input, other, Step("USER_INPUT", "DONE", 6)], at: 7)
+        XCTAssertEqual(snapshot.missedProgressConversation, miss, "A known foreign server stays identified outside the new turn's tail")
+        snapshot = try await observe([input, other, Step("GENERIC", "WAITING", 7, "pacer")], at: 8)
+        XCTAssertTrue(snapshot.requestsProgressApproval)
+        XCTAssertNil(snapshot.missedProgressConversation)
+        snapshot = try await observe([input, other, Step("PLANNER_RESPONSE", "DONE", 9)], at: 12)
+        XCTAssertNil(snapshot.missedProgressConversation, "A dismissed approval cannot revive an old miss")
+        await m.stop()
+    }
+
+    func testMissedToolClearsForEitherReportShapeEvenWithoutAValidPercent() async throws {
+        for type in ["GENERIC", "MCP_TOOL"] {
+            let f = try Fixture(), m = try f.monitor(), updates = Updates()
+            let command = Step("RUN_COMMAND", "DONE", 3)
+            try f.write([input, command], state: "RUNNING", at: 4)
+            await m.start(home: f.home, policy: .collapsed) { await updates.receive($0) }
+            var snapshot = await updates.last
+            XCTAssertEqual(snapshot.missedProgressConversation?.id, rootID)
+            try f.write([input, command, report("{}", at: 5, type: type)], state: "RUNNING", at: 7)
+            await m.refresh()
+            snapshot = await updates.last
+            XCTAssertNil(snapshot.activities.first?.currentProgress)
+            XCTAssertNil(snapshot.missedProgressConversation, type)
+            await m.stop()
+        }
+    }
+
+    func testMissedToolClearsAcrossConversationsAndRejectsUnidentifiedEarlierSteps() async throws {
+        let f = try Fixture(), m = try f.monitor(), updates = Updates()
+        let other = report("{}", at: 3, server: "other", type: "MCP_TOOL")
+        try f.write([input, other, Step("USER_INPUT", "DONE", 5), Step("RUN_COMMAND", "DONE", 6)], state: "RUNNING", at: 7)
+        await m.start(home: f.home, policy: .collapsed) { await updates.receive($0) }
+        var snapshot = await updates.last
+        XCTAssertNil(snapshot.missedProgressConversation, "The transcript prefix cannot identify the earlier MCP server")
+        try f.write([input, other], state: "RUNNING", at: 8)
+        try f.write([Step("USER_INPUT", "DONE", 9), Step("VIEW_FILE", "DONE", 10)], state: "RUNNING", at: 11, id: childID)
+        await m.refresh()
+        snapshot = await updates.last
+        XCTAssertEqual(snapshot.missedProgressConversation?.id, childID, "Only the newest root is published")
+        try f.write([input, other, Step("GENERIC", "WAITING", 12, "pacer")], state: "RUNNING", at: 13)
+        await m.refresh()
+        snapshot = await updates.last
+        XCTAssertNil(snapshot.missedProgressConversation)
+        try f.write([input, other, report(#"{"percent":30}"#, at: 14)], state: "RUNNING", at: 16)
+        await m.refresh()
+        snapshot = await updates.last
+        XCTAssertFalse(snapshot.requestsProgressApproval)
+        XCTAssertNil(snapshot.missedProgressConversation)
+        await m.stop()
+    }
+
+    func testOwnedModelToolListCanRuleOutAMiss() async throws {
+        for name in ["run_command", "call_mcp_tool"] {
+            let f = try Fixture(), m = try f.monitor(), updates = Updates()
+            try f.write([input, planner, Step("RUN_COMMAND", "DONE", 6)], state: "RUNNING", at: 7)
+            let call: [String: Any] = ["stepIndices": [1], "executionId": "call-owner",
+                                       "chatModel": ["tools": [["name": name, "description": "ignored"]]]]
+            f.host.respond("GetCascadeTrajectoryGeneratorMetadata", with: try JSONSerialization.data(withJSONObject: ["generatorMetadata": [call]]))
+            await m.start(home: f.home, policy: .collapsed) { await updates.receive($0) }
+            let snapshot = await updates.last
+            XCTAssertEqual(snapshot.missedProgressConversation?.id, name == "call_mcp_tool" ? nil : rootID)
+            await m.stop()
+        }
+    }
+
     func testProgressGuidePicturesAndReadinessOnBothPlatforms() throws {
         func guide(_ setup: LocalHarnessProgressStatus, _ platform: HarnessPlatform, app: HarnessProgressGuide.AppPresence? = nil,
                    reported: Bool = false, connection: LocalHarnessProgressConnection? = nil, on: Bool = true, approval: Bool = false,
-                   language: AppLanguage = .english) -> HarnessProgressGuide? {
+                   missed: Bool = false, language: AppLanguage = .english) -> HarnessProgressGuide? {
             HarnessProgressGuide(setup: setup, connection: connection, reported: reported, ringOn: on, name: "Antigravity",
-                                 addedAt: epoch, app: app, pluginPlatform: platform, requestsApproval: approval, language: language)
+                                 addedAt: epoch, app: app, pluginPlatform: platform, requestsApproval: approval,
+                                 missedConversation: missed ? .init(id: rootID, firstInputAt: epoch.addingTimeInterval(1)) : nil, language: language)
         }
         for platform in [HarnessPlatform.macOS, .windows] {
             for candidate in [guide(.settingUp, platform), guide(.configured, platform), guide(.configured, platform, app: .running(since: epoch)),
@@ -472,8 +569,22 @@ final class AntigravityTests: XCTestCase {
                 let conversation = try XCTUnwrap(guide(.configured, platform, app: .running(since: epoch), language: language))
                 XCTAssertEqual(conversation.steps.firstIndex { $0.state == .current }, platform == .windows ? 1 : 0)
                 XCTAssertEqual(conversation.example, expected)
+                XCTAssertNil(conversation.steps.first { $0.state == .current }?.detail)
+                XCTAssertNil(conversation.floatNext)
+                let missed = try XCTUnwrap(guide(.configured, platform, app: .running(since: epoch), missed: true, language: language))
+                XCTAssertEqual(missed.stage, .conversationMissedTool)
+                XCTAssertEqual(missed.steps.map(\.state), conversation.steps.map(\.state))
+                XCTAssertEqual(missed.floatTitle, missed.steps.first { $0.state == .current }?.title)
+                XCTAssertNotEqual(missed.floatTitle, conversation.floatTitle)
+                XCTAssertEqual(missed.example, expected)
+                XCTAssertEqual(missed.picture, .antigravityApproval)
+                XCTAssertNil(missed.floatPicture)
+                XCTAssertEqual(guide(.configured, platform, approval: true, missed: true)?.stage, .allowTool)
+                XCTAssertEqual(guide(.configured, platform, reported: true, missed: true)?.stage, .ready)
+                XCTAssertEqual(guide(.configured, platform, connection: .trusted, missed: true)?.stage, .ready)
             }
         }
+        XCTAssertEqual(guide(.configured, .windows, app: .running(since: .distantPast), missed: true)?.stage, .restartForPlugin)
         XCTAssertEqual(guide(.settingUp, .macOS)?.steps, [])
         XCTAssertEqual(guide(.configured, .macOS, app: .running(since: .distantPast))?.stage, .newConversation)
         XCTAssertEqual(guide(.configured, .windows, app: .running(since: .distantPast))?.action, .restartApp)

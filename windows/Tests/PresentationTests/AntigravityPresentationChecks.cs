@@ -201,7 +201,8 @@ internal static class AntigravityPresentationChecks
             Check(Name(current) == steps[index].Title && AutomationProperties.GetItemStatus(current) == ui.Text("progress_guide.state.current"),
                 "The current plugin step must have a localized accessible state");
             CheckPicture(current, card);
-            if (index != 0) Check(!string.IsNullOrEmpty(steps[index].Detail), "The conversation and approval steps must explain the next action");
+            if (index == 1) Check(steps[index].Detail == null, "The ordinary conversation step omits the retry instruction");
+            if (index == 2) Check(!string.IsNullOrEmpty(steps[index].Detail), "The approval step must explain the next action");
             var detail = Find<TextBlock>(current, Prefix + "progress_detail");
             Check(detail?.Text == steps[index].Detail && (detail == null || detail.TextWrapping == TextWrapping.Wrap),
                 "The current step must show its complete, wrapping detail");
@@ -276,8 +277,7 @@ internal static class AntigravityPresentationChecks
     internal static async Task RunGuideFixtures(string language, bool dark)
     {
         var ui = UiText.For(language == "zh-Hans");
-        var steps = new HarnessProgressStep[] { new("Restart", "done"),
-            new(ui.Text("progress_guide.plugin.conversation_hint"), "done", ui.Text("progress_guide.plugin.conversation_again")),
+        var steps = new HarnessProgressStep[] { new("Restart", "done"), new("New conversation", "done"),
             new("Choose a grant", "current", "Why Antigravity asks.\nWhen it asks again."), new("Ready", "pending") };
         var guide = new HarnessProgressGuide("allowTool", "Setup", "attention", steps, null, null, null, true, null, true, "",
             Picture: "antigravityApproval", FloatTitle: "Choose the lasting grant", FloatNext: steps[2].Detail,

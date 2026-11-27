@@ -219,6 +219,7 @@
 "demo.chat_heading" = "Open Chat Demo";
 "demo.chat_title" = "Open Chat · Demo";
 "demo.label" = "Demo";
+"demo.antigravity_missed_tool" = "Conversation missed the progress tool";
 "demo.menu" = "Demo: %@";
 "demo.optimize" = "Improve the app interface";
 "demo.return" = "Back to Island";
@@ -1867,7 +1868,7 @@
 "progress_guide.plugin.conversation" = "Open Antigravity, start a new conversation, and paste this prompt.";
 "progress_guide.plugin.example" = "Use terminal commands to check today's date and this computer's name, then tell me both in one sentence.";
 "progress_guide.action.copy" = "Copy";
-"progress_guide.plugin.conversation_again" = "If Antigravity doesn’t ask to use Pacer’s tool, start one more new conversation and paste it again.";
+"progress_guide.plugin.conversation_missed_tool" = "This conversation didn’t get Pacer’s progress tool, so start one more new conversation and paste the same sentence.";
 "progress_guide.plugin.restart" = "Restart Antigravity to load the progress tool.";
 "progress_guide.plugin.restarting" = "Restarting %@…";
 "progress_guide.plugin.allow" = "When Antigravity asks “%1$@” for Pacer’s progress tool, click row 3, “%2$@”.";

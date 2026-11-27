@@ -228,6 +228,7 @@ struct EngineModule: Codable, Equatable {
     }
     var pendingFloat: PendingFloat? = nil
     var progressApprovals: [String]? = nil
+    var missedProgressConversation: MissedProgressConversation? = nil
 
     static func approvalIDs(for provider: AgentProvider, in activity: HarnessActivity?) -> [String]? {
         guard provider == .antigravity else { return nil }

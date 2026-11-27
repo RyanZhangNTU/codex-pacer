@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "edbd4d4bbe0eb8d83afc0b13098029d33ccfc3a854551244360e9e8c72aafddc",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f4dc0ddc2fe8eac7817e70cb6950550a31bfbcb78d62247e2cf0f921b9f212ce",
     "windows/EngineSupport/Resources/Localization/en.json": "9c5c3afa9978273c9160fabc0506c301ea0cb77b9090d382d0ec78e963927bff"
   },
   "strings": {
@@ -724,6 +724,7 @@
     "delegation.stop": "Stop this Codex run",
     "delegation.worktree": "Separate worktree",
     "delegation.write": "Can edit",
+    "demo.antigravity_missed_tool": "Conversation missed the progress tool",
     "demo.antigravity_reviewer": "Design reviewer",
     "demo.app_detail": "Outside demo mode, this button brings the %@ desktop app forward.",
     "demo.app_heading": "Open App Demo",
@@ -1427,8 +1428,8 @@
     "progress_guide.plugin.choose": "Click row 3, \u201c%@\u201d.",
     "progress_guide.plugin.conflict": "Move the files you want to keep out of the codex-pacer plugin folder before trying again.",
     "progress_guide.plugin.conversation": "Open Antigravity, start a new conversation, and paste this prompt.",
-    "progress_guide.plugin.conversation_again": "If Antigravity doesn\u2019t ask to use Pacer\u2019s tool, start one more new conversation and paste it again.",
     "progress_guide.plugin.conversation_hint": "Start a new conversation in Antigravity.",
+    "progress_guide.plugin.conversation_missed_tool": "This conversation didn\u2019t get Pacer\u2019s progress tool, so start one more new conversation and paste the same sentence.",
     "progress_guide.plugin.example": "Use terminal commands to check today's date and this computer's name, then tell me both in one sentence.",
     "progress_guide.plugin.failed": "Check that you can save files in the Antigravity plugins folder and try again.",
     "progress_guide.plugin.needs_attention": "Needs attention",

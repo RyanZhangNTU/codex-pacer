@@ -26,7 +26,7 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
         /// `opening`: the card opened the connectors and the app hasn't shown
         /// them yet; it takes a few seconds as the app starts.
         case adding, reopen, launch, openConnectors, opening, customConnector, trust, firstTask, ready
-        case newConversation, allowTool, restartForPlugin, removalPending
+        case newConversation, conversationMissedTool, allowTool, restartForPlugin, removalPending
         case turnedOff, toolOff, openApp, conflict, failed, missing, unknown, cleanupFailed
     }
     public enum Tone: String, Codable, Sendable { case neutral, attention, info, success, error }
@@ -90,10 +90,11 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
     package init?(setup: LocalHarnessProgressStatus?, connection: LocalHarnessProgressConnection?, reported: Bool,
                   ringOn: Bool, name: String, addedAt: Date? = nil, removedAt: Date? = nil, app: AppPresence? = nil,
                   view: AppView? = nil, openedConnectors: Bool = false, pluginPlatform: HarnessPlatform? = nil,
-                  requestsApproval: Bool = false, language: AppLanguage? = nil) {
+                  requestsApproval: Bool = false, missedConversation: MissedProgressConversation? = nil, language: AppLanguage? = nil) {
         if let pluginPlatform {
             guard let guide = Self(pluginSetup: setup, connection: connection, reported: reported, ringOn: ringOn, name: name,
-                                   platform: pluginPlatform, addedAt: addedAt, app: app, requestsApproval: requestsApproval, language: language)
+                                   platform: pluginPlatform, addedAt: addedAt, app: app, requestsApproval: requestsApproval,
+                                   missedConversation: missedConversation, language: language)
             else { return nil }
             self = guide
             return
@@ -164,7 +165,7 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
         let flowChip = again ? text("chip.retrust") : left == 1 ? text("chip.trust") : text("chip.steps_left", left)
         switch stage {
         case .adding: chip = text("chip.adding"); tone = .neutral
-        case .newConversation, .allowTool, .restartForPlugin, .removalPending, .reopen, .launch, .openConnectors, .opening, .customConnector, .trust: chip = flowChip; tone = .attention
+        case .newConversation, .conversationMissedTool, .allowTool, .restartForPlugin, .removalPending, .reopen, .launch, .openConnectors, .opening, .customConnector, .trust: chip = flowChip; tone = .attention
         case .firstTask, .ready: chip = text("chip.ready"); tone = .success
         case .turnedOff, .toolOff: chip = text("chip.turned_off", name); tone = .attention
         case .openApp: chip = text("chip.open_app", name); tone = .attention
@@ -221,7 +222,7 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
 
     private init?(pluginSetup setup: LocalHarnessProgressStatus?, connection: LocalHarnessProgressConnection?,
                   reported: Bool, ringOn: Bool, name: String, platform: HarnessPlatform, addedAt: Date?,
-                  app: AppPresence?, requestsApproval: Bool, language: AppLanguage?) {
+                  app: AppPresence?, requestsApproval: Bool, missedConversation: MissedProgressConversation?, language: AppLanguage?) {
         func text(_ key: String, _ args: CVarArg...) -> String { L10n.text("progress_guide." + key, arguments: args, language: language) }
         guard let setup else { return nil }
         let stage: Stage
@@ -240,26 +241,32 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
                 if connection == .disabled { stage = .turnedOff }
                 else if connection == .trusted || (reported && connection != .needsTrust) { stage = .ready }
                 else if requestsApproval { stage = .allowTool }
-                else if platform == .macOS { stage = .newConversation }
-                else if case .running(let since) = app, let addedAt, since >= addedAt { stage = .newConversation }
-                else { stage = .restartForPlugin }
+                else {
+                    let conversation: Stage
+                    if !reported, let addedAt, let missedConversation, missedConversation.firstInputAt > addedAt { conversation = .conversationMissedTool }
+                    else { conversation = .newConversation }
+                    if platform == .macOS { stage = conversation }
+                    else if case .running(let since) = app, let addedAt, since >= addedAt { stage = conversation }
+                    else { stage = .restartForPlugin }
+                }
             }
         }
         self.stage = stage
         info = L10n.text("antigravity.progress_ring_help", language: language)
         let card = AntigravityApprovalCard.current
-        let conversation = text("plugin.conversation"), retryConversation = text("plugin.conversation_again")
-        example = stage == .newConversation ? text("plugin.example") : nil
+        let conversation = text(stage == .conversationMissedTool ? "plugin.conversation_missed_tool" : "plugin.conversation")
+        let conversationStep: Stage = stage == .conversationMissedTool ? .conversationMissedTool : .newConversation
+        example = stage == conversationStep ? text("plugin.example") : nil
         let allow = text("plugin.allow", card.title, card.always)
         let reason = text("plugin.reason") + "\n" + text("plugin.scopes")
         let done = text("plugin.report")
-        let flow: [Stage] = platform == .windows ? [.restartForPlugin, .newConversation, .allowTool, .ready] : [.newConversation, .allowTool, .ready]
+        let flow: [Stage] = platform == .windows ? [.restartForPlugin, conversationStep, .allowTool, .ready] : [conversationStep, .allowTool, .ready]
         if stage != .ready, let current = flow.firstIndex(of: stage) {
             steps = flow.enumerated().map { index, step in
                 let state: StepState = index == current ? .current : index < current ? .done : .pending
                 switch step {
                 case .restartForPlugin: return Step(title: text("plugin.restart"), state: state)
-                case .newConversation: return Step(title: state == .current ? conversation : text("plugin.conversation_hint"), state: state, detail: retryConversation)
+                case .newConversation, .conversationMissedTool: return Step(title: state == .current ? conversation : text("plugin.conversation_hint"), state: state)
                 case .allowTool: return Step(title: allow, state: state, detail: reason)
                 default: return Step(title: done, state: state)
                 }
@@ -274,7 +281,7 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
             floatNext = reason
         } else {
             switch stage {
-            case .newConversation: floatTitle = conversation; floatNext = retryConversation
+            case .newConversation, .conversationMissedTool: floatTitle = conversation; floatNext = nil
             case .ready: floatTitle = done; floatNext = nil
             case .turnedOff: floatTitle = text("plugin.off"); floatNext = nil
             default: floatTitle = nil; floatNext = nil
@@ -287,7 +294,7 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
             chip = text("chip.ready"); tone = .success; line = done; action = nil
         case .turnedOff:
             chip = text("chip.turned_off", name); tone = .attention; line = text("plugin.off"); action = .openApp
-        case .newConversation, .restartForPlugin, .allowTool:
+        case .newConversation, .conversationMissedTool, .restartForPlugin, .allowTool:
             chip = text("plugin.setup"); tone = .attention; line = nil
             action = stage == .restartForPlugin && app != .notRunning ? .restartApp : .openApp
         case .removalPending:
@@ -306,11 +313,12 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
         attention = tone == .attention || tone == .error
         switch stage {
         case .allowTool: summary = text("plugin.allow_hint")
+        case .conversationMissedTool: summary = conversation
         case .newConversation: summary = text("plugin.conversation_hint")
         case .restartForPlugin: summary = text("plugin.restart")
         default: summary = attention ? line : nil
         }
-        waiting = [.newConversation, .restartForPlugin, .allowTool, .turnedOff, .removalPending].contains(stage)
+        waiting = [.newConversation, .conversationMissedTool, .restartForPlugin, .allowTool, .turnedOff, .removalPending].contains(stage)
     }
 
     /// What the floating guide says before the card's click reaches the app:

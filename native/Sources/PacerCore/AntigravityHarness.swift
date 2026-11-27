@@ -53,6 +53,7 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
         }
         var trajectory: AntigravityStore.Trajectory?
         var transcript = AntigravityTranscript()
+        var progressToolHistory = AntigravityProjection.ProgressToolHistory()
         var metadata = AntigravityProjection.Enrichment()
         var stamps: [PlatformFileMetadata?] = []
         var summary: AntigravityStore.Summary?
@@ -76,6 +77,7 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
     private var disagreements = Set<String>()
     private var policy = ActivityRefreshPolicy.collapsed
     private var cache: [String: Cached] = [:]
+    private var lastProgressToolAt: Date?
     private var watermark: Date?
     private var hubGeneration: UInt64?
     private var pass: UInt64 = 0
@@ -118,7 +120,7 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
     private func reset() -> AntigravityLocalClient? {
         generation &+= 1; reading = false; dirty = false
         watcher?.stop(); watcher = nil; summaryCache = nil
-        store = nil; publish = nil; cache = [:]; previous = nil; watermark = nil; hubGeneration = nil
+        store = nil; publish = nil; cache = [:]; previous = nil; lastProgressToolAt = nil; watermark = nil; hubGeneration = nil
         defer { client = nil }
         return client
     }
@@ -237,10 +239,12 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
                     item.retryTrajectory = error as? AntigravityStore.Failure == .unavailable || error as? AntigravityStore.Failure == .retrySoon
                     if item.retryTrajectory { retryFiles = true }
                 }
-                if item.trajectory?.id != trajectory?.id || item.trajectory?.anchor?.index != trajectory?.anchor?.index ||
-                    item.trajectory?.anchor?.type != trajectory?.anchor?.type ||
+                let replaced = item.trajectory?.id != trajectory?.id ||
                     (trajectory?.last?.index ?? -1) < (item.trajectory?.last?.index ?? -1) ||
-                    item.stamps.first.flatMap({ $0?.identity }) != stamps[0]?.identity {
+                    item.stamps.first.flatMap({ $0?.identity }) != stamps[0]?.identity
+                if replaced { item.progressToolHistory = .init() }
+                if replaced || item.trajectory?.anchor?.index != trajectory?.anchor?.index ||
+                    item.trajectory?.anchor?.type != trajectory?.anchor?.type {
                     item.metadata = .init(); item.transcript = .init(); item.witnessed = nil; item.turn = nil
                 }
                 item.trajectory = trajectory
@@ -270,6 +274,7 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
         let prior = Dictionary(uniqueKeysWithValues: (previous?.activities ?? []).map { ($0.threadID ?? $0.id, $0) })
         var childEnd: [String: Date] = [:], unconfirmedParents = Set<String>()
         var value = HarnessActivity(status: .ready)
+        var progressToolAt = lastProgressToolAt
         let scope = CompletionDismissalStore.digest(["antigravity-home", store.home.standardizedFileURL.path])
         value.scope = scope
         for (row, parents) in family {
@@ -302,6 +307,11 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
             } else if let ended = result.activity.phaseChangedAt {
                 for parent in parents { childEnd[parent] = max(childEnd[parent] ?? ended, ended) }
             }
+            if let miss = item.progressToolHistory.observe(row, trajectory: item.trajectory, transcript: item.transcript, live: item.metadata),
+               miss.firstInputAt > (value.missedProgressConversation?.firstInputAt ?? .distantPast) {
+                value.missedProgressConversation = miss
+            }
+            if let at = item.progressToolHistory.lastProgressToolAt { progressToolAt = max(progressToolAt ?? .distantPast, at) }
             next[row.id] = item
             value.activities.append(result.activity)
             if let request = result.request { value.requests.append(request) }
@@ -320,6 +330,10 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
         let orphans = Set(family.compactMap { row, parents in parents.contains(where: { !visible.contains($0) }) ? row.id : nil })
         value.activities.removeAll { $0.threadID.map(orphans.contains) == true }
         value.requests.removeAll { orphans.contains($0.threadID) }
+        lastProgressToolAt = progressToolAt
+        if value.requestsProgressApproval || (value.missedProgressConversation?.firstInputAt ?? .distantPast) <= (progressToolAt ?? .distantPast) {
+            value.missedProgressConversation = nil
+        }
         summaryCache = (summaryStamps, rows)
         cache = next; urls = watched; watcher?.update(urls, interval: policy.interval)
         if watermark == nil { watermark = io.now() }

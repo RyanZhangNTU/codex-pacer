@@ -33,6 +33,8 @@ struct AntigravityProjection {
         var progress: Int?
         var completed: Date?
         var requestsProgressApproval = false
+        var usesProgressServer = false
+        var unidentifiedMCPTool = false
     }
 
     struct Call {
@@ -40,6 +42,7 @@ struct AntigravityProjection {
         let displayName: String?
         let tokens: Int?
         let duration: Double?
+        let permitsMissedToolInference: Bool
 
         func performance(planner: TypedStep, turn: String, started: Date) -> ResponsePerformance? {
             guard let tokens, let duration, (1...3600).contains(duration),
@@ -101,24 +104,30 @@ struct AntigravityProjection {
             let changed = try transitions?.last?.fields(["updatedStatus", "timestamp"])
             let transition = changed?["updatedStatus"]?.string() == status ? AntigravityStore.date(changed?["timestamp"]?.string()) : nil
             var percent: Int?
+            var usesProgressServer = false, unidentifiedMCPTool = false
             var asksForProgress = false
-            if let anchor, index > anchor {
-                if typedStatus == .done, name == "CORTEX_STEP_TYPE_GENERIC",
-                   let args = try? fields["generic"]?.fields(["args"])["args"]?.fields(["ServerName", "ToolName", "Arguments"]),
-                   args["ServerName"]?.matchesStringLiteral(AntigravityProgressPlugin.server) == true,
-                   args["ToolName"]?.matchesStringLiteral(CodexProgressEvidence.tool) == true,
-                   let json = args["Arguments"]?.string(limit: 128) {
+            if name == "CORTEX_STEP_TYPE_GENERIC" {
+                let args = try? fields["generic"]?.fields(["args"])["args"]?.fields(["ServerName", "ToolName", "Arguments"])
+                unidentifiedMCPTool = args == nil
+                usesProgressServer = args?["ServerName"]?.matchesStringLiteral(AntigravityProgressPlugin.server) == true
+                if usesProgressServer, typedStatus == .done, let anchor, index > anchor,
+                   args?["ToolName"]?.matchesStringLiteral(CodexProgressEvidence.tool) == true,
+                   let json = args?["Arguments"]?.string(limit: 128) {
                     percent = CodexProgressEvidence.percent(json)
                 }
-                // 2.35.2 retypes a finished call as MCP_TOOL; only a waiting call stays GENERIC.
-                if typedStatus == .done, name == "CORTEX_STEP_TYPE_MCP_TOOL",
-                   let tool = try? fields["mcpTool"]?.fields(["serverName", "toolCall"]),
-                   tool["serverName"]?.matchesStringLiteral(AntigravityProgressPlugin.server) == true,
-                   let call = try? tool["toolCall"]?.fields(["name", "argumentsJson"]),
+            } else if name == "CORTEX_STEP_TYPE_MCP_TOOL" {
+                // 2.35.2 retypes a finished call as MCP_TOOL; a waiting call stays GENERIC.
+                let tool = try? fields["mcpTool"]?.fields(["serverName", "toolCall"])
+                usesProgressServer = tool?["serverName"]?.matchesStringLiteral(AntigravityProgressPlugin.server) == true
+                unidentifiedMCPTool = tool?["serverName"]?.hasNonemptyString != true
+                if usesProgressServer, typedStatus == .done, let anchor, index > anchor,
+                   let call = try? tool?["toolCall"]?.fields(["name", "argumentsJson"]),
                    call["name"]?.matchesStringLiteral(CodexProgressEvidence.tool) == true,
                    let json = call["argumentsJson"]?.string(limit: 128) {
                     percent = CodexProgressEvidence.percent(json)
                 }
+            }
+            if let anchor, index > anchor {
                 // An omitted wire status is filled from the database before the projection selects waiting steps.
                 if typedStatus == .waiting || typedStatus == nil, wait == .approval,
                    let resource = try? interaction?["permission"]?.fields(["resource"])["resource"]?.fields(["action", "target"]) {
@@ -131,7 +140,84 @@ struct AntigravityProjection {
                              viewable: AntigravityStore.date(meta["viewableAt"]?.string()),
                              finished: AntigravityStore.date(meta["finishedGeneratingAt"]?.string()),
                              execution: meta["executionId"]?.string(limit: 128), wait: wait, progress: percent,
-                             completed: AntigravityStore.date(meta["completedAt"]?.string()) ?? transition, requestsProgressApproval: asksForProgress)
+                             completed: AntigravityStore.date(meta["completedAt"]?.string()) ?? transition, requestsProgressApproval: asksForProgress,
+                             usesProgressServer: usesProgressServer, unidentifiedMCPTool: unidentifiedMCPTool)
+        }
+    }
+
+    /// The negative evidence belongs to the whole conversation, across input anchors.
+    /// Keep the settled prefix in constant space as steps fall out of the API tail.
+    struct ProgressToolHistory {
+        private struct Prefix {
+            var nextIndex = 0
+            var firstInput: (index: Int, at: Date)?
+            var finishedTool = false
+        }
+        private var prefix = Prefix()
+        private var rulesOutMiss = false
+        private(set) var lastProgressToolAt: Date?
+
+        mutating func observe(_ row: AntigravityStore.Summary, trajectory: AntigravityStore.Trajectory?,
+                              transcript: AntigravityTranscript, live: Enrichment) -> MissedProgressConversation? {
+            guard live.fresh, !live.conflictingState else { return nil }
+            for step in live.steps.values where step.usesProgressServer || (step.status == .waiting && step.requestsProgressApproval) {
+                rulesOutMiss = true
+                if step.status == .waiting || step.status == .done {
+                    let at = step.completed ?? step.transition ?? step.created ?? row.updated
+                    lastProgressToolAt = max(lastProgressToolAt ?? .distantPast, at)
+                }
+            }
+            if live.responses.contains(where: { !$0.call.permitsMissedToolInference }) { rulesOutMiss = true }
+            guard !rulesOutMiss, row.parent == nil, row.depth == 0,
+                  let tail = trajectory?.tail, let offset = tail.first?.index else { return nil }
+
+            if offset == 0 { prefix = Prefix() }
+            if let input = prefix.firstInput, let record = transcript.records[input.index],
+               record.type != "USER_INPUT" || abs(record.created.timeIntervalSince(input.at)) >= 1 {
+                prefix = Prefix()
+            }
+            var scan = prefix
+            if scan.nextIndex < offset {
+                // A cold start may have only transcript records before the tail. They
+                // identify built-in tools but cannot tell which server handled MCP.
+                guard offset - scan.nextIndex <= transcript.records.count else { return nil }
+                for index in scan.nextIndex..<offset {
+                    guard let record = transcript.records[index] else { return nil }
+                    switch record.type {
+                    case "USER_INPUT": if scan.firstInput == nil { scan.firstInput = (index, record.created) }
+                    case "PLANNER_RESPONSE", "SYSTEM_MESSAGE": break
+                    case "GENERIC", "MCP_TOOL": return nil
+                    default: if scan.firstInput != nil { scan.finishedTool = true }
+                    }
+                }
+                scan.nextIndex = offset
+                prefix = scan
+            }
+            for (position, local) in tail.enumerated() {
+                guard local.index == offset + position, let step = live.steps[local.index], !step.unidentifiedMCPTool else { return nil }
+                guard step.index >= scan.nextIndex else { continue }
+                if scan.firstInput == nil, step.type == 14 {
+                    let record = transcript.records[step.index]
+                    let summaryTime = row.inputIndex == step.index ? row.inputTime : nil
+                    guard let date = step.created ?? (record?.type == "USER_INPUT" ? record?.created : nil) ?? summaryTime else { return nil }
+                    scan.firstInput = (step.index, date)
+                }
+                if scan.firstInput != nil, step.type == 132, step.status == .done { scan.finishedTool = true }
+                scan.nextIndex = step.index + 1
+                if prefix.nextIndex == step.index, step.status?.settled == true { prefix = scan }
+            }
+            guard let input = scan.firstInput, scan.finishedTool else { return nil }
+            return .init(id: row.id, firstInputAt: input.at)
+        }
+    }
+
+    // Older responses can omit the tool list. If supplied, inspect only its names.
+    private static func permitsMissedToolInference(_ tools: JSONFieldView?) -> Bool {
+        guard let tools else { return true }
+        guard let entries = try? tools.elements(maximumCount: 256) else { return false }
+        return entries.allSatisfy {
+            guard let name = try? $0.fields(["name"])["name"]?.string(limit: 128), !name.isEmpty else { return false }
+            return name != "call_mcp_tool"
         }
     }
 
@@ -149,7 +235,7 @@ struct AntigravityProjection {
                 return index
             } ?? []
             guard !indices.isEmpty,
-                  let model = try fields["chatModel"]?.fields(["responseModel", "modelDisplayName", "streamingDuration", "timeToFirstToken", "usage"]) else { continue }
+                  let model = try fields["chatModel"]?.fields(["responseModel", "modelDisplayName", "streamingDuration", "timeToFirstToken", "usage", "tools"]) else { continue }
             let usage = try model["usage"]?.fields(["outputTokens", "thinkingOutputTokens", "responseOutputTokens"])
             func count(_ key: String) -> Int? {
                 guard let n = usage?[key]?.unsignedInteger(), n <= UInt64(Int32.max) else { return nil }
@@ -166,7 +252,8 @@ struct AntigravityProjection {
             }
             let duration = seconds("timeToFirstToken").flatMap { first in seconds("streamingDuration").map { first + $0 } }
             let call = Call(modelID: model["responseModel"]?.string(limit: 128),
-                         displayName: model["modelDisplayName"]?.string(limit: 120), tokens: tokens, duration: duration)
+                         displayName: model["modelDisplayName"]?.string(limit: 120), tokens: tokens, duration: duration,
+                         permitsMissedToolInference: permitsMissedToolInference(model["tools"]))
             for index in Set(indices) {
                 if matches.updateValue(call, forKey: index) != nil { ambiguous.insert(index) }
             }

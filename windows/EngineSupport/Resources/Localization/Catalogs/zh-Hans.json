@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "f6be6033cfea05c2a1e5f0826618e0927f04f01dedfa0fe2c8e576091eb22572",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "d96d4ad679466a749ac510b6c5857b7f51cca932512ba61d100d9277c17a0303",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "3be42c2706a73f341c7e8c9070eaa88a32b6bccef9c648f36f6fca8c0b2f6111"
   },
   "strings": {
@@ -724,6 +724,7 @@
     "delegation.stop": "\u505c\u6b62\u8fd9\u6b21 Codex \u6267\u884c",
     "delegation.worktree": "\u72ec\u7acb\u5de5\u4f5c\u6811",
     "delegation.write": "\u53ef\u4fee\u6539",
+    "demo.antigravity_missed_tool": "\u5bf9\u8bdd\u672a\u52a0\u8f7d\u8fdb\u5ea6\u5de5\u5177",
     "demo.antigravity_reviewer": "\u8bbe\u8ba1\u5ba1\u9605\u5458",
     "demo.app_detail": "\u6b63\u5f0f\u6a21\u5f0f\u4e2d\uff0c\u70b9\u51fb\u8fd9\u4e2a\u6309\u94ae\u4f1a\u6253\u5f00 %@ \u684c\u9762\u7248\u3002",
     "demo.app_heading": "\u6253\u5f00\u5e94\u7528\u6f14\u793a",
@@ -1427,8 +1428,8 @@
     "progress_guide.plugin.choose": "\u70b9\u51fb\u7b2c 3 \u9879\u201c%@\u201d\u3002",
     "progress_guide.plugin.conflict": "\u8bf7\u5c06\u9700\u8981\u4fdd\u7559\u7684\u6587\u4ef6\u79fb\u51fa codex-pacer \u63d2\u4ef6\u6587\u4ef6\u5939\uff0c\u7136\u540e\u91cd\u8bd5\u3002",
     "progress_guide.plugin.conversation": "\u6253\u5f00 Antigravity\uff0c\u65b0\u5efa\u5bf9\u8bdd\uff0c\u7c98\u8d34\u4e0b\u9762\u8fd9\u53e5\u8bdd\u3002",
-    "progress_guide.plugin.conversation_again": "\u5982\u679c\u6ca1\u6709\u51fa\u73b0\u4f7f\u7528 Pacer \u5de5\u5177\u7684\u63d0\u793a\uff0c\u5c31\u518d\u65b0\u5efa\u4e00\u4e2a\u5bf9\u8bdd\uff0c\u91cd\u65b0\u7c98\u8d34\u8fd9\u53e5\u8bdd\u3002",
     "progress_guide.plugin.conversation_hint": "\u5728 Antigravity \u4e2d\u65b0\u5efa\u5bf9\u8bdd\u3002",
+    "progress_guide.plugin.conversation_missed_tool": "\u8fd9\u4e2a\u5bf9\u8bdd\u6ca1\u6709\u52a0\u8f7d Pacer \u7684\u8fdb\u5ea6\u5de5\u5177\uff0c\u8bf7\u518d\u65b0\u5efa\u4e00\u4e2a\u5bf9\u8bdd\uff0c\u7c98\u8d34\u540c\u4e00\u53e5\u8bdd\u3002",
     "progress_guide.plugin.example": "\u7528\u7ec8\u7aef\u547d\u4ee4\u67e5\u4e00\u4e0b\u4eca\u5929\u7684\u65e5\u671f\u548c\u8fd9\u53f0\u7535\u8111\u7684\u540d\u5b57\uff0c\u7136\u540e\u7528\u4e00\u53e5\u8bdd\u544a\u8bc9\u6211\u3002",
     "progress_guide.plugin.failed": "\u8bf7\u786e\u8ba4\u4f60\u53ef\u4ee5\u5728 Antigravity \u63d2\u4ef6\u6587\u4ef6\u5939\u4e2d\u4fdd\u5b58\u6587\u4ef6\uff0c\u7136\u540e\u91cd\u8bd5\u3002",
     "progress_guide.plugin.needs_attention": "\u9700\u8981\u5904\u7406",

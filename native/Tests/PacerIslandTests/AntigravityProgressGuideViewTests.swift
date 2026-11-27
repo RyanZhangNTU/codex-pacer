@@ -77,10 +77,32 @@ final class AntigravityProgressGuideViewTests: XCTestCase {
         }
     }
 
+    func testMissedConversationOpensTheFloatOnceAndYieldsToApprovalOrReady() throws {
+        let model = try demo(autoOpen: true)
+        let float = model.harnessGuideFloat
+        model.setDemoStage(.tool, missedProgressTool: true)
+        XCTAssertEqual(model.progressGuide(.antigravity)?.stage, .conversationMissedTool)
+        XCTAssertTrue(float.isShowing)
+        float.close()
+        model.setDemoStage(.tool)
+        model.setDemoStage(.tool, missedProgressTool: true)
+        XCTAssertFalse(float.isShowing)
+        let now = Date(), installed = now.addingTimeInterval(-20)
+        var snapshot = DemoScenario.antigravityTasks(at: now, requestsProgressApproval: false)
+        snapshot.missedProgressConversation = .init(id: "second", firstInputAt: now)
+        model.applyDemoAntigravityProgress(snapshot, setup: .init(.configured, addedAt: installed))
+        XCTAssertTrue(float.isShowing)
+        float.close()
+        snapshot.missedProgressConversation = .init(id: "third", firstInputAt: now)
+        model.applyDemoAntigravityProgress(snapshot, setup: .init(.configured, connection: .trusted, addedAt: installed))
+        XCTAssertFalse(float.isShowing)
+        model.setDemoStage(.responding)
+        XCTAssertEqual(model.progressGuide(.antigravity)?.stage, .allowTool)
+        XCTAssertTrue(float.isShowing, "Seeing a miss does not consume the approval's auto-open")
+    }
+
     func testAntigravitySettingsAndFloatRenderOffscreenAndCopyTheExample() async throws {
         let model = try demo()
-        let guideDemo = try demo(autoOpen: true)
-        guideDemo.setDemoStage(.tool)
         // XCTest has a generic icon. Give the float the icon from the app bundle.
         let icon = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Resources/Pacer.icns")
@@ -88,23 +110,25 @@ final class AntigravityProgressGuideViewTests: XCTestCase {
         NSApp.applicationIconImage = try XCTUnwrap(NSImage(contentsOf: icon))
         defer { NSApp.applicationIconImage = previousIcon }
         XCTAssertFalse(model.harnessGuideFloat.isShowing, "The ordinary Antigravity demo has no automatic float")
-        for stage in [HarnessProgressGuide.Stage.adding, .newConversation, .allowTool, .ready] {
-            let snapshot = DemoScenario.antigravityTasks(at: Date(), requestsProgressApproval: stage == .allowTool)
-            model.applyDemoAntigravityProgress(snapshot, setup: .init(stage == .adding ? .settingUp : .configured, connection: stage == .ready ? .trusted : nil))
+        for stage in [HarnessProgressGuide.Stage.adding, .newConversation, .conversationMissedTool, .allowTool, .ready] {
+            let now = Date()
+            var snapshot = DemoScenario.antigravityTasks(at: now, requestsProgressApproval: stage == .allowTool)
+            if stage == .conversationMissedTool { snapshot.missedProgressConversation = .init(id: "missed", firstInputAt: now) }
+            model.applyDemoAntigravityProgress(snapshot, setup: .init(stage == .adding ? .settingUp : .configured, connection: stage == .ready ? .trusted : nil, addedAt: now.addingTimeInterval(-1)))
             let guide = try XCTUnwrap(ProgressGuideRows.guide(model, .antigravity, isOn: true))
             XCTAssertEqual(guide.stage, stage)
             XCTAssertTrue(ProgressGuideRows.opens(guide))
             XCTAssertEqual(guide.picture, stage == .ready ? nil : .antigravityApproval)
-            let renderModel = stage == .newConversation ? guideDemo : model
+            let hasExample = stage == .newConversation || stage == .conversationMissedTool
             for language in AppLanguage.allCases {
-                let example = stage == .newConversation ? try XCTUnwrap(guideDemo.progressGuide(.antigravity, language: language)?.example) : nil
+                let example = hasExample ? try XCTUnwrap(model.progressGuide(.antigravity, language: language)?.example) : nil
                 for dark in [false, true] {
                     let suffix = language.rawValue + (dark ? "-dark" : "-light")
-                    let settings = ProgressGuideRows(model: renderModel, provider: .antigravity, isOn: .constant(true), language: language)
+                    let settings = ProgressGuideRows(model: model, provider: .antigravity, isOn: .constant(true), language: language)
                         .padding(14).frame(width: 390).background(MainPalette.card)
                     try await render(settings, dark: dark, name: "settings-" + stage.rawValue + "-" + suffix, width: 390, language: language, example: example)
-                    if stage == .newConversation || stage == .allowTool {
-                        let float = GuideFloatContent(model: renderModel, float: renderModel.harnessGuideFloat, provider: .antigravity, language: language)
+                    if hasExample || stage == .allowTool {
+                        let float = GuideFloatContent(model: model, float: model.harnessGuideFloat, provider: .antigravity, language: language)
                         try await render(float, dark: dark, name: "float-" + stage.rawValue + "-" + suffix, width: GuideFloatContent.width,
                                          language: language, example: example)
                     }

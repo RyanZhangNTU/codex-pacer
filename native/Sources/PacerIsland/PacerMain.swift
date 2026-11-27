@@ -265,7 +265,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         UserDefaults.standard.register(defaults: ["completedRetentionMinutes": 30, "systemNotifications": false,
             "compactMetric": "remaining", "quotaWindowID": QuotaWindowSelection.weekly.rawValue])
         AppTheme(defaults: .standard).apply()
-        model = IslandModel(demo: CommandLine.arguments.contains("--demo") || CommandLine.arguments.contains("--demo-antigravity"), initiallyExpanded: CommandLine.arguments.contains("--expanded"))
+        var demoArguments = CommandLine.arguments
+        let guideDemo = demoArguments.contains("--demo-antigravity-guide")
+        if guideDemo { demoArguments.append("--demo-antigravity") }
+        model = IslandModel(demo: demoArguments.contains("--demo") || demoArguments.contains("--demo-antigravity"),
+                            initiallyExpanded: demoArguments.contains("--expanded"), demoArguments: demoArguments)
         model.makeClaudeCloudMonitor = { PacerMain.makeClaudeCloudMonitor() }
         updater = AppUpdater(enabled: !model.isDemo)
         panel = PanelController(model: model)
@@ -313,6 +317,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                 let item = NSMenuItem(title: L10n.text("demo.menu", stage.label), action: #selector(demoStageChanged(_:)), keyEquivalent: String(stage.rawValue + 1))
                 item.tag = stage.rawValue; item.target = self; applicationMenu.addItem(item)
             }
+        }
+        if guideDemo {
+            let item = NSMenuItem(title: L10n.text("demo.menu", L10n.text("demo.antigravity_missed_tool")),
+                                  action: #selector(demoMissedProgressTool), keyEquivalent: "5")
+            item.target = self; applicationMenu.addItem(item)
         }
         applicationMenu.addItem(.separator())
         let quitItem = NSMenuItem(title: L10n.text("common.quit"), action: #selector(quit), keyEquivalent: "q")
@@ -380,6 +389,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         perform(#selector(quit), with: nil, afterDelay: 0)
         return nil
     }
+    @objc private func demoMissedProgressTool() { model.setDemoStage(.tool, missedProgressTool: true) }
     @objc private func demoStageChanged(_ sender: NSMenuItem) {
         if let stage = DemoTaskStage(rawValue: sender.tag) { model.setDemoStage(stage) }
     }
