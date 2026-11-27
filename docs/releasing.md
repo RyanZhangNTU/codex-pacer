@@ -31,9 +31,12 @@ For an application release, update:
 
 - `native/Info.plist`: marketing version matching `vVERSION`, and an integer build above every build in the latest public appcast.
 - `native/Sources/PacerCore/RealtimeProbe.swift`: matching event-client version.
+- `windows/platform-contract.json`: the new `native/Info.plist` digest under `protectedFiles`. Promotion pull requests run no CI, so run `python3 -S scripts/windows/check-contract.py` before tagging; the Windows release jobs stop on a stale digest.
 - `native/Sources/PacerCore/WhatsNew.swift`: the version's highlights for the in-app update note, with strings in both catalogs. A version without an entry updates quietly.
 - `CHANGELOG.md` and `docs/release-notes-VERSION.en.md` / `.zh-CN.md`: shipped changes. The notes also appear in the in-app update windows, so leave out install or update steps; the publisher puts a download table at the top of the Release body. Keep both current note files; do not add a deferred-issue appendix unless requested.
 - README, user guide and development docs only when their behavior or instructions change. Older notes may be removed after publication; tags, Releases and the changelog retain history.
+
+Show the owner the What's New items and both release notes, and get their OK on the wording before tagging.
 
 Windows has shipped in the same GitHub Release since 4.2.2, the first Windows release: `scripts/release/windows-release.json` sets `publish` to `true`, so every release carries the Windows installers and `appcast-windows.xml`, and its notes cover both platforms. The publisher refuses a release that would drop the Windows feed.
 
