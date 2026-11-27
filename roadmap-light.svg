@@ -1,0 +1,180 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1000" viewBox="0 0 960 1000" role="img" aria-label="Codex Pacer roadmap">
+<rect x="0.5" y="0.5" width="959" height="999" rx="16" fill="#ffffff" stroke="#d0d7de"/>
+<text x="32.0" y="46.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#59636e" text-anchor="start" letter-spacing="1.6">CODEX PACER</text>
+<text x="32" y="86" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="30" font-weight="700" fill="#1f2328">路线图<tspan font-weight="400" fill="#818b98" dx="12">Roadmap</tspan></text>
+<text x="928.0" y="70.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="30" font-weight="700" fill="#8250df" text-anchor="end">7</text>
+<text x="928.0" y="92.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1f2328" text-anchor="end">接下来</text>
+<text x="928.0" y="109.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#59636e" text-anchor="end">Up next</text>
+<text x="800.0" y="70.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="30" font-weight="700" fill="#0969da" text-anchor="end">2</text>
+<text x="800.0" y="92.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1f2328" text-anchor="end">正在做</text>
+<text x="800.0" y="109.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#59636e" text-anchor="end">In progress</text>
+<text x="672.0" y="70.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="30" font-weight="700" fill="#1a7f37" text-anchor="end">3</text>
+<text x="672.0" y="92.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1f2328" text-anchor="end">下个版本</text>
+<text x="672.0" y="109.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#59636e" text-anchor="end">Next release</text>
+<line x1="0" y1="128" x2="960" y2="128" stroke="#d0d7de"/>
+<rect x="1" y="128.5" width="958" height="51.5" fill="#f6f8fa"/>
+<text x="32.0" y="159.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1f2328" text-anchor="start">事项</text>
+<text x="64.0" y="159.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#59636e" text-anchor="start">Item</text>
+<text x="463.6" y="153.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1f2328" text-anchor="middle">计划</text>
+<text x="463.6" y="169.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#59636e" text-anchor="middle">Plan</text>
+<text x="566.8" y="153.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1f2328" text-anchor="middle">设计</text>
+<text x="566.8" y="169.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#59636e" text-anchor="middle">Design</text>
+<text x="670.0" y="153.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1f2328" text-anchor="middle">开发</text>
+<text x="670.0" y="169.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#59636e" text-anchor="middle">Build</text>
+<text x="773.2" y="153.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1f2328" text-anchor="middle">测试</text>
+<text x="773.2" y="169.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#59636e" text-anchor="middle">Test</text>
+<text x="876.4" y="153.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1f2328" text-anchor="middle">发布</text>
+<text x="876.4" y="169.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#59636e" text-anchor="middle">Ship</text>
+<line x1="0" y1="180" x2="960" y2="180" stroke="#d0d7de"/>
+<line x1="515.2" y1="180" x2="515.2" y2="948" stroke="#eaeef2" stroke-dasharray="3 4"/>
+<line x1="618.4" y1="180" x2="618.4" y2="948" stroke="#eaeef2" stroke-dasharray="3 4"/>
+<line x1="721.6" y1="180" x2="721.6" y2="948" stroke="#eaeef2" stroke-dasharray="3 4"/>
+<line x1="824.8" y1="180" x2="824.8" y2="948" stroke="#eaeef2" stroke-dasharray="3 4"/>
+<rect x="22" y="189" width="916" height="26" rx="7" fill="#dafbe1"/>
+<circle cx="36" cy="202" r="4" fill="#1a7f37"/>
+<text x="48" y="206.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1a7f37">下个版本<tspan font-weight="400" fill="#59636e" font-size="12" dx="8">Next release</tspan></text>
+<text x="32.0" y="244.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1f2328" text-anchor="start">灵动岛可改为点击展开</text>
+<text x="32.0" y="262.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#59636e" text-anchor="start">Open the island with a click instead of hover</text>
+<text x="388.0" y="244.0" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#818b98" text-anchor="end">#293</text>
+<line x1="463.6" y1="250" x2="876.4" y2="250" stroke="#e6eaef" stroke-width="4" stroke-linecap="round"/>
+<line x1="463.6" y1="250" x2="876.4" y2="250" stroke="#1a7f37" stroke-width="4" stroke-linecap="round"/>
+<circle cx="463.6" cy="250" r="5" fill="#1a7f37"/>
+<circle cx="566.8" cy="250" r="5" fill="#1a7f37"/>
+<circle cx="670.0" cy="250" r="5" fill="#1a7f37"/>
+<circle cx="773.2" cy="250" r="5" fill="#1a7f37"/>
+<circle cx="876.4" cy="250" r="10" fill="#1a7f37" stroke="#ffffff" stroke-width="3"/>
+<path d="M872.2 250.2 l2.9 2.9 l5.6 -5.8" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="32" y1="274" x2="928" y2="274" stroke="#eaeef2"/>
+<text x="32.0" y="298.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1f2328" text-anchor="start">每台 SSH 主机可单独开关监控</text>
+<text x="32.0" y="316.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#59636e" text-anchor="start">Turn monitoring on or off for each SSH host</text>
+<text x="388.0" y="298.0" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#818b98" text-anchor="end">#295</text>
+<line x1="463.6" y1="304" x2="876.4" y2="304" stroke="#e6eaef" stroke-width="4" stroke-linecap="round"/>
+<line x1="463.6" y1="304" x2="876.4" y2="304" stroke="#1a7f37" stroke-width="4" stroke-linecap="round"/>
+<circle cx="463.6" cy="304" r="5" fill="#1a7f37"/>
+<circle cx="566.8" cy="304" r="5" fill="#1a7f37"/>
+<circle cx="670.0" cy="304" r="5" fill="#1a7f37"/>
+<circle cx="773.2" cy="304" r="5" fill="#1a7f37"/>
+<circle cx="876.4" cy="304" r="10" fill="#1a7f37" stroke="#ffffff" stroke-width="3"/>
+<path d="M872.2 304.2 l2.9 2.9 l5.6 -5.8" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="32" y1="328" x2="928" y2="328" stroke="#eaeef2"/>
+<text x="32.0" y="352.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1f2328" text-anchor="start">子代理逐个列出，只计正在工作的</text>
+<text x="32.0" y="370.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#59636e" text-anchor="start">Every subagent listed, only active ones counted</text>
+<text x="388.0" y="352.0" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#818b98" text-anchor="end">#297</text>
+<line x1="463.6" y1="358" x2="876.4" y2="358" stroke="#e6eaef" stroke-width="4" stroke-linecap="round"/>
+<line x1="463.6" y1="358" x2="876.4" y2="358" stroke="#1a7f37" stroke-width="4" stroke-linecap="round"/>
+<circle cx="463.6" cy="358" r="5" fill="#1a7f37"/>
+<circle cx="566.8" cy="358" r="5" fill="#1a7f37"/>
+<circle cx="670.0" cy="358" r="5" fill="#1a7f37"/>
+<circle cx="773.2" cy="358" r="5" fill="#1a7f37"/>
+<circle cx="876.4" cy="358" r="10" fill="#1a7f37" stroke="#ffffff" stroke-width="3"/>
+<path d="M872.2 358.2 l2.9 2.9 l5.6 -5.8" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="32" y1="382" x2="928" y2="382" stroke="#eaeef2"/>
+<rect x="22" y="391" width="916" height="26" rx="7" fill="#ddf4ff"/>
+<circle cx="36" cy="404" r="4" fill="#0969da"/>
+<text x="48" y="408.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#0969da">正在做<tspan font-weight="400" fill="#59636e" font-size="12" dx="8">In progress</tspan></text>
+<text x="32.0" y="446.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1f2328" text-anchor="start">支持 Antigravity 桌面应用</text>
+<text x="32.0" y="464.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#59636e" text-anchor="start">Antigravity desktop app: tasks, progress and quota</text>
+<text x="388.0" y="446.0" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#818b98" text-anchor="end">#298</text>
+<line x1="463.6" y1="452" x2="876.4" y2="452" stroke="#e6eaef" stroke-width="4" stroke-linecap="round"/>
+<line x1="463.6" y1="452" x2="773.2" y2="452" stroke="#0969da" stroke-width="4" stroke-linecap="round"/>
+<circle cx="463.6" cy="452" r="5" fill="#0969da"/>
+<circle cx="566.8" cy="452" r="5" fill="#0969da"/>
+<circle cx="670.0" cy="452" r="5" fill="#0969da"/>
+<circle cx="876.4" cy="452" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="773.2" cy="452" r="9" fill="none" stroke="#0969da" stroke-width="2"><animate attributeName="r" values="9;17" dur="1.8s" repeatCount="indefinite"/><animate attributeName="opacity" values="0.6;0" dur="1.8s" repeatCount="indefinite"/></circle>
+<circle cx="773.2" cy="452" r="10" fill="#0969da" stroke="#ffffff" stroke-width="3"/>
+<circle cx="773.2" cy="452" r="3" fill="#ffffff"/>
+<line x1="32" y1="476" x2="928" y2="476" stroke="#eaeef2"/>
+<text x="32.0" y="500.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1f2328" text-anchor="start">Windows：全屏时灵动岛始终置顶</text>
+<text x="32.0" y="518.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#59636e" text-anchor="start">Windows: keep the island above full-screen apps</text>
+<text x="388.0" y="500.0" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#818b98" text-anchor="end">#291</text>
+<line x1="463.6" y1="506" x2="876.4" y2="506" stroke="#e6eaef" stroke-width="4" stroke-linecap="round"/>
+<circle cx="566.8" cy="506" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="670.0" cy="506" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="773.2" cy="506" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="876.4" cy="506" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="463.6" cy="506" r="9" fill="none" stroke="#0969da" stroke-width="2"><animate attributeName="r" values="9;17" dur="1.8s" repeatCount="indefinite"/><animate attributeName="opacity" values="0.6;0" dur="1.8s" repeatCount="indefinite"/></circle>
+<circle cx="463.6" cy="506" r="10" fill="#0969da" stroke="#ffffff" stroke-width="3"/>
+<circle cx="463.6" cy="506" r="3" fill="#ffffff"/>
+<line x1="32" y1="530" x2="928" y2="530" stroke="#eaeef2"/>
+<rect x="22" y="539" width="916" height="26" rx="7" fill="#fbefff"/>
+<circle cx="36" cy="552" r="4" fill="#8250df"/>
+<text x="48" y="556.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#8250df">接下来<tspan font-weight="400" fill="#59636e" font-size="12" dx="8">Up next</tspan></text>
+<text x="32.0" y="594.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1f2328" text-anchor="start">更强大的跨 Agent 协作</text>
+<text x="32.0" y="612.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#59636e" text-anchor="start">Deeper collaboration across your coding agents</text>
+<line x1="463.6" y1="600" x2="876.4" y2="600" stroke="#e6eaef" stroke-width="4" stroke-linecap="round"/>
+<circle cx="566.8" cy="600" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="670.0" cy="600" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="773.2" cy="600" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="876.4" cy="600" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="463.6" cy="600" r="10" fill="#8250df" stroke="#ffffff" stroke-width="3"/>
+<circle cx="463.6" cy="600" r="3" fill="#ffffff"/>
+<line x1="32" y1="624" x2="928" y2="624" stroke="#eaeef2"/>
+<text x="32.0" y="648.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1f2328" text-anchor="start">上下文窗口用量集中显示</text>
+<text x="32.0" y="666.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#59636e" text-anchor="start">Every context window at a glance</text>
+<line x1="463.6" y1="654" x2="876.4" y2="654" stroke="#e6eaef" stroke-width="4" stroke-linecap="round"/>
+<circle cx="566.8" cy="654" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="670.0" cy="654" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="773.2" cy="654" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="876.4" cy="654" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="463.6" cy="654" r="10" fill="#8250df" stroke="#ffffff" stroke-width="3"/>
+<circle cx="463.6" cy="654" r="3" fill="#ffffff"/>
+<line x1="32" y1="678" x2="928" y2="678" stroke="#eaeef2"/>
+<text x="32.0" y="702.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1f2328" text-anchor="start">在灵动岛里直接与对话互动</text>
+<text x="32.0" y="720.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#59636e" text-anchor="start">Interact with your chats right from the island</text>
+<line x1="463.6" y1="708" x2="876.4" y2="708" stroke="#e6eaef" stroke-width="4" stroke-linecap="round"/>
+<circle cx="566.8" cy="708" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="670.0" cy="708" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="773.2" cy="708" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="876.4" cy="708" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="463.6" cy="708" r="10" fill="#8250df" stroke="#ffffff" stroke-width="3"/>
+<circle cx="463.6" cy="708" r="3" fill="#ffffff"/>
+<line x1="32" y1="732" x2="928" y2="732" stroke="#eaeef2"/>
+<text x="32.0" y="756.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1f2328" text-anchor="start">更精确、更全面的统计与分析</text>
+<text x="32.0" y="774.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#59636e" text-anchor="start">More precise and complete stats and insights</text>
+<line x1="463.6" y1="762" x2="876.4" y2="762" stroke="#e6eaef" stroke-width="4" stroke-linecap="round"/>
+<circle cx="566.8" cy="762" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="670.0" cy="762" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="773.2" cy="762" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="876.4" cy="762" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="463.6" cy="762" r="10" fill="#8250df" stroke="#ffffff" stroke-width="3"/>
+<circle cx="463.6" cy="762" r="3" fill="#ffffff"/>
+<line x1="32" y1="786" x2="928" y2="786" stroke="#eaeef2"/>
+<text x="32.0" y="810.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1f2328" text-anchor="start">固定并分组常看的对话</text>
+<text x="32.0" y="828.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#59636e" text-anchor="start">Pin and group the chats you check often</text>
+<text x="388.0" y="810.0" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#818b98" text-anchor="end">#257</text>
+<line x1="463.6" y1="816" x2="876.4" y2="816" stroke="#e6eaef" stroke-width="4" stroke-linecap="round"/>
+<line x1="463.6" y1="816" x2="566.8" y2="816" stroke="#8250df" stroke-width="4" stroke-linecap="round"/>
+<circle cx="463.6" cy="816" r="5" fill="#8250df"/>
+<circle cx="670.0" cy="816" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="773.2" cy="816" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="876.4" cy="816" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="566.8" cy="816" r="10" fill="#8250df" stroke="#ffffff" stroke-width="3"/>
+<circle cx="566.8" cy="816" r="3" fill="#ffffff"/>
+<line x1="32" y1="840" x2="928" y2="840" stroke="#eaeef2"/>
+<text x="32.0" y="864.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1f2328" text-anchor="start">支持 Cursor</text>
+<text x="32.0" y="882.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#59636e" text-anchor="start">Cursor support</text>
+<text x="388.0" y="864.0" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#818b98" text-anchor="end">#296</text>
+<line x1="463.6" y1="870" x2="876.4" y2="870" stroke="#e6eaef" stroke-width="4" stroke-linecap="round"/>
+<circle cx="566.8" cy="870" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="670.0" cy="870" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="773.2" cy="870" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="876.4" cy="870" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="463.6" cy="870" r="10" fill="#8250df" stroke="#ffffff" stroke-width="3"/>
+<circle cx="463.6" cy="870" r="3" fill="#ffffff"/>
+<line x1="32" y1="894" x2="928" y2="894" stroke="#eaeef2"/>
+<text x="32.0" y="918.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1f2328" text-anchor="start">Antigravity 命令行与远程任务</text>
+<text x="32.0" y="936.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#59636e" text-anchor="start">Antigravity CLI, plus tasks over SSH and WSL</text>
+<text x="388.0" y="918.0" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#818b98" text-anchor="end">#287</text>
+<line x1="463.6" y1="924" x2="876.4" y2="924" stroke="#e6eaef" stroke-width="4" stroke-linecap="round"/>
+<circle cx="566.8" cy="924" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="670.0" cy="924" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="773.2" cy="924" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="876.4" cy="924" r="4.5" fill="#ffffff" stroke="#e6eaef" stroke-width="2"/>
+<circle cx="463.6" cy="924" r="10" fill="#8250df" stroke="#ffffff" stroke-width="3"/>
+<circle cx="463.6" cy="924" r="3" fill="#ffffff"/>
+<line x1="32" y1="948" x2="928" y2="948" stroke="#eaeef2"/>
+<line x1="0" y1="948" x2="960" y2="948" stroke="#d0d7de"/>
+<text x="32.0" y="980.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#59636e" text-anchor="start">最新版本 4.7.0  ·  更新于 2026-11-27</text>
+<text x="928.0" y="980.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#59636e" text-anchor="end">想要哪项先来？在下面评论告诉我们</text>
+</svg>

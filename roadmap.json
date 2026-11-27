@@ -1,0 +1,40 @@
+{
+  "updated": "2026-11-27",
+  "release": "4.7.0",
+  "stages": [["计划", "Plan"], ["设计", "Design"], ["开发", "Build"], ["测试", "Test"], ["发布", "Ship"]],
+  "groups": [
+    {
+      "key": "ship",
+      "title": "下个版本",
+      "subtitle": "Next release",
+      "items": [
+        {"title": "灵动岛可改为点击展开", "en": "Open the island with a click instead of hover", "refs": ["#293"], "stage": 5},
+        {"title": "每台 SSH 主机可单独开关监控", "en": "Turn monitoring on or off for each SSH host", "refs": ["#295"], "stage": 5},
+        {"title": "子代理逐个列出，只计正在工作的", "en": "Every subagent listed, only active ones counted", "refs": ["#297"], "stage": 5}
+      ]
+    },
+    {
+      "key": "progress",
+      "title": "正在做",
+      "subtitle": "In progress",
+      "items": [
+        {"title": "支持 Antigravity 桌面应用", "en": "Antigravity desktop app: tasks, progress and quota", "refs": ["#298"], "stage": 4},
+        {"title": "Windows：全屏时灵动岛始终置顶", "en": "Windows: keep the island above full-screen apps", "refs": ["#291"], "stage": 1}
+      ]
+    },
+    {
+      "key": "next",
+      "title": "接下来",
+      "subtitle": "Up next",
+      "items": [
+        {"title": "更强大的跨 Agent 协作", "en": "Deeper collaboration across your coding agents", "refs": [], "stage": 1},
+        {"title": "上下文窗口用量集中显示", "en": "Every context window at a glance", "refs": [], "stage": 1},
+        {"title": "在灵动岛里直接与对话互动", "en": "Interact with your chats right from the island", "refs": [], "stage": 1},
+        {"title": "更精确、更全面的统计与分析", "en": "More precise and complete stats and insights", "refs": [], "stage": 1},
+        {"title": "固定并分组常看的对话", "en": "Pin and group the chats you check often", "refs": ["#257"], "stage": 2},
+        {"title": "支持 Cursor", "en": "Cursor support", "refs": ["#296"], "stage": 1},
+        {"title": "Antigravity 命令行与远程任务", "en": "Antigravity CLI, plus tasks over SSH and WSL", "refs": ["#287"], "stage": 1}
+      ]
+    }
+  ]
+}
