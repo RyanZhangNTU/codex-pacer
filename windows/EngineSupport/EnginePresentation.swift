@@ -70,9 +70,18 @@ struct EngineTaskRow: Codable, Equatable {
     var delegationsFolded: String? = nil
     /// On a run's row: the Claude task it opens, and whether Stop shows.
     var parentID: String? = nil
+    var modeTag: String? = nil
     var canStop: Bool? = nil
     /// The run's hover card: label and value pairs.
     var detailLines: [[String]]? = nil
+    /// Its subagents as dots (`attention`, `running`, `failed`, `completed`, in that
+    /// order), every one; a row draws the first 8 (5 in a one-line row) and "+n" for
+    /// the rest. And what they read aloud. Absent without subagents.
+    var subagentDots: [String]? = nil
+    var subagentDotsText: String? = nil
+    /// Its subagent lines while the task works, and the rest folded into one line under them.
+    var subagentLines: [EngineSubagentLine]? = nil
+    var subagentsFolded: String? = nil
 
     init(group: ActivityTaskGroup, attention: PendingAttentionRequest.Kind?, inbox: CompletionInbox,
          hideProjects: Bool, at now: Date, showsDeepSeekTurnCost: Bool = true) {
@@ -94,7 +103,13 @@ struct EngineTaskRow: Codable, Equatable {
         if value.delegatedCount > 0 { delegatedText = value.delegatedCountText }
         if !value.delegations.isEmpty { delegations = value.delegations.map(EngineTaskRow.init) }
         delegationsFolded = value.foldedDelegations?.text
+        if !value.subagentDotStates.isEmpty {
+            subagentDots = value.subagentDotStates.map(\.rawValue); subagentDotsText = value.subagentDotsAccessibility
+        }
+        if !value.subagentLines.isEmpty { subagentLines = value.subagentLines.map(EngineSubagentLine.init) }
+        subagentsFolded = value.foldedSubagents?.text
         if let link = value.delegation {
+            modeTag = value.modeTag
             parentID = link.parentID; canStop = value.canStopDelegation
             detailLines = value.delegationDetail.map { [$0.label, $0.value] }
         }
@@ -190,5 +205,28 @@ struct EngineTaskShare: Codable, Equatable {
     init(_ value: HeaderActivity.TaskShare) {
         provider = value.provider.rawValue; fraction = value.fraction; stale = value.stale
         if value.helpers > 0 { helpers = value.helpers }
+    }
+}
+
+/// One subagent line under its task: its own row for the icon, ring and label,
+/// its state, its speed while it writes, and its time or how it ended.
+struct EngineSubagentLine: Codable, Equatable {
+    let row: EngineTaskRow
+    let state: String
+    let rateText: String?
+    let rateIsFresh: Bool
+    let detail: String
+    let accessibilityText: String
+    var typeTag: String? = nil
+    var nameTag: String? = nil
+    var title: String? = nil
+    var model: String? = nil
+    var statusText: String? = nil
+    var time: String? = nil
+    init(_ value: ActivityTaskRowPresentation.SubagentLine) {
+        row = EngineTaskRow(value.row); state = value.state.rawValue; rateText = value.rateText
+        typeTag = value.typeTag; nameTag = value.nameTag; title = value.title; model = value.model
+        statusText = value.statusText; time = value.time
+        rateIsFresh = value.rateIsFresh; detail = value.detail; accessibilityText = value.accessibilityText
     }
 }

@@ -321,6 +321,12 @@ struct ClaudeActivityState: Sendable {
     /// confirms the ending; a session that loaded no hooks never writes one.
     private struct ModelStop: Sendable { let turn: String; let at: Double; let failed: Bool }
     private var modelStops: [String: ModelStop] = [:]
+    private struct PendingSubagentStop: Sendable { let turn: String; let at: Double; let thread: String; let parent: String }
+    /// Subagents whose SubagentStop arrived and that have written nothing since.
+    private var pendingSubagentStops: [String: PendingSubagentStop] = [:]
+    /// How long a stopped subagent must stay quiet before its stop counts: a
+    /// later evidence can still show that a blocking hook continued the run.
+    static let subagentStopQuiet: TimeInterval = 10
     /// When the process behind each hookless root shut down (`cost-state`).
     /// Claude Code ends every agent of a session that exits, background ones too.
     private struct RootClosure: Sendable {
@@ -370,7 +376,7 @@ struct ClaudeActivityState: Sendable {
             observedMeters.removeValue(forKey: id); typedInterruptPrompts.removeValue(forKey: id)
             agentCompletions.removeValue(forKey: id); agentEnds.removeValue(forKey: id)
             agentLaunches.removeValue(forKey: id); previousRunStarts.removeValue(forKey: id); modelStops.removeValue(forKey: id)
-            sdkTurns.removeValue(forKey: id); pendingCheckpoints.removeValue(forKey: id)
+            sdkTurns.removeValue(forKey: id); pendingCheckpoints.removeValue(forKey: id); pendingSubagentStops.removeValue(forKey: id)
         }
         rootClosures = rootClosures.filter { !excludedSessions.contains($0.key) }
         agentCompletions = agentCompletions.filter { !excludedSessions.contains($0.value.parent) }
@@ -390,6 +396,7 @@ struct ClaudeActivityState: Sendable {
             guard let value = sessions[key], value.turnID == checkpoint.turn, let thread = value.threadID, !hooks.contains(key) else { continue }
             closeSession(key, thread: thread, at: checkpoint.at, through: ended, now: now, attaching: checkpoint.historical)
         }
+        confirmSubagentStops(now: now)
         // A read takes the hooks before the transcripts. Child runs that their
         // root outlived end once their records of this read applied.
         endOutlivedChildren(Array(sessions.keys), now: now, historical: true, drained: true)
@@ -399,9 +406,21 @@ struct ClaudeActivityState: Sendable {
         }
         historicalRunning.removeAll()
     }
-    /// A baseline tail younger than 15 minutes may still be live. It is checked
-    /// again once its evidence reaches that age; newer evidence releases it.
+    /// A subagent's SubagentStop ends its run, at the stop, once the child has
+    /// written nothing newer for `subagentStopQuiet` seconds.
+    mutating func confirmSubagentStops(now: Date) {
+        for (key, stop) in pendingSubagentStops {
+            guard let value = sessions[key], value.turnID == stop.turn, value.phase == .running || value.endedBySubagentHook else {
+                pendingSubagentStops.removeValue(forKey: key); continue
+            }
+            guard now.timeIntervalSince1970 - stop.at >= Self.subagentStopQuiet else { continue }
+            pendingSubagentStops.removeValue(forKey: key)
+            consumeRecord(["kind": "subagentStop", "origin": "subagentHook", "sessionId": stop.thread, "parentId": stop.parent,
+                           "promptId": stop.turn, "at": stop.at], now: now, attaching: false)
+        }
+    }
     mutating func expireUnconfirmedBaseline(now: Date = Date()) {
+        confirmSubagentStops(now: now)
         for (id, observed) in unconfirmedBaseline {
             guard let value = sessions[id], [.running, .waitingForInput].contains(value.phase), value.lastObserved == observed else {
                 unconfirmedBaseline.removeValue(forKey: id); continue
@@ -462,7 +481,7 @@ struct ClaudeActivityState: Sendable {
         if sessions.count > 128 {
             for id in sessions.keys.sorted(by: { (sessions[$0]?.lastObserved ?? .distantPast) > (sessions[$1]?.lastObserved ?? .distantPast) }).dropFirst(128) {
                 sessions.removeValue(forKey: id); hooks.remove(id); metrics.removeValue(forKey: id); historicalRunning.remove(id); observedMeters.removeValue(forKey: id); typedInterruptPrompts.removeValue(forKey: id); agentCompletions.removeValue(forKey: id); agentEnds.removeValue(forKey: id); agentLaunches.removeValue(forKey: id); previousRunStarts.removeValue(forKey: id); modelStops.removeValue(forKey: id)
-                sdkTurns.removeValue(forKey: id); pendingCheckpoints.removeValue(forKey: id)
+                sdkTurns.removeValue(forKey: id); pendingCheckpoints.removeValue(forKey: id); pendingSubagentStops.removeValue(forKey: id)
             }
         }
     }
@@ -490,7 +509,8 @@ struct ClaudeActivityState: Sendable {
         // also while its source is unavailable: an SSH helper that reconnects
         // replays them.
         var record = record
-        if kind != "subagentStart", kind != "prompt", value.parentThreadID != nil, ![.completed, .interrupted].contains(value.phase),
+        if kind != "subagentStart", kind != "prompt", value.parentThreadID != nil,
+           value.endedBySubagentHook || ![.completed, .interrupted].contains(value.phase),
            let current = value.turnID, let incoming = ClaudeActivityRecord.identifier(record["promptId"] as? String), incoming != current {
             record["promptId"] = current
         }
@@ -540,6 +560,9 @@ struct ClaudeActivityState: Sendable {
             if let effort = record["effort"] as? String { event["reasoningEffort"] = String(effort.prefix(32)) }
             if let parent = ClaudeActivityRecord.identifier(record["parentId"] as? String) { event["parentThreadId"] = parent }
             value.applyRuntime(event)
+            if value.parentThreadID != nil, record["subagentMeta"] as? Bool == true {
+                value.subagentDisplay = SubagentDisplay(claudeType: record["agentType"] as? String, description: record["description"] as? String)
+            }
             if sourceID == nil, let path = record["localDirectory"] as? String { value.setClaudeNavigation(directory: URL(fileURLWithPath: path), desktopSessionID: nil) }
             if let embedded = record["embedded"] as? Bool { value.setClaudeLaunch(embedded: embedded) }
             if origin == "hook", record["sessionLaunch"] as? Bool == true,
@@ -634,8 +657,8 @@ struct ClaudeActivityState: Sendable {
                   tools.allSatisfy({ ClaudeActivityRecord.identifier($0) != nil }) else { return }
             meter.modelBlock(id: requestID, messageID: messageID, outputTokens: output, toolIDs: tools, terminal: record["terminal"] as? Bool == true, at: date)
             observedMeters[key] = meter
-            if value.phase == .completed, let end = agentEnds[key], end.childTurn == meter.turnID {
-                settleAgentUsage(key, at: Date(timeIntervalSince1970: end.at))
+            if value.phase == .completed, agentEnds[key]?.childTurn == meter.turnID, let end = value.phaseChangedAt {
+                settleAgentUsage(key, at: end)
             }
             return
         }
@@ -655,6 +678,18 @@ struct ClaudeActivityState: Sendable {
         guard date >= (value.lastObserved ?? .distantPast) else { return }
         if origin == "hook" { hooks.insert(key) }
         if kind == "stopRequested" {
+            // A child's SubagentStop fires when it has finished its reply. Another
+            // hook can still block it, so it ends the child only once the child
+            // stays quiet (`confirmSubagentStops`). Workflow children and finished
+            // background ones otherwise read as running until the parent's typed
+            // result, a background notification or the root's idle Stop arrives.
+            if origin == "hook", let parent = value.parentThreadID, let turn = value.turnID,
+               value.phase == .running || (value.endedBySubagentHook && date > (value.phaseChangedAt ?? date)) {
+                if seconds >= (pendingSubagentStops[key]?.at ?? 0) {
+                    pendingSubagentStops[key] = PendingSubagentStop(turn: turn, at: seconds, thread: thread, parent: parent)
+                }
+                return
+            }
             if origin == "transcript", record["unownedTurn"] as? Bool != true, !hooks.contains(key),
                [.running, .waitingForInput].contains(value.phase), let turn = value.turnID,
                (ClaudeActivityRecord.identifier(record["promptId"] as? String) ?? turn) == turn {
@@ -665,7 +700,9 @@ struct ClaudeActivityState: Sendable {
         if record["unownedTurn"] as? Bool == true, kind != "metadata" {
             return
         }
-        if origin == "transcript", hooks.contains(key), !["stopVerified", "failure", "interrupt", "thinking", "response"].contains(kind) { return }
+        let childToolAfterStop = (value.endedBySubagentHook || pendingSubagentStops[key] != nil) && ["toolStart", "toolEnd"].contains(kind)
+        if origin == "transcript", hooks.contains(key), !childToolAfterStop,
+           !["stopVerified", "failure", "interrupt", "thinking", "response"].contains(kind) { return }
         if !["prompt", "subagentStart"].contains(kind), let incoming = ClaudeActivityRecord.identifier(record["promptId"] as? String),
            let current = value.turnID, incoming != current { return }
         if kind == "costCheckpoint" {
@@ -724,8 +761,16 @@ struct ClaudeActivityState: Sendable {
         }
         let item = ClaudeActivityRecord.identifier(record["itemId"] as? String) ?? "event-" + String(Int(seconds * 1000))
         let earlierTurn = value.turnID, earlierStart = value.turnStartedAt
+        let parentEnding = origin == "agentResult" || origin == "rootEnded"
+        if value.endedBySubagentHook, value.turnID == turn, !parentEnding {
+            let laterWork = date > (value.phaseChangedAt ?? date) && ["thinking", "response", "responseDelta", "toolStart", "toolEnd", "approval", "input"].contains(kind)
+            let verifiedEnd = ["failure", "interrupt", "stopVerified"].contains(kind)
+            let laterStop = origin == "subagentHook" && date > (value.phaseChangedAt ?? date)
+            if laterWork || verifiedEnd || laterStop { value.reopenSubagentStop(at: date) }
+        }
         // Anything newer of the turn means the model's ending did not end it.
         modelStops.removeValue(forKey: key)
+        if let stop = pendingSubagentStops[key], seconds > stop.at { pendingSubagentStops.removeValue(forKey: key) }
         pendingCheckpoints.removeValue(forKey: key)
         switch kind {
         case "prompt":
@@ -739,10 +784,12 @@ struct ClaudeActivityState: Sendable {
             requests = requests.filter { $0.value.threadID != thread }
             if record["typedInterruptMarker"] as? Bool == true { typedInterruptPrompts[key] = turn }
             else { typedInterruptPrompts.removeValue(forKey: key) }
+            let requestStart = value.continuedRequestStart ?? earlierStart
             let carried = value.currentProgress, waited = value.currentBackgroundWait != nil
             let continuesRequest = [.running, .waitingForInput].contains(value.phase) && (record["wake"] as? Bool == true || waited)
             value.applyRuntime(event(attaching ? "turn/attached" : "turn/started"))
             // A wake continues the request; so does a prompt typed while it waits.
+            if continuesRequest, value.turnID == turn { value.continuedRequestStart = requestStart }
             if let carried, continuesRequest { value.carryProgress(carried, at: date) }
             if observedMeters[key]?.turnID != turn { observedMeters[key] = ClaudeObservedRequestMeter(turnID: turn, observedStart: attaching ? nil : date) }
             else if !attaching { observedMeters[key]?.confirmStart(date) }
@@ -793,8 +840,13 @@ struct ClaudeActivityState: Sendable {
             // wake; an interrupt or an error still ends it.
             if ["stop", "stopVerified"].contains(kind), value.currentBackgroundWait != nil { sessions[key] = value; return }
             let wasLive = [.running, .waitingForInput].contains(value.phase)
-            value.applyRuntime(event("turn/completed", ["status": kind == "failure" ? "failed" : kind == "interrupt" ? "interrupted" : "completed",
-                "confirmedAfterQuiet": origin == "sessionClosed" || origin == "rootEnded" && record["confirmedAfterQuiet"] as? Bool == true]))
+            if value.endedBySubagentHook, parentEnding {
+                value.confirmSubagentStop(failed: kind == "failure", interrupted: kind == "interrupt")
+            } else {
+                value.applyRuntime(event("turn/completed", ["status": kind == "failure" ? "failed" : kind == "interrupt" ? "interrupted" : "completed",
+                    "subagentHook": origin == "subagentHook",
+                    "confirmedAfterQuiet": origin == "sessionClosed" || origin == "rootEnded" && record["confirmedAfterQuiet"] as? Bool == true]))
+            }
             // Interrupting or failing the main thread's turn aborts its
             // foreground agents; Claude Code keeps the background ones running.
             if ["interrupt", "failure"].contains(kind), wasLive, value.parentThreadID == nil, value.phase == .interrupted {
@@ -808,7 +860,7 @@ struct ClaudeActivityState: Sendable {
             }
             if ["stop", "stopVerified", "subagentStop"].contains(kind), [.completed, .interrupted].contains(value.phase),
                let meter = observedMeters[key], meter.turnID == turn {
-                for sample in meter.settled(at: date) {
+                for sample in meter.settled(at: value.phaseChangedAt ?? date) {
                     if let update = SessionPerformanceUpdate(id: key, turnID: turn, response: sample, firstTokenLatency: nil, firstTokenReportedAt: nil) { update.apply(to: &value) }
                 }
                 if let update = SessionPerformanceUpdate(value) { metrics[key] = update }
@@ -880,7 +932,7 @@ struct ClaudeActivityState: Sendable {
             let root = rootThread(thread), kind: String
             let closed = drained && rootClosures[root]?.includes(start: start) == true
             let quiet = child.phase == .unknown && modelStops[key]?.turn == turn && closed
-            guard [.running, .waitingForInput].contains(child.phase) || quiet else { continue }
+            guard [.running, .waitingForInput].contains(child.phase) || quiet || child.endedBySubagentHook else { continue }
             if agentsIdle[root].map({ start <= $0 }) == true { kind = "subagentStop" }
             // The process is gone. A run whose model had ended it is complete.
             else if closed, let stop = modelStops[key], stop.turn == turn { kind = stop.failed ? "failure" : "subagentStop" }
@@ -888,7 +940,7 @@ struct ClaudeActivityState: Sendable {
             else if rootInterrupts[root].map({ start <= $0 }) == true,
                     agentLaunches[key].flatMap({ boundAgentCompletion($0, to: child) }) == nil { kind = "interrupt" }
             else { continue }
-            consumeRecord(["kind": kind, "origin": "rootEnded", "confirmedAfterQuiet": quiet, "sessionId": thread, "parentId": parent, "promptId": turn,
+            consumeRecord(["kind": child.endedBySubagentHook ? "subagentStop" : kind, "origin": "rootEnded", "confirmedAfterQuiet": quiet, "sessionId": thread, "parentId": parent, "promptId": turn,
                            "at": max(start, child.lastObserved?.timeIntervalSince1970 ?? start)], now: now, attaching: historical)
         }
     }

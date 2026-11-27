@@ -300,9 +300,28 @@ def presentation_shards(workflow, program):
         raise ValueError("Each presentation group must run in exactly one CI test job")
 
 
+def grouped_quota_contract(engine, desktop):
+    fields = (
+        (r"var\s+groupedQuota:\s*\[EngineGroupedQuota\]\?\s*=\s*nil", r"IReadOnlyList<EngineGroupedQuota>\?\s+GroupedQuota\s*=\s*null"),
+        (r"var\s+quotaGroups:\s*EngineQuotaGroups\?\s*=\s*nil", r"EngineQuotaGroups\?\s+QuotaGroups\s*=\s*null"),
+        (r"var\s+applicationInstalled:\s*Bool\?\s*=\s*nil", r"bool\?\s+ApplicationInstalled\s*=\s*null"),
+        (r"let\s+groupWeeks:\s*\[EngineQuotaHistory\.GroupWeek\]\?", r"IReadOnlyList<GroupWeek>\?\s+GroupWeeks\s*=\s*null"),
+        (r"let\s+quota:\s*\[EngineQuota\]", r"IReadOnlyList<EngineQuota>\s+Quota\b"),
+        (r"let\s+buckets:\s*\[Bucket\]", r"IReadOnlyList<EngineQuotaBucket>\s+Buckets\b"),
+        (r"let\s+accountScope:\s*String\?", r"string\?\s+AccountScope\b"),
+        (r"let\s+windows:\s*\[EngineQuota\.Window\]", r"EngineQuotaBucket\(string Id, string\? Name, IReadOnlyList<QuotaWindow> Windows\)"),
+    )
+    for swift, csharp in fields:
+        if not re.search(swift, engine) or not re.search(csharp, desktop):
+            raise ValueError("Grouped quota must preserve the protocol-1 quota projection and optional bucket snapshot")
+
+
 def check(root=ROOT):
     read = lambda name: json.loads((root / name).read_text(encoding="utf-8"))
     contract = read("windows/platform-contract.json")
+    grouped_quota_contract((root / "windows/EngineSupport/EngineProtocol.swift").read_text(encoding="utf-8") +
+                          (root / "windows/EngineSupport/EngineQuotaDashboard.swift").read_text(encoding="utf-8"),
+                          (root / "windows/Desktop/EngineModels.cs").read_text(encoding="utf-8"))
     core = root / "native/Sources/PacerCore"
     package_boundary((root / "Package.swift").read_text(encoding="utf-8"))
     package_boundary((root / "native/Package.swift").read_text(encoding="utf-8"), native=True)

@@ -25,19 +25,23 @@ struct TaskPagerView: View {
         return max(full, rows.map(height).reduce(0, +) + CGFloat(max(0, rows.count - 1)) * rowSpacing)
     }
     private func height(_ row: ActivityTaskRowPresentation) -> CGFloat {
-        rowHeight + DelegationList.height(row.delegations.count, folded: row.foldedDelegations != nil)
+        rowHeight + subagentHeight(row) + DelegationList.height(row.delegations.count, folded: row.foldedDelegations != nil)
+    }
+    /// A task's subagent lines show with its subagents field.
+    private func subagentHeight(_ row: ActivityTaskRowPresentation) -> CGFloat {
+        model.panelOptions.shows(.subagents) ? SubagentList.height(row.subagentLines.count, folded: row.foldedSubagents != nil) : 0
     }
 
-    var header: some View {
+    func header(on currentPage: Int) -> some View {
         IslandSectionHeader(title: L10n.text("layout.group.tasks", language: language), detail: model.taskPresentation.taskCountText) {
             if pagination.isPaginated {
                 HStack(spacing: 2) {
-                    pageButton(delta: -1, symbol: "chevron.left", title: L10n.text("activity.previous_page"))
+                    pageButton(delta: -1, enabled: currentPage > 0, symbol: "chevron.left", title: L10n.text("activity.previous_page"))
                     Text("\(currentPage + 1) / \(pagination.pageCount)")
                         .font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(PacerPalette.secondary)
                         .frame(minWidth: 30)
                         .accessibilityLabel(L10n.text("activity.page_number", currentPage + 1, pagination.pageCount))
-                    pageButton(delta: 1, symbol: "chevron.right", title: L10n.text("activity.next_page"))
+                    pageButton(delta: 1, enabled: currentPage + 1 < pagination.pageCount, symbol: "chevron.right", title: L10n.text("activity.next_page"))
                 }
                 if actions {
                     Rectangle().fill(PacerPalette.hairline).frame(width: 1, height: 14).padding(.horizontal, 4).accessibilityHidden(true)
@@ -51,7 +55,7 @@ struct TaskPagerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            header
+            header(on: currentPage)
             ForEach(model.progressGuideHints, id: \.provider) { hint in
                 ProgressGuideHint(text: hint.summary, language: language,
                                   open: { model.openSettings(for: hint.provider) },
@@ -68,6 +72,10 @@ struct TaskPagerView: View {
                                     model.open(activity)
                                 }
                                 .frame(height: rowHeight)
+                            if subagentHeight(row) > 0 {
+                                SubagentList(lines: row.subagentLines, folded: row.foldedSubagents, enabled: model.canOpen(activity),
+                                             open: { model.open(activity) })
+                            }
                             if !row.delegations.isEmpty || row.foldedDelegations != nil {
                                 DelegationList(rows: row.delegations, folded: row.foldedDelegations, enabled: model.canOpen(activity),
                                                open: { model.open(activity) }, stop: { model.stopDelegation($0) })
@@ -99,8 +107,7 @@ struct TaskPagerView: View {
         }
     }
 
-    private func pageButton(delta: Int, symbol: String, title: String) -> some View {
-        let enabled = delta < 0 ? currentPage > 0 : currentPage + 1 < pagination.pageCount
+    private func pageButton(delta: Int, enabled: Bool, symbol: String, title: String) -> some View {
         return Button { changePage(delta) } label: {
             Image(systemName: symbol)
                 .font(.system(size: 10, weight: .semibold))

@@ -23,6 +23,8 @@ internal sealed class QuotaHistoryView : StackPanel
     private readonly IconGlyph resetArrow, resetChevron;
     private readonly StackPanel account = new();
     private QuotaHistoryChart? chart;
+    private readonly StackPanel groupCharts = new();
+    private readonly System.Collections.Generic.Dictionary<string, (TextBlock Label, Border Chart)> groupRows = new();
     private QuotaHistoryPresentation? data;
     private bool showExpiries, requestPending, interactionEnabled = true, sourceAvailable = true;
     private string? accountContext;
@@ -44,7 +46,7 @@ internal sealed class QuotaHistoryView : StackPanel
         Grid.SetColumn(refresh, 3); heading.Children.Add(refresh); Children.Add(heading);
         error.Margin = new Thickness(0, 0, 0, 8); error.TextWrapping = TextWrapping.Wrap; error.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning"); Children.Add(error);
         AutomationProperties.SetLiveSetting(error, AutomationLiveSetting.Polite);
-        chartHost.Margin = new Thickness(0, 8, 0, 8); Children.Add(chartHost);
+        chartHost.Margin = new Thickness(0, 8, 0, 8); Children.Add(chartHost); Children.Add(groupCharts);
         placeholder.Margin = new Thickness(0, 0, 0, 8); Children.Add(placeholder);
         details = new Expander { Header = ui.Text("settings.quota_details"), Content = buckets };
         details.SetResourceReference(StyleProperty, "SettingsCompactDisclosure"); Identify(details, "quota.history.details", ui.Text("settings.quota_details"));
@@ -85,7 +87,29 @@ internal sealed class QuotaHistoryView : StackPanel
     internal void SetInteractionEnabled(bool value) { interactionEnabled = value; RefreshButton(); }
     /// The expanded panel's reset capsule opens History with the deadlines showing.
     internal void ShowExpiries() { showExpiries = true; UpdateDisclosure(); }
-    internal void Update(QuotaHistoryPresentation? next)
+    private void UpdateGroupWeeks(System.Collections.Generic.IReadOnlyList<GroupWeek> weeks)
+    {
+        if (!groupRows.Keys.SequenceEqual(weeks.Select(week => week.Id)))
+        {
+            groupRows.Clear(); groupCharts.Children.Clear();
+            foreach (var week in weeks)
+            {
+                var label = Text("", 12, FontWeights.Medium); label.Margin = new Thickness(0, 8, 0, 4);
+                var host = new Border(); groupRows.Add(week.Id, (label, host));
+                groupCharts.Children.Add(label); groupCharts.Children.Add(host);
+            }
+        }
+        foreach (var week in weeks)
+        {
+            var row = groupRows[week.Id];
+            row.Label.Text = week.Title + " · " + week.Remaining;
+            Identify(row.Label, "quota.history.week." + week.Id, row.Label.Text);
+            if (week.Chart == null) row.Chart.Child = null;
+            else if (row.Chart.Child is QuotaHistoryChart existing) existing.Update(week.Chart);
+            else row.Chart.Child = new QuotaHistoryChart(week.Chart, accent);
+        }
+    }
+    internal void Update(QuotaHistoryPresentation? next, System.Collections.Generic.IReadOnlyList<GroupWeek>? weeks = null)
     {
         sourceAvailable = true;
         var previous = data; data = next;
@@ -93,7 +117,9 @@ internal sealed class QuotaHistoryView : StackPanel
         stale.Visibility = next?.NotUpdated == true ? Visibility.Visible : Visibility.Collapsed;
         SetText(error, next?.ErrorText); SetText(placeholder, next?.Placeholder ?? (next == null ? ui.Text("quota.loading") : null));
         warning.Visibility = next?.Warning != null ? Visibility.Visible : Visibility.Collapsed; warning.ToolTip = next?.Warning;
-        if (next?.Chart != null)
+        UpdateGroupWeeks(weeks ?? []);
+        if (weeks is { Count: > 0 }) placeholder.Visibility = Visibility.Collapsed;
+        if (weeks is not { Count: > 0 } && next?.Chart != null)
         {
             if (chart == null) { chart = new QuotaHistoryChart(next.Chart, accent); chartHost.Child = chart; }
             else chart.Update(next.Chart);

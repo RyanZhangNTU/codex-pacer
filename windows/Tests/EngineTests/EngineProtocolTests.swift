@@ -89,13 +89,23 @@ final class EngineProtocolTests: XCTestCase {
     func testLegacyShellDoesNotReceiveNewModulesAndNewShellGetsTheirDefaults() async throws {
         for supports in [nil, true] as [Bool?] {
             let capture = FrameCapture()
-            let runtime = EngineRuntime(demo: false, installationDetection: { .init(installed: []) },
+            let profile = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            try FileManager.default.createDirectory(at: profile, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: profile) }
+            let runtime = EngineRuntime(demo: false, dismissalStore: nil, installationDetection: { .init(installed: []) },
                 output: { capture.append($0) })
             await runtime.hello()
             let hello = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(capture.all().first)) as? [String: Any])
-            XCTAssertEqual(hello["harnessModules"] as? [String], ["workbuddy", "workbuddy-ai"])
+            XCTAssertEqual(hello["harnessModules"] as? [String], ["workbuddy", "workbuddy-ai", "antigravity"])
             let modes = Dictionary(uniqueKeysWithValues: HarnessRegistry.legacyIDs.map { ($0.rawValue, "disabled") })
-            _ = await runtime.receive(try command("initialize", ["providerModes": modes], harnessModules: supports))
+            var parameters: [String: Any] = ["providerModes": modes, "codexHome": profile.appendingPathComponent("codex").path,
+                "claudeHome": profile.appendingPathComponent("claude").path, "deepseekHome": profile.appendingPathComponent("deepseek").path]
+            if supports == true {
+                parameters["harnessHomes"] = Dictionary(uniqueKeysWithValues: HarnessRegistry.localHarnesses.map {
+                    ($0.descriptor.id.rawValue, $0.defaultHome(userHome: profile).path)
+                })
+            }
+            _ = await runtime.receive(try command("initialize", parameters, harnessModules: supports))
             let snapshot = try XCTUnwrap(capture.snapshots().last)
             let modules = try XCTUnwrap(snapshot.modules)
             XCTAssertEqual(Array(modules.prefix(3).map(\.provider)), HarnessRegistry.legacyIDs.map(\.rawValue))

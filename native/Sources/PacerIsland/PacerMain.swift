@@ -11,7 +11,7 @@ private let showExistingIsland = Notification.Name("com.codexpacer.island.showEx
 enum PacerMain {
     @MainActor static func main() {
         let arguments = CommandLine.arguments
-        if TaskProgressReporter.serveLocalHarnessIfRequested(arguments: arguments, read: {
+        if TaskProgressReporter.serveLocalHarnessIfRequested(arguments: arguments, flagEnabled: MacProgressPluginStorage.flagEnabled, read: {
             var buffer = [UInt8](repeating: 0, count: 4096)
             let count = Darwin.read(STDIN_FILENO, &buffer, buffer.count)
             return count > 0 ? Data(buffer.prefix(count)) : nil
@@ -122,8 +122,9 @@ enum PacerMain {
         }
         let monitor = ClaudeActivityMonitor()
         let codexHome = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex")
-        let targets = args.contains("--desktop-only") ? [] : await RemoteActivityTarget.claudeConfigured(codexHome: codexHome, claudeHome: home)
-        await monitor.start(home: home, remoteTargets: targets) { values, statuses, requests, performance in
+        let targets = args.contains("--desktop-only") || !monitorSSH ? [] : await ClaudeSSHDiscovery.shared.discovered(
+            codexHome: codexHome, claudeHome: home, userHome: FileManager.default.homeDirectoryForCurrentUser)
+        await monitor.start(home: home, remoteTargets: SSHHostMonitoring(defaults: .standard).monitored(targets)) { values, statuses, requests, performance in
             let groups = ActivityTaskGroup.make(values), now = Date()
             let summary: [String: Any] = ["connectedSources": statuses.values.filter(\.connected).count,
                 "runningTasks": groups.filter(\.isRunning).count, "waitingTasks": groups.filter(\.isWaiting).count,
@@ -172,6 +173,8 @@ enum PacerMain {
            let text = String(data: bytes, encoding: .utf8) { print(text) }
     }
 
+    private static var monitorSSH: Bool { UserDefaults.standard.object(forKey: "monitorSSH") as? Bool ?? true }
+
     private static func diagnoseEvents() async {
         let home = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex")
         let monitor = RealtimeActivityMonitor()
@@ -184,7 +187,7 @@ enum PacerMain {
         let lastRow = await reader.lastHookRow
         print("Codex hook spool: \(lastRow.map { "last event \(Int(Date().timeIntervalSince($0)))s ago" } ?? "no events")")
         print("Local Codex tasks followed: \(local.activities.count)")
-        await monitor.start(home: home) { _ in }
+        await monitor.start(home: home, includeSSH: monitorSSH, sshMonitoring: SSHHostMonitoring(defaults: .standard)) { _ in }
         try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
         let statuses = await monitor.statuses()
         for (source, status) in statuses.sorted(by: { $0.key < $1.key }) {
@@ -225,7 +228,7 @@ enum PacerMain {
             print("Internal review tasks included: \(overview.activities.filter(\.isInternalReview).count)")
             print("Fresh aggregate output rate available: \(overview.tokensPerSecond != nil)")
             let remote = RealtimeActivityMonitor()
-            await remote.start(home: home) { _ in }
+            await remote.start(home: home, includeSSH: monitorSSH, sshMonitoring: SSHHostMonitoring(defaults: .standard)) { _ in }
             try? await Task.sleep(nanoseconds: 5_000_000_000)
             let remoteActivities = await remote.activities()
             let combined = ActivityOverview(activities: local.activities + remoteActivities, at: Date())
@@ -262,7 +265,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         UserDefaults.standard.register(defaults: ["completedRetentionMinutes": 30, "systemNotifications": false,
             "compactMetric": "remaining", "quotaWindowID": QuotaWindowSelection.weekly.rawValue])
         AppTheme(defaults: .standard).apply()
-        model = IslandModel(demo: CommandLine.arguments.contains("--demo"), initiallyExpanded: CommandLine.arguments.contains("--expanded"))
+        var demoArguments = CommandLine.arguments
+        let guideDemo = demoArguments.contains("--demo-antigravity-guide")
+        if guideDemo { demoArguments.append("--demo-antigravity") }
+        model = IslandModel(demo: demoArguments.contains("--demo") || demoArguments.contains("--demo-antigravity"),
+                            initiallyExpanded: demoArguments.contains("--expanded"), demoArguments: demoArguments)
         model.makeClaudeCloudMonitor = { PacerMain.makeClaudeCloudMonitor() }
         updater = AppUpdater(enabled: !model.isDemo)
         panel = PanelController(model: model)
@@ -310,6 +317,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                 let item = NSMenuItem(title: L10n.text("demo.menu", stage.label), action: #selector(demoStageChanged(_:)), keyEquivalent: String(stage.rawValue + 1))
                 item.tag = stage.rawValue; item.target = self; applicationMenu.addItem(item)
             }
+        }
+        if guideDemo {
+            let item = NSMenuItem(title: L10n.text("demo.menu", L10n.text("demo.antigravity_missed_tool")),
+                                  action: #selector(demoMissedProgressTool), keyEquivalent: "5")
+            item.target = self; applicationMenu.addItem(item)
         }
         applicationMenu.addItem(.separator())
         let quitItem = NSMenuItem(title: L10n.text("common.quit"), action: #selector(quit), keyEquivalent: "q")
@@ -377,6 +389,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         perform(#selector(quit), with: nil, afterDelay: 0)
         return nil
     }
+    @objc private func demoMissedProgressTool() { model.setDemoStage(.tool, missedProgressTool: true) }
     @objc private func demoStageChanged(_ sender: NSMenuItem) {
         if let stage = DemoTaskStage(rawValue: sender.tag) { model.setDemoStage(stage) }
     }
@@ -411,7 +424,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }
     private func openActivity(_ activity: SessionActivity) async -> ActivityOpenOutcome {
         if model.isDemo {
+            if activity.provider.opensApplicationForTasks {
+                _ = showDemoDestination(title: L10n.text("demo.app_title")) { DemoConversationView(application: activity.provider, onReturn: $0) }
+                return .openedApplication
+            }
             return showDemoDestination(title: L10n.text("demo.chat_title")) { DemoConversationView(activity: activity, onReturn: $0) }
+        }
+        if activity.provider.opensApplicationForTasks {
+            guard await MacLocalHarnessApplication.openApplication(provider: activity.provider) else { return .failed(L10n.text("activity.open_failed")) }
+            model.close()
+            return .openedApplication
         }
         if let destination = model.localHarnessDestination(for: activity) {
             model.close()
@@ -466,8 +488,22 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
         let action = response.actionIdentifier, identifier = response.notification.request.identifier
+        let appID = response.notification.request.content.userInfo["taskApplication"] as? String
+        let activityID = response.notification.request.content.userInfo["taskActivity"] as? String
         Task { @MainActor [weak self] in
             guard let self else { return }
+            if action == UNNotificationDefaultActionIdentifier, let provider = appID.flatMap(AgentProvider.init(rawValue:)),
+               provider.opensApplicationForTasks, self.model.isModuleEnabled(provider),
+               self.model.desktopApplications[provider] != nil {
+                // A notice about a task still on the island opens it as a row click does,
+                // which also clears an ended card; otherwise just open the app.
+                if let activityID, let activity = self.model.activities.first(where: { $0.id == activityID }), self.model.canOpen(activity) {
+                    self.model.open(activity)
+                } else {
+                    self.model.openDesktopApplication(provider)
+                }
+                return
+            }
             switch action {
             case NotificationDelivery.openHarnessAction: self.model.openDeepSeekApp()
             case NotificationDelivery.snoozeSpikeAction: self.model.snoozeDeepSeekSpike()

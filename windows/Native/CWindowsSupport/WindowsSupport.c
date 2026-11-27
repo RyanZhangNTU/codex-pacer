@@ -72,7 +72,7 @@ int pacer_is_windows_executable(const uint16_t *path) {
     return path != NULL && GetBinaryTypeW((LPCWSTR)path, &type) && (type == SCS_32BIT_BINARY || type == SCS_64BIT_BINARY);
 }
 
-static int pacer_version_string(const void *block, size_t size, WORD language, WORD codepage, LPCWSTR field, LPCWSTR expected) {
+static int pacer_version_string(const void *block, size_t size, WORD language, WORD codepage, LPCWSTR field, LPCWSTR expected, BOOL ignore_case) {
     WCHAR query[128]; LPVOID found = NULL; UINT length = 0;
     if (swprintf(query, 128, L"\\StringFileInfo\\%04x%04x\\%ls", (unsigned)language, (unsigned)codepage, field) < 0 ||
         !VerQueryValueW(block, query, &found, &length) || found == NULL || length == 0 || length > 32768) return 0;
@@ -80,9 +80,9 @@ static int pacer_version_string(const void *block, size_t size, WORD language, W
     if (start < base || start - base > size || (size_t)length * sizeof(WCHAR) > size - (start - base)) return 0;
     LPCWSTR text = found; size_t count = 0;
     while (count < length && text[count] != 0) count++;
-    return count < length && CompareStringOrdinal(text, (int)count, expected, -1, TRUE) == CSTR_EQUAL;
+    return count < length && CompareStringOrdinal(text, (int)count, expected, -1, ignore_case) == CSTR_EQUAL;
 }
-int pacer_windows_product_matches(const uint16_t *path, const uint16_t *product, const uint16_t *company) {
+static int product_matches(const uint16_t *path, const uint16_t *product, const uint16_t *company, BOOL ignore_case) {
     if (path == NULL || product == NULL || company == NULL || !pacer_is_windows_executable(path)) return 0;
     DWORD ignored = 0, size = GetFileVersionInfoSizeW((LPCWSTR)path, &ignored);
     if (size == 0 || size > 1024 * 1024) return 0;
@@ -97,12 +97,18 @@ int pacer_windows_product_matches(const uint16_t *path, const uint16_t *product,
             bytes <= size - ((uintptr_t)translations - (uintptr_t)block)) {
             size_t count = bytes / sizeof(*translations); if (count > 32) count = 32;
             for (size_t i = 0; i < count && !matched; i++) {
-                matched = pacer_version_string(block, size, translations[i].language, translations[i].codepage, L"ProductName", (LPCWSTR)product) &&
-                    pacer_version_string(block, size, translations[i].language, translations[i].codepage, L"CompanyName", (LPCWSTR)company);
+                matched = pacer_version_string(block, size, translations[i].language, translations[i].codepage, L"ProductName", (LPCWSTR)product, ignore_case) &&
+                    pacer_version_string(block, size, translations[i].language, translations[i].codepage, L"CompanyName", (LPCWSTR)company, ignore_case);
             }
         }
     }
     HeapFree(GetProcessHeap(), 0, block); return matched;
+}
+int pacer_windows_product_matches(const uint16_t *path, const uint16_t *product, const uint16_t *company) {
+    return product_matches(path, product, company, TRUE);
+}
+int pacer_antigravity_product_matches(const uint16_t *path) {
+    return product_matches(path, (const uint16_t *)L"Antigravity", (const uint16_t *)L"Google", FALSE);
 }
 int pacer_harness_registry_path(size_t index, uint16_t *path, size_t capacity) {
     if (index >= 4 || path == NULL || capacity == 0 || capacity > 32768) return 0;

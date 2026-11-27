@@ -22,14 +22,14 @@ internal sealed class WindowsConversationApplication
     private readonly Func<Uri, Task<bool>> web;
     private readonly Func<uint, ulong, bool> host;
     private readonly Func<string, Uri, bool> signedHandler;
+    private readonly Func<string, Task<bool>> openApplication;
     /// `Executables` are the app's file names; it may be installed to any local folder.
-    private sealed record SignedHandler(string Scheme, string Publisher, string[] Executables, string? ConnectorsPath);
-    // Modules that open through their own URL scheme come from the engine's
-    // registry; the handler must still carry the declared signer.
-    private static volatile IReadOnlyDictionary<string, SignedHandler> SignedHandlers = new Dictionary<string, SignedHandler>(StringComparer.Ordinal);
+    private sealed record RegisteredApplication(string Scheme, string Publisher, string[] Executables, string? ConnectorsPath);
+    // The engine advertises launch capabilities. The desktop validates the executable before each launch.
+    private static volatile IReadOnlyDictionary<string, RegisteredApplication> RegisteredApplications = new Dictionary<string, RegisteredApplication>(StringComparer.Ordinal);
     internal static void Register(IEnumerable<EngineModule>? modules)
     {
-        var next = new Dictionary<string, SignedHandler>(StringComparer.Ordinal);
+        var next = new Dictionary<string, RegisteredApplication>(StringComparer.Ordinal);
         foreach (var module in modules ?? [])
         {
             if (module.Launch is not { } launch || !DesktopPreferences.ValidProviderId(module.Provider)
@@ -41,22 +41,25 @@ internal sealed class WindowsConversationApplication
             string? connectors = launch.ConnectorsPath is { } value && Regex.IsMatch(value, "^[a-z][a-z0-9/-]{0,63}$") ? value : null;
             next[module.Provider] = new(launch.Scheme, launch.Publisher, names, connectors);
         }
-        if (!next.Keys.Order().SequenceEqual(SignedHandlers.Keys.Order()) || next.Any(pair => !SignedHandlers.TryGetValue(pair.Key, out var known)
+        if (!next.Keys.Order().SequenceEqual(RegisteredApplications.Keys.Order()) || next.Any(pair => !RegisteredApplications.TryGetValue(pair.Key, out var known)
             || known.Scheme != pair.Value.Scheme || known.Publisher != pair.Value.Publisher || known.ConnectorsPath != pair.Value.ConnectorsPath
-            || !known.Executables.SequenceEqual(pair.Value.Executables))) SignedHandlers = next;
+            || !known.Executables.SequenceEqual(pair.Value.Executables))) RegisteredApplications = next;
     }
-    internal static bool CanOpenApplication(string provider) => SignedHandlers.ContainsKey(provider);
-    internal static bool CanOpenConnectors(string provider) => SignedHandlers.TryGetValue(provider, out var handler) && handler.ConnectorsPath != null;
+    internal static bool CanOpenApplication(string provider) => RegisteredApplications.ContainsKey(provider);
+    internal static bool CanOpenConnectors(string provider) => provider != "antigravity" && RegisteredApplications.TryGetValue(provider, out var handler) && handler.ConnectorsPath != null;
 
     internal static Task<bool> OpenApplicationAsync(string provider) => OpenProviderAsync(provider, null);
 
-    internal static Task<bool> OpenProgressConnectorsAsync(string provider) => SignedHandlers.TryGetValue(provider, out var handler) && handler.ConnectorsPath != null
+    internal static Task<bool> OpenProgressConnectorsAsync(string provider) => provider != "antigravity" && RegisteredApplications.TryGetValue(provider, out var handler) && handler.ConnectorsPath != null
         ? OpenProviderAsync(provider, new Uri(handler.Scheme + "://" + handler.ConnectorsPath)) : Task.FromResult(false);
+
+    internal static Task<bool> ReopenForGuideAsync(string provider) =>
+        CanOpenConnectors(provider) ? OpenProgressConnectorsAsync(provider) : OpenApplicationAsync(provider);
 
     private static async Task<bool> OpenProviderAsync(string provider, Uri? destination)
     {
-        if (!SignedHandlers.TryGetValue(provider, out var application)) return false;
-        try { return await Task.Run(() => OpenSignedHandler(application, destination)); }
+        if (!RegisteredApplications.TryGetValue(provider, out var application) || (provider == "antigravity" && destination != null)) return false;
+        try { return await Task.Run(() => ResolveApplication(provider, application) is string path && Start(path, destination)); }
         catch (Exception error) when (Recoverable(error)) { return false; }
     }
 
@@ -70,12 +73,11 @@ internal sealed class WindowsConversationApplication
     /// its crash recovery is built for. The card asks first while a task runs.
     internal static async Task<RestartResult> RestartForGuideAsync(string provider, IReadOnlyList<string> executables)
     {
-        if (!SignedHandlers.TryGetValue(provider, out var application)) return RestartResult.Failed;
+        if (!RegisteredApplications.TryGetValue(provider, out var application)) return RestartResult.Failed;
         try
         {
-            // Nothing is ended unless Pacer can start the app again: an app whose
-            // handler is edited, unsigned or on another computer stays running.
-            if (await Task.Run(() => ResolveSignedHandler(application)) == null) return RestartResult.Failed;
+            // Resolve the executable before asking its main process to exit.
+            if (await Task.Run(() => ResolveApplication(provider, application)) is not string executablePath) return RestartResult.Failed;
             bool quit = await Task.Run(async () =>
             {
                 string[] names = executables.Select(path => Path.GetFileNameWithoutExtension(path.Replace('/', '\\'))).Where(name => name.Length > 0)
@@ -84,36 +86,62 @@ internal sealed class WindowsConversationApplication
                 try
                 {
                     // The earliest process is the app itself; its helpers go with it.
-                    var main = processes.Select(process => { try { return (process, started: process.StartTime); } catch (Exception error) when (Recoverable(error)) { return (process, started: DateTime.MaxValue); } })
+                    var main = processes.Where(process => Matches(process, executablePath)).Select(process => { try { return (process, started: process.StartTime); } catch (Exception error) when (Recoverable(error)) { return (process, started: DateTime.MaxValue); } })
                         .OrderBy(entry => entry.started).Select(entry => entry.process).FirstOrDefault();
                     // A child that can't be ended raises an AggregateException; the
                     // wait below then reports the app as still running.
-                    try { main?.Kill(entireProcessTree: true); }
+                    try
+                    {
+                        if (main != null && Matches(main, executablePath))
+                        {
+                            if (provider != "antigravity" && application.ConnectorsPath != null) main.Kill(entireProcessTree: true);
+                            else main.CloseMainWindow();
+                        }
+                    }
                     catch (Exception error) when (Recoverable(error) || error is NotSupportedException or AggregateException) { }
                 }
                 finally { foreach (var process in processes) process.Dispose(); }
                 for (int wait = 0; wait < 40; wait++)
                 {
-                    if (!names.Any(name => { var left = Process.GetProcessesByName(name); bool any = left.Length > 0; foreach (var p in left) p.Dispose(); return any; })) return true;
+                    if (!Running(names, executablePath)) return true;
                     await Task.Delay(250);
                 }
                 return false;
             });
             if (!quit) return RestartResult.StillRunning;
-            return await OpenProgressConnectorsAsync(provider) ? RestartResult.Restarted : RestartResult.Failed;
+            return await ReopenForGuideAsync(provider) ? RestartResult.Restarted : RestartResult.Failed;
         }
         catch (Exception error) when (Recoverable(error)) { return RestartResult.Failed; }
     }
 
+    internal static bool Matches(Process process, string path)
+    {
+        try { return string.Equals(process.MainModule?.FileName, path, StringComparison.OrdinalIgnoreCase); }
+        catch (Exception error) when (Recoverable(error)) { return false; }
+    }
+
+    private static bool Running(IEnumerable<string> names, string? path)
+    {
+        foreach (string name in names)
+        {
+            var processes = Process.GetProcessesByName(name);
+            try { if (processes.Any(process => path == null || Matches(process, path))) return true; }
+            finally { foreach (var process in processes) process.Dispose(); }
+        }
+        return false;
+    }
+
     /// Waits for the user to quit the app after it declined Pacer's request.
-    internal static async Task<bool> WaitForExitAsync(IReadOnlyList<string> executables, TimeSpan timeout)
+    internal static async Task<bool> WaitForExitAsync(string provider, IReadOnlyList<string> executables, TimeSpan timeout)
     {
         string[] names = executables.Select(path => Path.GetFileNameWithoutExtension(path.Replace('/', '\\'))).Where(name => name.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        string? path = provider == "antigravity" ? WindowsAntigravityInstallation.Resolve() : null;
+        if (provider == "antigravity" && path == null) return false;
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
         {
-            if (!names.Any(name => { var left = Process.GetProcessesByName(name); bool any = left.Length > 0; foreach (var p in left) p.Dispose(); return any; })) return true;
+            if (!Running(names, path)) return true;
             await Task.Delay(500);
         }
         return false;
@@ -121,11 +149,12 @@ internal sealed class WindowsConversationApplication
 
     internal WindowsConversationApplication(Func<string, bool> registered,
         Func<string, Uri, Task<bool>>? protocol = null, Func<Uri, Task<bool>>? web = null, Func<uint, ulong, bool>? host = null,
-        Func<string, Uri, bool>? signedHandler = null)
+        Func<string, Uri, bool>? signedHandler = null, Func<string, Task<bool>>? openApplication = null)
     {
         this.registered = registered; this.protocol = protocol ?? WindowsProtocolLauncher.OpenAsync; this.web = web ?? WindowsProtocolLauncher.OpenWebAsync;
         this.host = host ?? ((pid, started) => HostActivate.Value(pid, started) == 1);
-        this.signedHandler = signedHandler ?? ((provider, uri) => SignedHandlers.TryGetValue(provider, out var handler) && OpenSignedHandler(handler, uri));
+        this.openApplication = openApplication ?? OpenApplicationAsync;
+        this.signedHandler = signedHandler ?? ((provider, uri) => RegisteredApplications.TryGetValue(provider, out var handler) && OpenSignedHandler(handler, uri));
     }
     private static readonly Lazy<ActivateHost> HostActivate = new(() => NativeMotion.SharedExport<ActivateHost>(
         Path.Combine(AppContext.BaseDirectory, "Engine"), "pacer_host_window_activate"));
@@ -136,7 +165,10 @@ internal sealed class WindowsConversationApplication
         if (!Guid.TryParse(plan.Context, out _)) return false;
         try
         {
-            if (SignedHandlers.ContainsKey(plan.Provider))
+            if (plan.Provider == "antigravity")
+                return plan.Kind == "application" && plan.Url == null && plan.WebUrl == null && plan.Pid == null &&
+                    plan.Started == null && plan.Terminal == null && CanOpenApplication(plan.Provider) && await openApplication(plan.Provider);
+            if (RegisteredApplications.ContainsKey(plan.Provider))
                 return plan.Kind == "application" && plan.Pid == null && plan.Started == null && plan.Terminal == null &&
                     TryDestination(plan.Provider, plan.Url, plan.WebUrl, out var target, out _) &&
                     await Task.Run(() => signedHandler(plan.Provider, target!));
@@ -192,7 +224,7 @@ internal sealed class WindowsConversationApplication
                 }
             }
         }
-        else if (SignedHandlers.TryGetValue(provider, out var application))
+        else if (provider != "antigravity" && RegisteredApplications.TryGetValue(provider, out var application))
         {
             if (candidate.Scheme != application.Scheme || candidate.Host != "chat" || candidate.Query.Length != 0 ||
                 fallbackValue != null || candidate.AbsolutePath.Length != 37 ||
@@ -203,9 +235,16 @@ internal sealed class WindowsConversationApplication
         uri = candidate; return true;
     }
 
-    private static bool OpenSignedHandler(SignedHandler application, Uri? uri)
+    private static string? ResolveApplication(string provider, RegisteredApplication application) =>
+        provider == "antigravity" ? WindowsAntigravityInstallation.Resolve() : ResolveSignedHandler(application);
+
+    private static bool OpenSignedHandler(RegisteredApplication application, Uri? uri)
     {
-        if (ResolveSignedHandler(application) is not string path) return false;
+        return ResolveSignedHandler(application) is string path && Start(path, uri);
+    }
+
+    private static bool Start(string path, Uri? uri)
+    {
         var start = new ProcessStartInfo(path) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(path)! };
         if (uri != null) start.ArgumentList.Add(uri.AbsoluteUri);
         using var process = Process.Start(start);
@@ -214,7 +253,7 @@ internal sealed class WindowsConversationApplication
     /// The app Pacer may start: the registered handler, exactly `"path" "%1"`,
     /// on a local drive, named as the app's executable and signed by its
     /// publisher. The folder is whichever one the user installed it to.
-    private static string? ResolveSignedHandler(SignedHandler application)
+    private static string? ResolveSignedHandler(RegisteredApplication application)
     {
         using var key = Registry.ClassesRoot.OpenSubKey(application.Scheme + @"\shell\open\command");
         if (key?.GetValue(null) is not string registeredCommand) return null;

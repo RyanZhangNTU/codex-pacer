@@ -18,6 +18,7 @@ struct SettingsConnectionsPane: View {
     }
     /// Hosts with a problem, for the sidebar dot and Overview.
     static func problemCount(_ model: IslandModel) -> Int {
+        guard model.monitorsSSH else { return 0 }
         let hosts = hosts(model)
         let retrying: Int
         if case .retrying(let count) = ConnectionSummary(enabledProviders: model.enabledProviders, sources: hostSources(model), hosts: hosts,
@@ -35,12 +36,12 @@ struct SettingsConnectionsPane: View {
         }, uniquingKeysWith: { first, _ in first })
         return ConnectionSource.sources(
             statuses: Dictionary(uniqueKeysWithValues: model.enabledProviders.map { ($0, model.providerStreamStatuses($0)) }),
-            unavailableSSH: model.enabledProviders.contains(.codex) ? model.unavailableSSH : [], names: names)
+            unavailableSSH: model.enabledProviders.contains(.codex) ? model.unavailableSSH : [], names: names, monitoring: model.sshMonitoring)
     }
 
     static func hosts(_ model: IslandModel) -> [SSHHost] {
         guard model.monitorsSSH else { return [] }
-        let targets = model.claudeRemoteTargets
+        let targets = model.discoveredClaudeTargets
         func aliases<S: Sequence>(_ ids: S) -> Set<String> where S.Element == String {
             let ids = Set(ids)
             return Set(targets.filter { ids.contains($0.id) }.map(\.alias))
@@ -49,21 +50,22 @@ struct SettingsConnectionsPane: View {
             codex: model.isModuleEnabled(.codex) ? model.providerStreamStatuses(.codex) : nil, unavailableCodex: model.unavailableSSH,
             claude: model.isModuleEnabled(.claude) ? model.providerStreamStatuses(.claude) : nil, claudeAliases: targets.map(\.alias),
             claudeIDs: Dictionary(targets.map { ($0.alias, $0.id) }, uniquingKeysWith: { first, _ in first }),
-            configured: Set(targets.filter { model.claudeRemoteConfigured($0) }.map(\.alias)),
+            configured: Set(model.claudeRemoteTargets.filter { model.claudeRemoteConfigured($0) }.map(\.alias)),
             configuring: aliases(model.configuringClaudeHosts), failed: aliases(model.claudeRemoteSetupFailures.keys),
             names: Dictionary(targets.map { ($0.alias, $0.name) }, uniquingKeysWith: { first, _ in first }),
-            telemetryConflicts: model.claudeRemoteTelemetryConflicts())
+            telemetryConflicts: model.claudeRemoteTelemetryConflicts(), codexTargets: model.discoveredCodexTargets, monitoring: model.sshMonitoring)
     }
 
     /// The page's subtitle: the hosts' overall state and how many it covers;
     /// nothing while SSH monitoring is off, as its switch says.
     static func summaryText(_ model: IslandModel) -> String? {
         guard model.monitorsSSH else { return nil }
-        let summary = ConnectionSummary(enabledProviders: model.enabledProviders, sources: hostSources(model), hosts: hosts(model),
+        let hosts = hosts(model)
+        let summary = ConnectionSummary(enabledProviders: model.enabledProviders, sources: hostSources(model), hosts: hosts,
                                         hostsOnly: true)
         let title: String = switch summary.state {
         case .disabled: L10n.text("provider.none_enabled")
-        case .noHosts: L10n.text("connections.summary.no_hosts")
+        case .noHosts: L10n.text(hosts.isEmpty ? "connections.summary.no_hosts" : "connections.summary.none_monitored")
         case .checking: L10n.text("connections.summary.checking")
         case .retrying(let count): L10n.text(count == 1 ? "connections.summary.retrying_one" : "connections.summary.retrying", count)
         case .connecting(let count): L10n.text(count == 1 ? "connections.summary.connecting_one" : "connections.summary.connecting", count)
@@ -96,9 +98,13 @@ struct SettingsConnectionsPane: View {
             .frame(width: 42, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
                 Text(host.name).lineLimit(1).truncationMode(.middle).help(host.name)
-                HStack(spacing: 14) {
-                    ForEach(host.modules, id: \.provider) { module in moduleStatus(module) }
-                }.font(.system(size: 11))
+                if host.monitored {
+                    HStack(spacing: 14) {
+                        ForEach(host.modules, id: \.provider) { module in moduleStatus(module) }
+                    }.font(.system(size: 11))
+                } else {
+                    Text(L10n.text("connections.host.not_monitored")).font(.system(size: 11)).foregroundStyle(.secondary)
+                }
                 if let note = SettingsView.claudeTelemetryNote(host.claudeTelemetryNote) {
                     Text(note).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
@@ -108,8 +114,12 @@ struct SettingsConnectionsPane: View {
                 Button(L10n.text("connections.retry")) { retrySetup(host) }.buttonStyle(.main)
                     .help(model.claudeRemoteSetupFailures[host.id] ?? "")
             }
+            Toggle(L10n.text("connections.host.monitor", host.name), isOn: Binding(
+                get: { !model.sshMonitoring.offIDs.contains(host.id) }, set: { model.setSSHHost(host.id, monitored: $0) }))
+                .toggleStyle(.switch).labelsHidden()
+                .accessibilityLabel(L10n.text("connections.host.monitor", host.name))
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 
     private func moduleStatus(_ module: SSHHost.Module) -> some View {
@@ -117,6 +127,8 @@ struct SettingsConnectionsPane: View {
         case .connected: (.green, "connections.host.connected")
         case .configuring: (.secondary, "connections.host.configuring")
         case .waiting: (.secondary, "connections.host.waiting")
+        case .queued: (.secondary, "connections.host.queued")
+        case .notMonitored: (.secondary, "connections.host.not_monitored")
         case .paused: (.secondary, "connections.host.missing")
         case .retrying: (.orange, "connections.host.retrying")
         case .setupFailed: (.orange, "connections.host.setup_failed")

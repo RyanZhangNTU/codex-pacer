@@ -4,7 +4,8 @@ import PacerCore
 /// Windows supplies transport and installer facts; Core owns the page rules.
 enum EngineConnectionProjection {
     static func make(enabled: Set<AgentProvider>, statuses: [AgentProvider: [String: RuntimeStreamStatus]],
-                     targets: [RemoteActivityTarget], setups: [EngineClaudeRemoteSetup],
+                     targets: [RemoteActivityTarget], codexTargets: [RemoteActivityTarget] = [],
+                     monitoring: SSHHostMonitoring = .init(), unavailableSSH: [String] = [], setups: [EngineClaudeRemoteSetup],
                      wsl: WindowsWSLRegistry.Snapshot? = nil, canRetrySetup: Bool) -> ConnectionPagePresentation {
         let ssh = targets.filter { ConnectionSource.isSSHSourceID($0.id) }
         let rows = Dictionary(setups.map { ($0.sourceID, $0) }, uniquingKeysWith: { _, last in last })
@@ -17,10 +18,11 @@ enum EngineConnectionProjection {
         let quotas = Set((wsl?.profiles ?? []).flatMap { profile in
             WindowsWSLProfile.providers.filter { wsl?.permits(profile, for: $0) == true }.map { $0.rawValue + ":" + profile.id }
         })
-        return .init(enabledProviders: AgentProvider.allCases.filter { enabled.contains($0) }, statuses: statuses,
+        return .init(enabledProviders: AgentProvider.allCases.filter { enabled.contains($0) }, statuses: statuses, unavailableSSH: unavailableSSH,
             claudeAliases: ssh.map(\.alias), claudeIDs: Dictionary(ssh.map { ($0.alias, $0.id) }, uniquingKeysWith: { first, _ in first }),
             configured: configured, configuring: configuring, failed: failed,
             names: Dictionary(ssh.map { ($0.alias, $0.name) }, uniquingKeysWith: { first, _ in first }),
-            setup: wslSetup, canRetrySetup: canRetrySetup, quotaSources: quotas, transportProblemsFirst: true, hostsOnly: true)
+            setup: wslSetup, canRetrySetup: canRetrySetup, quotaSources: quotas, transportProblemsFirst: true, hostsOnly: true,
+            codexTargets: codexTargets, monitoring: monitoring)
     }
 }

@@ -335,7 +335,7 @@ internal sealed class QuotaCell : StackPanel
         Children.Add(dial);
         var caption = new StackPanel { Orientation = Orientation.Horizontal, Height = 15, Margin = new Thickness(0, 8, 0, 6), HorizontalAlignment = HorizontalAlignment.Center };
         caption.Children.Add(ProviderIcon.Caption(provider));
-        caption.Children.Add(new TextBlock { Text = provider switch { "codex" => "Codex", "claude" => "Claude", _ => "DeepSeek" },
+        caption.Children.Add(new TextBlock { Text = provider switch { "codex" => "Codex", "claude" => "Claude", "deepseek" => "DeepSeek", _ => char.ToUpperInvariant(provider[0]) + provider.Substring(1) },
             FontSize = 11, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
         var shown = dial.GaugeWindow;
         string? verdict = dial.Split ? null : shown?.VerdictText;

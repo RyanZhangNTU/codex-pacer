@@ -8,6 +8,9 @@ public struct ActivityTaskGroup: Sendable {
     public var runningSubagentCount: Int {
         members.filter { $0.id != primary.id && $0.phase == .running && !$0.isCodexDelegation }.count
     }
+    var waitingForSubagents: Bool {
+        (primary.phase != .running || primary.currentBackgroundWait != nil) && runningSubagentCount > 0
+    }
     /// One thread per Codex for Claude run this task started, oldest first.
     /// A run's sub-threads count with it, not on their own. A review run works
     /// in a sub-thread; that sub-thread is the run.
@@ -38,17 +41,27 @@ public struct ActivityTaskGroup: Sendable {
     /// The threads whose speed the task's row adds up: its own and its subagents'.
     /// A Codex for Claude run shows its speed on its own line.
     private var ratedMembers: [SessionActivity] { members.filter { $0.id == primary.id || !$0.isCodexDelegation } }
+    /// The members whose speeds add up now: the running ones, a subagent only
+    /// while it is writing; once nothing runs, the task's own last speed.
+    private func rateSources(at now: Date) -> [(SessionActivity, OutputEstimate)] {
+        let active = ratedMembers.filter { $0.phase == .running }
+        guard !active.isEmpty else { return primary.displayedOutputEstimate(at: now).map { [(primary, $0)] } ?? [] }
+        return active.compactMap { member in
+            guard let estimate = member.displayedOutputEstimate(at: now) else { return nil }
+            return member.id == primary.id || member.contributesLiveRate(estimate) ? (member, estimate) : nil
+        }
+    }
     public func displayedRate(at now: Date) -> OutputEstimate? {
-        let rated = ratedMembers, active = rated.filter { $0.phase == .running }
-        let measured = (active.isEmpty ? rated : active).compactMap { $0.displayedOutputEstimate(at: now) }
+        let measured = rateSources(at: now).map(\.1)
         guard !measured.isEmpty else { return nil }
         return OutputEstimate(value: measured.reduce(0) { $0 + $1.value },
             reportedAt: measured.map(\.reportedAt).max()!,
             isFresh: measured.contains(where: \.isFresh))
     }
+    /// Partial while any working member has no exact speed of its own yet.
     public func rateIsEstimated(at now: Date) -> Bool {
-        let rated = ratedMembers, active = rated.filter { $0.phase == .running }
-        return displayedRate(at: now)?.isFresh != true || (active.isEmpty ? rated : active).contains { $0.displayedRateIsEstimated(at: now) }
+        let active = ratedMembers.filter { $0.phase == .running }
+        return displayedRate(at: now)?.isFresh != true || (active.isEmpty ? [primary] : active).contains { $0.displayedRateIsEstimated(at: now) }
     }
     static func nodes(in activities: [SessionActivity]) -> [String: SessionActivity] {
         var nodes = Dictionary(activities.filter { !$0.isInternalReview }.map { ($0.canonicalized().id, $0.canonicalized()) },

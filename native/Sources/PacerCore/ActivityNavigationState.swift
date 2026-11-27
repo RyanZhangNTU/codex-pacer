@@ -77,7 +77,8 @@ public struct ActivityNavigationOperation: Sendable {
             return .init(accepted: false, removed: [], failure: nil)
         }
         if case .failed(let failure) = outcome { return .init(accepted: true, removed: [], failure: failure) }
-        guard outcome == .openedConversation else { return .init(accepted: true, removed: [], failure: nil) }
+        // Opening the app for a harness without conversation links clears the card too: the user went to it.
+        guard outcome == .openedConversation || outcome == .openedApplication else { return .init(accepted: true, removed: [], failure: nil) }
         if activity.parentThreadID != nil, activity.provider == .claude || activity.launchedByEmbeddingApp {
             guard let current = activities.first(where: { $0.canonicalized().id == activity.canonicalized().id }),
                   Self.sameLifecycle(current, activity),

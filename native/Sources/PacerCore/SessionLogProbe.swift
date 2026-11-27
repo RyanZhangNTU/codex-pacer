@@ -83,6 +83,17 @@ enum SessionLogProbe {
                 role=sub.get('other') if isinstance(sub,dict) else None
                 if sub=='review' or isinstance(sub,dict) and 'review' in sub:q['source']={'subagent':'review'}
                 elif isinstance(role,str):q['source']={'subagent':{'other':role[:80]}}
+                elif q.get('parent_thread_id') and isinstance(sub,dict):
+                    spawn=sub.get('thread_spawn',sub.get('threadSpawn'))
+                    if isinstance(spawn,dict):
+                        display={}
+                        for key in ('agent_role',):
+                            word=spawn.get(key,p.get(key))
+                            if isinstance(word,str) and len(word.encode('utf-8','replace'))<=48 and re.fullmatch(r'[\w-]+',word):display[key]=word
+                        path=spawn.get('agent_path',p.get('agent_path'))
+                        leaf=path.rsplit('/',1)[-1] if isinstance(path,str) else None
+                        if leaf and re.fullmatch(r'[a-z0-9_]{1,64}',leaf):display['agent_path']=leaf
+                        q['source']={'subagent':{'thread_spawn':display}}
         elif outer == 'turn_context':
             for k in ('turn_id','model'):
                 if isinstance(p.get(k),str): q[k] = p[k][:256]

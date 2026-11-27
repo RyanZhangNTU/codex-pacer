@@ -212,12 +212,16 @@ internal static class Program
         {
             Check(saved != null, "The round-trip fixture must produce saved settings");
             await using var client = new EngineClient();
-            EngineSnapshot? latest = null;
-            client.Snapshot += value => latest = value;
             await client.StartAsync(engine, true, saved!.Language, saved.EngineConfiguration(), referenceFixture: true);
-            Check(latest?.Modules?.Count == 5 && latest.Modules.Single(value => value.Provider == "codex") is { Mode: "disabled", Enabled: false }
-                && latest.Modules.Single(value => value.Provider == "claude") is { Mode: "automatic", Enabled: true }, "Saved modes must control the real projection");
-            // Codex and DeepSeek are off in the saved fixture; Claude and the automatic WorkBuddy modules stay.
+            var latest = client.LatestSnapshot ?? throw new InvalidOperationException("Initialize must publish the saved configuration before acknowledging it.");
+            var modules = latest.Modules?.ToDictionary(m => m.Provider) ?? throw new InvalidOperationException("Saved module modes must be projected.");
+            foreach (var (provider, mode) in saved.ProviderModes)
+            {
+                Check(modules.TryGetValue(provider, out var module) && module.Mode == mode && module.Enabled == (provider == "claude"),
+                    $"Saved {provider} mode {mode} produced mode {module?.Mode} and enabled {module?.Enabled}.");
+            }
+            Check(modules.TryGetValue("antigravity", out var antigravity) && antigravity is { Installed: false, Enabled: false },
+                $"The ordinary demo must leave Antigravity undetected and off (installed={antigravity?.Installed}, enabled={antigravity?.Enabled}).");
             Check(latest!.Tasks.Count > 0 && latest.Tasks.All(value => value.Provider is "claude" or "workbuddy" or "workbuddy-ai" && value.Title == "本地任务")
                 && latest.Wallet == null, "Saved privacy and module choices must apply before the first snapshot");
             // WorkBuddy's credits dial joins Claude's periods; Claude keeps both of its own.
@@ -225,7 +229,8 @@ internal static class Program
                     .SequenceEqual(new[] { "claude:5h", "claude:7d" }) == true,
                 "A single-provider dashboard must keep both native Classic periods in the managed DTO");
             await client.SendAsync("configure", new { providerModes = new { codex = "enabled", claude = "disabled", deepseek = "disabled" } });
-            Check(latest!.QuotaDashboard is { Classic.Kind: "legacyCodex", Split.Kind: "splitSingle", LegacyCodex.Fresh: true }
+            latest = client.LatestSnapshot!;
+            Check(latest.QuotaDashboard is { Classic.Kind: "legacyCodex", Split.Kind: "splitSingle", LegacyCodex.Fresh: true }
                 && latest.QuotaDashboard.LegacyCodex.Buckets.First().Windows.First().RemainingPercent == 43,
                 "Codex's original Classic bars and Split Ring must share the same provider value in the managed projection");
         });

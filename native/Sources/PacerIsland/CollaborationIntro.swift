@@ -58,12 +58,6 @@ struct CollaborationIntro: View {
             ? NSColor(srgbRed: 0x4A / 255, green: 0xDE / 255, blue: 0x6A / 255, alpha: 1)
             : NSColor(srgbRed: 0x1E / 255, green: 0x7B / 255, blue: 0x34 / 255, alpha: 1)
     })
-    /// Puts a phrase on the clipboard. Tests swap it so they leave the user's clipboard alone.
-    nonisolated(unsafe) static var writeClipboard: (String) -> Void = { text in
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-
     var body: some View {
         let content = VStack(alignment: .leading, spacing: 14) {
             header
@@ -247,7 +241,7 @@ struct CollaborationIntro: View {
     }
 
     private func copy(_ text: String) {
-        Self.writeClipboard(text)
+        guard TextClipboard.write(text) else { return }
         copied = text
         copyReset?.cancel()
         copyReset = Task { @MainActor in

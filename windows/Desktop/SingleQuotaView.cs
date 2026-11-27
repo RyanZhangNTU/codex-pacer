@@ -27,11 +27,14 @@ internal sealed class SingleQuotaView : Grid
         var details = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         if (Dial.Split)
         {
-            details.Children.Add(Period(provider.FiveHour, ui));
-            details.Children.Add(Separator(new Thickness(0, 9, 0, 9)));
-            details.Children.Add(Period(provider.Weekly, ui));
+            if (provider.FiveHour.ResetsAt != null) details.Children.Add(Period(provider.FiveHour, ui));
+            if (provider.Weekly.ResetsAt != null)
+            {
+                if (details.Children.Count > 0) details.Children.Add(Separator(new Thickness(0, 9, 0, 9)));
+                details.Children.Add(Period(provider.Weekly, ui));
+            }
         }
-        else
+        else if (shown.ResetsAt != null)
         {
             var weekly = shown;
             var pace = Pace(weekly, false, ui);
@@ -47,7 +50,12 @@ internal sealed class SingleQuotaView : Grid
             Brush ink = weekly.ProjectionWarns ? PacerPalette.Attention : weekly.ProjectionText == null || weekly.ProjectionEarly ? PacerPalette.Tertiary : PacerPalette.Primary;
             details.Children.Add(Row(Text(ui.Text("dashboard.projection"), 11, PacerPalette.Secondary), Text(weekly.ProjectionText ?? "—", 11, ink), 26));
         }
-        Grid.SetColumn(details, 2); Children.Add(details);
+        if (details.Children.Count > 0)
+        {
+            AutomationProperties.SetAutomationId(details, "quota." + provider.Provider + ".resetDetails");
+            Grid.SetColumn(details, 2); Children.Add(details);
+        }
+        else { Grid.SetColumnSpan(Dial, 3); Dial.HorizontalAlignment = HorizontalAlignment.Center; }
         status ??= new Border { Height = 0 };
         status.Margin = new Thickness(0, 6, 0, 0); Grid.SetRow(status, 1); Grid.SetColumnSpan(status, 3); Children.Add(status);
     }

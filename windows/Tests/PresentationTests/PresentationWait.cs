@@ -32,6 +32,19 @@ internal static class PresentationWait
         return (null, 0);
     }
 
+    internal static (MotionBounds Screen, MotionBounds WorkArea) ReferenceScreen() =>
+        (new(0, 0, 2560, 1440), new(0, 0, 2560, 1400));
+
+    internal static async Task RevealReferencePanelAsync(IslandWindow island, EngineClient engine)
+    {
+        await UntilAsync(() => engine.LatestSnapshot?.Wallet?.Balance != null, "The reference wallet must finish loading");
+        ulong sequence = engine.LatestSnapshot!.Sequence;
+        island.Reveal();
+        await island.SynchronizeExpansionAsync();
+        await UntilAsync(() => island.RenderedSequence >= sequence, "The island must render the completed reference snapshot");
+        await island.WaitForPresentationAsync();
+    }
+
     // Whether a saved panel layout places the block. The saved text also lists
     // every block it knows, so searching the text for a name says nothing.
     internal static bool Places(string? layout, string block)

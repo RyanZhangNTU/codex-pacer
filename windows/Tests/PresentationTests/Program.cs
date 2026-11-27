@@ -23,7 +23,7 @@ internal static class Program
     // The groups "all" runs. CI splits them across parallel jobs, and the
     // platform contract checks that each one is in exactly one of them.
     internal static readonly string[] AllGroups = ["recovery", "responsive", "quota", "web", "host", "idle", "display", "accessibility",
-        "island", "conversation", "harness", "pages", "updates", "settings", "collapsed", "panel", "connection"];
+        "island", "conversation", "harness", "antigravity", "pages", "updates", "settings", "collapsed", "panel", "connection"];
     [STAThread]
     private static int Main(string[] args)
     {
@@ -70,6 +70,28 @@ internal static class Program
             await using var projections = new EngineClient();
             try
             {
+                if (All("settings") || Has("moduleLibrary"))
+                {
+                    foreach (string language in new[] { "en", "zh-Hans" })
+                        foreach (bool dark in new[] { false, true })
+                        {
+                            scenario = language + "/dark=" + dark;
+                            await Attempt(nameof(ModuleLibraryChecks), () => ModuleLibraryChecks.Run(language, dark, output));
+                        }
+                    scenario = "common";
+                    if (groups is ["moduleLibrary"])
+                    {
+                        Check(Errors.Count == 0, "Module Library WPF errors: " + string.Join("\n", Errors));
+                        result = 0; return;
+                    }
+                }
+                if (Has("approvalGuide") && groups.Length == 1)
+                {
+                    foreach (string language in new[] { "en", "zh-Hans" })
+                        foreach (bool dark in new[] { false, true }) await AntigravityPresentationChecks.RunGuideFixtures(language, dark);
+                    Check(Errors.Count == 0, "The approval guide must not report WPF runtime errors");
+                    result = 0; return;
+                }
                 if (Has("progress") && groups.Length == 1)
                 {
                     await ProgressRingMotionChecks.Run();
@@ -98,6 +120,7 @@ internal static class Program
                 if (All("collapsed")) await Attempt("Compact TPS geometry", () => CollapsedLayoutChecks.CheckRateGeometry(projections));
                 if (All("collapsed")) await Attempt(nameof(CompactStatusMotionChecks), () => CompactStatusMotionChecks.Run());
                 if (All("island") || Has("collaboration")) await Attempt(nameof(DelegationRowChecks), () => DelegationRowChecks.Run(output));
+                if (All("island")) await Attempt(nameof(SubagentRowChecks), () => SubagentRowChecks.Run(output));
                 // Native mouse and keyboard input on an owned synthetic island; the cursor is restored afterwards.
                 // Hosted CI desktops do not deliver synthesized input, so this stays an explicit local group.
                 if (Has("position"))
@@ -118,6 +141,11 @@ internal static class Program
                     foreach (bool dark in new[] { false, true })
                     {
                         scenario = language + "/dark=" + dark;
+                        if (All("antigravity")) await Attempt(nameof(AntigravityPresentationChecks), async () =>
+                        {
+                            await AntigravityPresentationChecks.RunGuideFixtures(language, dark);
+                            await AntigravityPresentationChecks.Run(language, dark, output);
+                        });
                         if (Has("persistence"))
                         {
                             await Attempt(nameof(PersistentSettingsChecks), () => PersistentSettingsChecks.Run(language, dark, output, desktop ?? throw new ArgumentException("Supply the desktop executable for restart checks.")));
@@ -359,6 +387,24 @@ internal static class Program
             Check(expansion.ExpandCollapseState == ExpandCollapseState.Expanded && window.LogicalTarget.Height == PresentationWait.ReferenceHeight(window), "The UIA Expand action must reveal the panel");
             expansion.Collapse(); await window.WaitForPresentationAsync();
             Check(expansion.ExpandCollapseState == ExpandCollapseState.Collapsed && window.LogicalTarget.Height == 36, "The UIA Collapse action must clear the pin and close the panel");
+            window.ApplyPreferences(withQuota with { IslandExpandMode = "click" });
+            window.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = Mouse.MouseEnterEvent });
+            Check(expansion.ExpandCollapseState == ExpandCollapseState.Collapsed, "In click mode hovering leaves the bar collapsed");
+            var headerAction = (Button)window.FindName("HeaderAction");
+            Invoke(headerAction);
+            await Until(() => expansion.ExpandCollapseState == ExpandCollapseState.Expanded, "Clicking the bar opens the panel");
+            window.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = Mouse.MouseLeaveEvent });
+            await Task.Delay(600); await Pump();
+            Check(window.IsExpandedForAutomation && AutomationProperties.GetName((Button)window.FindName("PinButton")) == ui.Text("common.unpin"),
+                "A click-opened panel stays pinned after hover exit");
+            Invoke(headerAction);
+            await Until(() => !window.IsExpandedForAutomation, "A second bar click collapses the panel");
+            Check(AutomationProperties.GetName((Button)window.FindName("PinButton")) == ui.Text("common.pin"), "Closing by click clears the pin");
+            expansion.Expand(); await window.WaitForPresentationAsync();
+            Check(window.IsExpandedForAutomation, "A programmatic reveal still opens the panel in click mode");
+            window.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, Key.Escape) { RoutedEvent = Keyboard.KeyDownEvent });
+            Check(!window.IsExpandedForAutomation, "Escape closes a pinned panel in click mode");
+            window.ApplyPreferences(withQuota);
             Console.WriteLine("PASS " + scenario + ": read action, Escape, hover reopening/exit and accessibility cleanup");
             window.Reveal(); await window.WaitForPresentationAsync(); await Pump();
             window.CapturePreview(Path.Combine(output, "presentation-" + scenario + ".png"));

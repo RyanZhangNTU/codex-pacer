@@ -1,10 +1,22 @@
 import Foundation
 
+package struct MissedProgressConversation: Codable, Equatable, Sendable {
+    package let id: String
+    package let firstInputAt: Date
+
+    package init(id: String, firstInputAt: Date) {
+        self.id = id
+        self.firstInputAt = firstInputAt
+    }
+}
+
 /// A provider's bounded projection after reconciling its own logs and streams.
 public struct HarnessActivity: Equatable, Sendable {
     public var activities: [SessionActivity]
     public var requests: [PendingAttentionRequest]
     public var status: HarnessSourceStatus?
+    package var requestsProgressApproval: Bool { requests.contains(where: \.requestsProgressApproval) }
+    package var missedProgressConversation: MissedProgressConversation?
     package var scope: String?
     package var conversationURLs: [String: URL] = [:]
     package var usage: HarnessUsage?
@@ -100,6 +112,7 @@ package struct LocalHarnessDefinition: Sendable {
     package let descriptor: HarnessDescriptor
     package let platforms: Set<HarnessPlatform>
     package let home: String
+    package var detectsDataDirectory = false
     package let dataFile: String
     package let windowsExecutables: [String]
     package var macApplicationNames: [String] = []
@@ -111,6 +124,17 @@ package struct LocalHarnessDefinition: Sendable {
     /// The app's own page for its connectors, under the conversation scheme.
     package var connectorsPath: String?
     package var progressConfigFile: String?
+    package var installsProgressPlugin = false
+
+    package func progressTarget(dataHome: URL, reporter: String, enabled: Bool,
+                                userHome: URL = FileManager.default.homeDirectoryForCurrentUser) -> LocalHarnessProgressSetup.Target? {
+        if installsProgressPlugin {
+            return .init(pluginProfile: userHome, reporter: reporter, enabled: enabled)
+        }
+        guard let progressConfigFile else { return nil }
+        return .init(home: dataHome, configFile: progressConfigFile, reporter: reporter, enabled: enabled, ruleDirectory: progressRuleDirectory)
+    }
+
     package var progressRuleDirectory: String?
     package var progressConnection: LocalHarnessProgressSetup.ConnectionReader?
     /// The app's own log, under its data folder, where it notes opening its
@@ -130,6 +154,7 @@ package struct LocalHarnessDefinition: Sendable {
     /// folder: it covers portable copies and custom install folders.
     package func hasLocalData(home: URL) -> Bool {
         var isDirectory: ObjCBool = false
+        if detectsDataDirectory { return FileManager.default.fileExists(atPath: home.path, isDirectory: &isDirectory) && isDirectory.boolValue }
         return FileManager.default.fileExists(atPath: home.appendingPathComponent(dataFile).path, isDirectory: &isDirectory) && !isDirectory.boolValue
     }
     package func resolveHome(override: String?, isAbsolute: (String) -> Bool,
@@ -147,8 +172,10 @@ package struct LocalHarnessIO: Sendable {
     let events: any ActivityFileEvents
     let now: @Sendable () -> Date
 
-    package init(files: any PlatformFileSystem, events: any ActivityFileEvents, now: @escaping @Sendable () -> Date) {
-        self.files = files; self.events = events; self.now = now
+    let antigravity: (any AntigravityLocalHost)?
+
+    package init(files: any PlatformFileSystem, events: any ActivityFileEvents, antigravity: (any AntigravityLocalHost)? = nil, now: @escaping @Sendable () -> Date) {
+        self.files = files; self.events = events; self.now = now; self.antigravity = antigravity
     }
 }
 
@@ -192,7 +219,8 @@ package struct HarnessActivityFeed: Sendable {
                     removedActivityIDs: Set(rows.keys).subtracting(value.activities.map(\.id)),
                     requests: value.requests.filter { requests[$0.id] != $0 },
                     removedRequestIDs: Set(requests.keys).subtracting(value.requests.map(\.id)),
-                    status: value.status, conversationURLs: value.conversationURLs == previous.conversationURLs ? nil : value.conversationURLs,
+                    status: value.status, missedProgressConversation: value.missedProgressConversation,
+                    conversationURLs: value.conversationURLs == previous.conversationURLs ? nil : value.conversationURLs,
                     usage: value.usage == previous.usage ? .unchanged : .replace(value.usage)
                 ))
             }
@@ -227,7 +255,7 @@ package struct LocalHarnessMonitors: Sendable {
         let id = definition.descriptor.id
         if let monitor = monitors[id] { return monitor }
         let events = HarnessWatchBudget.Events(provider: id, underlying: io.events, budget: budget)
-        let monitor = definition.makeMonitor(.init(files: io.files, events: events, now: io.now))
+        let monitor = definition.makeMonitor(.init(files: io.files, events: events, antigravity: io.antigravity, now: io.now))
         monitors[id] = monitor
         return monitor
     }

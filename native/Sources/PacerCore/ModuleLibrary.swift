@@ -1,8 +1,8 @@
 import Foundation
 
 /// The services Pacer can follow, as the module library, onboarding and the
-/// settings sidebar list them. Modules found on this computer, or turned on
-/// explicitly, come first; the rest stay collapsed until someone opens them.
+/// settings sidebar list them. The library groups by detection. The sidebar
+/// and onboarding also give explicitly enabled services prominence.
 public struct ModuleLibrary: Equatable, Sendable {
     public enum State: String, Sendable {
         case on, off, notFound
@@ -29,6 +29,8 @@ public struct ModuleLibrary: Equatable, Sendable {
     }
 
     public let entries: [Entry]
+    public var found: [Entry] { entries.filter(\.detected) }
+    public var notFound: [Entry] { entries.filter { !$0.detected } }
     public var prominent: [Entry] { entries.filter(\.prominent) }
     public var collapsed: [Entry] { entries.filter { !$0.prominent } }
 

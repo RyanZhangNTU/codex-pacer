@@ -237,6 +237,31 @@ internal static class GuidePageChecks
             Capture(modulesWindow.ClientContent, Path.Combine(output, "pages-whats-new-4.5-" + language + (dark ? "-dark" : "-light") + ".png"));
         }
         finally { modulesWindow.Close(); }
+        // 4.8: Antigravity, subagent lines and click to open; Antigravity links to the Module Library and click to open to Expanded Panel.
+        var antigravity = await Query("4.7.0", current: "4.8.0"); var antigravityBody = Body(antigravity);
+        var antigravityWindow = new GuideWindow(ui, antigravityBody, antigravity, dark) { ShowActivated = false, IsHitTestVisible = false };
+        try
+        {
+            antigravityWindow.Show(); await Pump();
+            var highlights = antigravity.Releases.FirstOrDefault()?.Items ?? [];
+            var titles = new[] { "whats_new.antigravity", "whats_new.subagent_lines", "whats_new.click_to_open" };
+            Check(antigravity.Releases.Count > 0 && antigravity.Releases[0].Version == "4.8.0"
+                && highlights.Select(item => item.Title).SequenceEqual(titles.Select(ui.Text))
+                && titles.All(key => SelfAndDescendants(antigravityBody).OfType<TextBlock>().Any(text => text.Text == ui.Text(key))),
+                "The 4.8 note leads with its three localized highlights: " + string.Join(",", antigravity.Releases.Select(release => release.Version)));
+            // An unknown symbol would quietly fall back to the sparkle, so each highlight must draw its own glyph.
+            var drawn = SelfAndDescendants(antigravityBody).OfType<IconGlyph>().Where(glyph => glyph.IsVisible && glyph.ActualWidth > 0).Select(glyph => glyph.Symbol).ToArray();
+            Check(highlights.Select(item => item.Symbol).SequenceEqual(["sparkle", "person.2", "cursorarrow.rays"])
+                && highlights.All(item => IconGlyph.Has(item.Symbol) && drawn.Contains(item.Symbol)), "Each 4.8 highlight draws its own icon");
+            Invoke(Find<Button>(antigravityWindow, "guide.control.openModules")); await Pump();
+            Check(settingsActions.Last() == "modules", "The Antigravity highlight opens the Module Library");
+            Invoke(Find<Button>(antigravityWindow, "guide.control.openExpandedPanel")); await Pump();
+            Check(settingsActions.Last() == "expandedPanel", "The click-to-open highlight opens Expanded Panel");
+            Check(SelfAndDescendants(antigravityBody).OfType<FrameworkElement>().Count(value => AutomationProperties.GetAutomationId(value).StartsWith("guide.control.", StringComparison.Ordinal)) == 2,
+                "Only the Antigravity and click-to-open highlights carry a link");
+            Capture(antigravityWindow.ClientContent, Path.Combine(output, "pages-whats-new-4.8-" + language + (dark ? "-dark" : "-light") + ".png"));
+        }
+        finally { antigravityWindow.Close(); }
         string? copied = null;
         using var appearance = new AppearanceFixture();
         var settings = new SettingsWindow(ui, session, startup, true, dark, engine, notifications: notifications, guideLinkLauncher: uri => { links.Add(uri); return true; }, guideCopyLink: value => copied = value, appearanceSource: appearance) { ShowActivated = false, IsHitTestVisible = false };

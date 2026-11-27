@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,6 +14,7 @@ using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
@@ -23,7 +25,7 @@ namespace CodexPacer.Windows;
 public partial class IslandWindow : Window
 {
     private readonly EngineClient engine;
-    private readonly bool chinese, demo;
+    private readonly bool chinese, demo, demoAntigravityGuide;
     private readonly UiText ui;
     private int position;
     private int displayMode;
@@ -49,6 +51,8 @@ public partial class IslandWindow : Window
     private readonly NativeLayout geometry;
     private readonly Func<(MotionBounds Screen, MotionBounds WorkArea)>? screenGeometry;
     private bool pinned, expanded, rendering, presentationStopped;
+    // Null for other pins. A click-open with no foreground window still dismisses on deactivation.
+    private IntPtr? foregroundBeforeBarClick;
     private bool updateInputSuspended;
     internal void SetUpdateInputSuspended(bool value)
     {
@@ -90,11 +94,12 @@ public partial class IslandWindow : Window
         Func<(MotionBounds Screen, MotionBounds WorkArea)>? screenGeometry = null,
         Func<IBackdropSystemSource>? backdropSystemFactory = null, Func<Window, ICompositionBackdrop>? backdropFactory = null,
         Func<IDisplayTopologySource>? displayTopologyFactory = null, ISystemAppearanceSource? appearanceSource = null,
-        DisplayPresence? presence = null, HarnessAccounts? harnessAccounts = null)
+        DisplayPresence? presence = null, HarnessAccounts? harnessAccounts = null, bool demoAntigravityGuide = false)
     {
         InitializeComponent();
         Icon = BitmapFrame.Create(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"), UriKind.Absolute));
         this.engine = engine; this.chinese = chinese; this.demo = demo; this.position = position;
+        this.demoAntigravityGuide = demoAntigravityGuide;
         if (displayMode is < 0 or > 2) throw new ArgumentOutOfRangeException(nameof(displayMode));
         this.displayMode = displayMode;
         this.desktopApplications = desktopApplications;
@@ -142,6 +147,11 @@ public partial class IslandWindow : Window
         ShellProjection.Changed += OnShellProjectionChanged;
         Loaded += (_, _) => OnShellProjectionChanged("");
         Closing += OnClosing;
+        Deactivated += (_, _) =>
+        {
+            if (foregroundBeforeBarClick.HasValue && !presentationStopped && move == null && !MoreButton.ContextMenu.IsOpen)
+            { SetPinned(false); SetExpanded(false); }
+        };
         Closed += (_, _) => StopPresentation();
         IsVisibleChanged += (_, _) =>
         {
@@ -273,15 +283,18 @@ public partial class IslandWindow : Window
     }
     internal async Task WaitForPresentationAsync()
     {
-        await ShellProjection.WhenIdleAsync();
-        await Dispatcher.Yield(DispatcherPriority.ContextIdle);
         var timeout = Stopwatch.StartNew();
-        while (displayRefreshPending || rendering || renderCallback || !lastFrame.Finished || !VisibleSizeMatches(destination.Width, destination.Height))
+        do
         {
-            if (timeout.Elapsed > TimeSpan.FromSeconds(5)) throw new TimeoutException("The synthetic window did not settle.");
+            // Rendering a queued snapshot can request a compact projection and retarget the window.
+            await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            await ShellProjection.WhenIdleAsync();
+            await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            if (Volatile.Read(ref queuedSnapshot) == null && !displayRefreshPending && !rendering && !renderCallback &&
+                lastFrame.Finished && VisibleSizeMatches(destination.Width, destination.Height)) return;
             await Task.Delay(25);
-        }
-        await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+        } while (timeout.Elapsed < TimeSpan.FromSeconds(20));
+        throw new TimeoutException($"The synthetic window did not settle. Visible={IsVisible}, fullscreenSuppressed={FullscreenSuppressed}, {PresentationDiagnostics}");
     }
     internal bool VisibleSizeMatches(double width, double height)
     {
@@ -306,7 +319,9 @@ public partial class IslandWindow : Window
             compactPreferences.Position != preferences.Position || compactPreferences.DisplayMode != preferences.DisplayMode;
         if (screenChanged || placementChanged) CancelMove();
         bool memoryTurnedOn = preferences.IslandPositionPerDisplay && !compactPreferences.IslandPositionPerDisplay;
+        bool expandModeChanged = compactPreferences.IslandExpandMode != preferences.IslandExpandMode;
         compactPreferences = preferences;
+        if (expandModeChanged) { foregroundBeforeBarClick = null; UpdateMainAction(); }
         RememberDisplayPlace(preferences);
         // Light Liquid Glass turns the whole island light before its surface changes.
         bool toneChanged = PacerPalette.ApplyTone(preferences.IslandAppearance == "liquidGlassLight");
@@ -388,18 +403,52 @@ public partial class IslandWindow : Window
         if (opened) DismissForSettings();
         else ShowNavigationError(ui.Text("windows.app.open_failed"));
     }
-    private void OnMouseEnter(object sender, MouseEventArgs e) { if (move != null) return; RecordInteraction("hover-in"); collapse.Stop(); SetExpanded(true); }
+    private void OnMouseEnter(object sender, MouseEventArgs e)
+    {
+        if (move != null) return;
+        RecordInteraction("hover-in"); collapse.Stop();
+        if (compactPreferences.IslandExpandMode == "hover") SetExpanded(true);
+    }
     private void OnMouseLeave(object sender, MouseEventArgs e) { if (move != null) return; RecordInteraction("hover-out"); if (!pinned && !MoreButton.ContextMenu.IsOpen) collapse.Start(); }
     private void OnPin(object sender, RoutedEventArgs e) => SetPinned(!pinned);
+    private void BarClicked()
+    {
+        if (compactPreferences.IslandExpandMode == "click")
+        {
+            if (expanded) { CloseAndReturnFocus(); return; }
+            SetPinned(true); SetExpanded(true);
+            // Activation lets Esc and a click elsewhere close the panel. Focus goes to the window, not the
+            // bar, so a pointer click draws no focus ring; a keyboard press keeps the focus it already has.
+            if (pinned)
+            {
+                foregroundBeforeBarClick = GetForegroundWindow();
+                Activate(); if (!IsKeyboardFocusWithin) Focus();
+            }
+        }
+        else { SetPinned(!pinned); SetExpanded(true); }
+    }
+    private void CloseAndReturnFocus()
+    {
+        var target = foregroundBeforeBarClick.GetValueOrDefault();
+        SetPinned(false); SetExpanded(false);
+        if (target == IntPtr.Zero) return;
+        var island = new WindowInteropHelper(this).Handle;
+        if (island != IntPtr.Zero && target != island && IsWindow(target) && GetForegroundWindow() == island)
+            SetForegroundWindow(target);
+    }
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetForegroundWindow(IntPtr hwnd);
     private void SetPinned(bool value)
     {
         value = value && !updateInputSuspended;
         pinned = value;
+        foregroundBeforeBarClick = null;
         PinButton.Background = value ? PacerPalette.Hover : Brushes.Transparent;
         PinButton.Foreground = value ? PacerPalette.Primary : PacerPalette.Secondary;
         ((IconGlyph)PinButton.Content).Symbol = value ? "pin.fill" : "pin";
         SetButtonName(PinButton, ui.Text(value ? "common.unpin" : "common.pin"));
-        UpdateMainAction();
+        if (compactPreferences.IslandExpandMode == "hover") UpdateMainAction();
     }
     private async void OnMarkRead(object sender, RoutedEventArgs e) { if (latest != null) await Send("markAllRead", new { snapshotSequence = latest.Sequence }); }
     private async void OnRefresh(object sender, RoutedEventArgs e) => await Send("refresh", new { discover = true });
@@ -427,10 +476,10 @@ public partial class IslandWindow : Window
     }
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Escape) { RecordInteraction("escape"); SetPinned(false); SetExpanded(false); e.Handled = true; }
+        if (e.Key == Key.Escape) { RecordInteraction("escape"); CloseAndReturnFocus(); e.Handled = true; }
         if (IsPagingInput(e.Key, e.SystemKey, Keyboard.Modifiers, IsEditing(e.OriginalSource as DependencyObject)))
         { Key key = e.Key == Key.System ? e.SystemKey : e.Key; ChangePage(key == Key.Left ? -1 : 1); e.Handled = true; }
-        if (demo && (Keyboard.Modifiers & ModifierKeys.Control) != 0 && e.Key >= Key.D1 && e.Key <= Key.D4)
+        if (demo && (Keyboard.Modifiers & ModifierKeys.Control) != 0 && e.Key >= Key.D1 && e.Key <= (demoAntigravityGuide ? Key.D5 : Key.D4))
             _ = Send("demoStage", new { demoStage = (int)e.Key - (int)Key.D1 });
     }
     private void OnPreviousPage(object sender, RoutedEventArgs e) => ChangePage(-1);
@@ -458,6 +507,7 @@ public partial class IslandWindow : Window
         if (value == expanded) return;
         if (!value) Keyboard.ClearFocus();
         expanded = value;
+        if (compactPreferences.IslandExpandMode == "click") UpdateMainAction();
         // A collapsed island skipped the panel's snapshots; it is built once, before it is measured.
         // Rows kept from a hidden panel resume their loops once they show.
         if (value) { RefreshDirtyPanel(); RefreshRowMotion(); }
@@ -717,6 +767,7 @@ public partial class IslandWindow : Window
         if (harnessAccounts != null) harnessAccounts.Changed -= UpdateHarnessAccount;
         if (presentationStopped) return;
         ShellProjection.Changed -= OnShellProjectionChanged; engine.Snapshot -= QueueSnapshot;
+        foregroundBeforeBarClick = null;
         presentationStopped = true; CancelMove(); StopRendering(); DisposeOcclusion(); DisposeBackdrop(); motion.Dispose(); collapse.Stop(); QuotaLabel.Stop(); StripQuota.Stop();
         if (decoration != null) { decoration.Close(); decoration = null; }
         foreach (var clock in pageClocks) clock.Dispose(); pageClocks.Clear();
@@ -765,10 +816,10 @@ public partial class IslandWindow : Window
             if (modules.FirstOrDefault(value => value.Provider == key)?.ProgressGuide?.Stage != dismissedProgressHints[key]) dismissedProgressHints.Remove(key);
         var running = snapshot.Presentation?.Rows.Where(row => row.Phase is not ("completed" or "interrupted")).Select(row => row.Provider).ToHashSet(StringComparer.Ordinal) ?? [];
         var module = modules.FirstOrDefault(value => value.Enabled && value.ProgressGuide is { Attention: true, Summary: not null } guide
-            && running.Contains(value.Provider) && !dismissedProgressHints.ContainsKey(value.Provider));
+            && (running.Contains(value.Provider) || value.ProgressApprovals is { Count: > 0 }) && !dismissedProgressHints.ContainsKey(value.Provider));
         progressHintProvider = module?.Provider;
         if (module?.ProgressGuide is not { } shown) { ProgressHint.Visibility = Visibility.Collapsed; return; }
-        string text = (module.DisplayName ?? module.Provider) + " · " + shown.Summary;
+        string text = module.ProgressAttentionTitle(shown.Summary!);
         ProgressHintText.Text = text; AutomationProperties.SetName(ProgressHint, text);
         ProgressHintOpen.Content = ui.Text("progress_guide.hint.open");
         AutomationProperties.SetName(ProgressHintOpen, ui.Text("progress_guide.hint.open"));
@@ -896,9 +947,14 @@ public partial class IslandWindow : Window
             else if (current.WebAvailable && canConnectDeepSeekWeb?.Invoke() == true) DeepSeekWebSignInRequested?.Invoke(current.Context);
         };
     }
-    private FrameworkElement? QuotaStatus(DashboardProvider? provider) => provider?.Status is QuotaConnectionStatus status
-        ? new QuotaConnectionView(provider.Provider, status, ui, provider.Provider is "codex" or "claude" ? () => RetryProviderQuota(provider.Provider) : null,
-            provider.Provider is "codex" or "claude" ? () => { DismissForSettings(); ProviderSettingsRequested?.Invoke(provider.Provider); } : null) : null;
+    private FrameworkElement? QuotaStatus(DashboardProvider? provider)
+    {
+        if (provider == null) return null;
+        var status = provider.Status is { State: not "hidden" } connection
+            ? new QuotaConnectionView(provider.Provider, connection, ui, () => RetryProviderQuota(provider.Provider),
+                () => { DismissForSettings(); ProviderSettingsRequested?.Invoke(provider.Provider); }) : null;
+        return QuotaConnectionView.WithGroup(provider, status);
+    }
     private async Task RetryProviderQuota(string provider)
     {
         try { await engine.SendAsync("retryQuota", new { provider }); }

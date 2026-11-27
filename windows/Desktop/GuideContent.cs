@@ -483,7 +483,12 @@ internal sealed class GuideContent : StackPanel
         var status = Text("", 11); status.MaxHeight = 32; status.TextTrimming = TextTrimming.CharacterEllipsis; status.VerticalAlignment = VerticalAlignment.Top;
         Identify(status, "welcome.module." + provider + ".status", name); Grid.SetColumn(status, 1); statusLine.Children.Add(status);
         Grid.SetRow(statusLine, 2); layout.Children.Add(statusLine);
-        var action = Button(ui.Text("welcome.module.settings"), "welcome.module." + provider + ".action", () => settings(provider));
+        Uri? getWebsite = null;
+        var action = Button(ui.Text("welcome.module.settings"), "welcome.module." + provider + ".action", () =>
+        {
+            if (getWebsite == null) settings(provider);
+            else if (!SettingsPagePolicy.OpenWebsite(getWebsite, launch)) issue.Text = ui.Text("windows.pages.open_failed");
+        });
         action.HorizontalAlignment = HorizontalAlignment.Left; action.FontSize = 12; action.Padding = new Thickness(9, 2, 9, 2); action.Margin = new Thickness(0);
         Grid.SetRow(action, 3); layout.Children.Add(action);
         refresh.Add(() =>
@@ -512,8 +517,11 @@ internal sealed class GuideContent : StackPanel
             }
             status.Text = text; status.ToolTip = text; AutomationProperties.SetName(status, text); ready.Visibility = isReady ? Visibility.Visible : Visibility.Collapsed;
             title.SetResourceReference(TextBlock.ForegroundProperty, enabled ? "SettingsPrimary" : "SettingsSecondary"); tile.Opacity = enabled ? 1 : 0.45;
-            action.Visibility = titleKey == null ? Visibility.Collapsed : Visibility.Visible;
-            if (titleKey != null) { action.Content = ui.Text(titleKey); AutomationProperties.SetName(action, ui.Text(titleKey)); }
+            getWebsite = module is { Local: true, HasApplication: false } && Uri.TryCreate(module.Website, UriKind.Absolute, out var site) &&
+                site.Scheme == Uri.UriSchemeHttps ? site : null;
+            string? actionText = getWebsite != null ? HarnessAccountCard.Fields(ui, "modules.get", name) : titleKey == null ? null : ui.Text(titleKey);
+            action.Visibility = actionText == null ? Visibility.Collapsed : Visibility.Visible;
+            if (actionText != null) { action.Content = actionText; AutomationProperties.SetName(action, actionText); }
             // Connecting is what the card waits for, so it takes the provider's color.
             if (connects) { action.Background = new SolidColorBrush(GuideArt.ProviderTile(provider)); action.Foreground = new SolidColorBrush(Color.FromArgb(222, 0, 0, 0)); }
             else { action.ClearValue(Control.BackgroundProperty); action.ClearValue(Control.ForegroundProperty); }
@@ -982,6 +990,7 @@ internal sealed class GuideContent : StackPanel
         {
             "codex" => ["quota", "windows", "remote", "apps"],
             "claude" => ["quota", "windows", "cloud", "remote", "apps"],
+            "antigravity" => ["tasks", "speed", "quota", "progress", "apps"],
             "deepseek" => ["balance", "mode", "cost", "peak", "clock", "alerts", "speed"],
             // A module's own topics; one without any still says what Pacer follows.
             _ => new[] { "credits", "cost", "progress", "apps" }.Where(key => ui.Has("help." + provider + "." + key + ".title")).ToArray()

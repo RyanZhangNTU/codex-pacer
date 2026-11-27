@@ -24,9 +24,11 @@ internal static class DelegationRowChecks
         IReadOnlyList<IReadOnlyList<string>> details = [["Mode", "Review · Read-only"], ["Model", "Sol 6.2 · high · Standard speed"]];
         var running = new EngineTaskRow("codex-run-fixture", "codex", "Review the login change", "Working", null, null, null, "running", "sparkle", null,
             "Sol 6.2", "high", 86, true, null, "1:20", 0, false, false, false, null, false, RateText: "86.0",
-            ProgressState: "reported", ProgressFraction: 0.4, ProgressText: "40%", ProgressMode: "working", ParentID: "claude-row-fixture", CanStop: true, DetailLines: details);
+            ProgressState: "reported", ProgressFraction: 0.4, ProgressText: "40%", ProgressMode: "working", ParentID: "claude-row-fixture", CanStop: true, DetailLines: details,
+            ModeTag: "Review");
         var finished = new EngineTaskRow("codex-run-done", "codex", "Implement async loading", "Done", null, null, null, "completed", "checkmark.circle", null,
-            "Sol 6.2", "medium", 74, false, null, "4:05", 0, false, false, true, null, false, RateText: "74.0", ParentID: "claude-row-fixture", CanStop: false);
+            "Sol 6.2", "medium", 74, false, null, "4:05", 0, false, false, true, null, false, RateText: "74.0", ParentID: "claude-row-fixture", CanStop: false,
+            ModeTag: "Task");
         var parent = new EngineTaskRow("claude-row-fixture", "claude", "Fix login refresh", "Waiting for Codex", null, null, null, "running", "sparkle", null,
             "Opus 5.5", "high", null, false, null, "1:20", 0, false, false, false, null, false, DelegatedText: "Codex 1", Delegations: [running, finished],
             DelegationsFolded: "2 more ended · 1 failed");
@@ -43,21 +45,24 @@ internal static class DelegationRowChecks
             var lines = Descendants(row).OfType<Grid>().Where(line => line.Tag is EngineTaskRow).ToList();
             Check(lines.Count == 2, "Each Codex run has its own line under its Claude task");
             Check(!lines.SelectMany(SelfAndDescendants).OfType<FrameworkElement>().Any(value => value.ToolTip != null), "A run line carries no hover popup, Stop included");
-            // The trailing readings are runs of one text block.
-            string Line(Grid line) => string.Join(" ", line.Children.OfType<TextBlock>().Select(text =>
-                text.Inlines.Count > 0 ? string.Concat(text.Inlines.OfType<System.Windows.Documents.Run>().Select(run => run.Text)) : text.Text));
-            Check(Line(lines[0]).Contains("Review the login change") && Line(lines[0]).Contains("86.0") && Line(lines[0]).Contains("t/s")
-                && Line(lines[0]).Contains("1:20") && Line(lines[0]).Contains("Sol 6.2") && Line(lines[0]).Contains("high"),
+            // The line shares the subagents' layout: the mode tag, the title, then the readings shown, runs of one text block.
+            TaskLinePanel Content(Grid line) => line.Children.OfType<TaskLinePanel>().Single();
+            string Readings(Grid line) => string.Concat(((TextBlock)Content(line).ShownReadings).Inlines.OfType<System.Windows.Documents.Run>().Select(run => run.Text));
+            string Line(Grid line) => ((TextBlock)Content(line).Title).Text + " " + Readings(line);
+            Check(Line(lines[0]).Contains("Review the login change") && Readings(lines[0]) == "86.0 t/s · 1:20 · Sol 6.2 high",
                 "A running run shows its speed, time, model and effort on the line");
-            Check(Line(lines[1]).Contains("74.0") && Line(lines[1]).Contains("4:05") && Line(lines[1]).Contains("medium"),
-                "A finished run keeps its final speed and time on the line");
+            Check(Readings(lines[1]) == "74.0 t/s · 4:05 · Sol 6.2 medium", "A finished run keeps its final speed and time on the line");
+            TextBlock ModeTag(Grid line) => (TextBlock)SelfAndDescendants(Content(line)).OfType<Border>().First().Child;
+            Check(ModeTag(lines[0]).Text == "Review" && ModeTag(lines[0]).Foreground == PacerPalette.Provider("codex")
+                && ModeTag(lines[1]).Text == "Task" && ModeTag(lines[1]).Foreground == PacerPalette.Secondary,
+                "The mode tag takes Codex's color while the run works and steps back once it ends");
             var stops = lines.Select(line => line.Children.OfType<Button>().Single()).ToList();
             Check(stops.All(button => button.Visibility == Visibility.Hidden) && lines.All(line => TaskRow.StopState(line) == (false, false)),
                 "Stop shows only while the line is hovered, and the readings are whole until then");
             // No room is kept for Stop: it lies over the readings' end, inside the line.
-            var readings = lines.Select(line => line.Children.OfType<TextBlock>().Single(text => Grid.GetColumn(text) == 4)).ToList();
+            var readings = lines.Select(line => Content(line).ShownReadings).ToList();
             Check(lines.Zip(readings).All(pair => pair.First.ActualWidth - (pair.Second.TranslatePoint(new Point(pair.Second.ActualWidth, 0), pair.First).X) < 8)
-                && lines.All(line => line.ColumnDefinitions.Count == 5) && stops.All(button => Grid.GetColumn(button) + Grid.GetColumnSpan(button) == 5),
+                && lines.All(line => line.ColumnDefinitions.Count == 3) && stops.All(button => Grid.GetColumn(button) + Grid.GetColumnSpan(button) == 3),
                 "The readings reach the line's end, and Stop shares their place instead of keeping its own");
             Check(AutomationProperties.GetHelpText(lines[0]).Contains("Review · Read-only") && AutomationProperties.GetHelpText(lines[1]).Length == 0,
                 "Screen readers get the run's details without hovering");

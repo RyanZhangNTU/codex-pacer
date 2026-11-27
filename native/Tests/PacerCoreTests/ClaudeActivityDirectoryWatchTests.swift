@@ -94,5 +94,36 @@ final class ClaudeActivityDirectoryWatchTests: XCTestCase {
         await monitor.shutdown()
     }
 
-
+    func testWorkflowAgentsAreFollowedAndNamedFromTheirMeta() throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.home) }
+        let run = fixture.sessionDirectory.appendingPathComponent("subagents/workflows/wf_fixture")
+        try FileManager.default.createDirectory(at: run, withIntermediateDirectories: true)
+        for n in 0..<17 {
+            let older = run.deletingLastPathComponent().appendingPathComponent("older-\(n)")
+            try FileManager.default.createDirectory(at: older, withIntermediateDirectories: true)
+            try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 100)], ofItemAtPath: older.path)
+        }
+        for n in 0..<80 { try Data().write(to: run.appendingPathComponent("agent-padding-\(n).meta.json")) }
+        let agent = "a6c5b85e432a8b56d"
+        try Data().write(to: run.appendingPathComponent("agent-" + agent + ".jsonl"))
+        try JSONSerialization.data(withJSONObject: ["agentType": "Explore", "description": "Find the callers", "finished": false])
+            .write(to: run.appendingPathComponent("agent-" + agent + ".meta.json"))
+        var reader = ClaudeActivityReader(files: TestFileSystem())
+        let result = reader.read(home: fixture.home, discover: true)
+        let rows = result.records.compactMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        let label = try XCTUnwrap(rows.first { $0["kind"] as? String == "metadata" && $0["sessionId"] as? String == agent })
+        var state = ClaudeActivityState()
+        state.consume(try JSONSerialization.data(withJSONObject: label))
+        let child = try XCTUnwrap(state.activities.first { $0.threadID == agent })
+        let line = ActivityTaskRowPresentation.subagentLine(child, options: .init(), at: Date())
+        XCTAssertEqual(line.row.title, "Find the callers"); XCTAssertEqual(line.typeTag, "Explore"); XCTAssertNil(line.nameTag)
+        XCTAssertTrue(result.watchURLs.map(\.path).contains(run.deletingLastPathComponent().path))
+        XCTAssertEqual(label["parentId"] as? String, rootSession)
+        XCTAssertTrue(result.watchURLs.map(\.path).contains(run.path), "A new agent in the run is noticed")
+        // An unchanged meta file is not read again.
+        let again = reader.read(home: fixture.home, discover: true).records.compactMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        XCTAssertFalse(again.contains { $0["kind"] as? String == "metadata" && $0["sessionId"] as? String == agent })
+        reader.reset()
+        XCTAssertTrue(reader.read(home: fixture.home, discover: true).records.contains(try XCTUnwrap(ClaudeActivityRecord.encode(label))))
+    }
 }

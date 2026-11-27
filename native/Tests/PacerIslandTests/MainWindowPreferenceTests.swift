@@ -45,10 +45,11 @@ final class MainWindowPreferenceTests: XCTestCase {
 
     func testHighlightLinksOpenThePageTheyIntroduce() {
         let links = WhatsNew.releases.flatMap(\.items).compactMap { item in item.control?.settingsPane.map { (item.titleKey, $0) } }
-        XCTAssertEqual(links.map(\.0), ["whats_new.codex_for_claude", "whats_new.return_top_center", "whats_new.module_library",
+        XCTAssertEqual(links.map(\.0), ["whats_new.antigravity", "whats_new.click_to_open", "whats_new.codex_for_claude",
+                                        "whats_new.return_top_center", "whats_new.module_library",
                                         "whats_new.arrange_items", "whats_new.bar_upgrade", "whats_new.fresh_look"])
-        XCTAssertEqual(links.map(\.1), [.collaboration, .expandedPanel, .modules, .expandedPanel, .collapsedBar, .appearance],
-                       "4.7.0's Settings › opens Collaboration, where its guide waits")
+        XCTAssertEqual(links.map(\.1), [.modules, .expandedPanel, .collaboration, .expandedPanel, .modules, .expandedPanel, .collapsedBar, .appearance],
+                       "4.8.0 opens the Module Library for Antigravity and Expanded Panel for click to open; 4.7.0 opens Collaboration, where its guide waits")
         for control: WhatsNew.Item.Control in [.openAtLogin, .showEmbeddedSessions, .showAppButtons] {
             XCTAssertNil(control.settingsPane, "A switch stays in place")
         }
@@ -64,5 +65,22 @@ final class MainWindowPreferenceTests: XCTestCase {
         XCTAssertEqual(DockIconPreference.load(from: defaults), .never)
         defaults.set("removed", forKey: DockIconPreference.defaultsKey)
         XCTAssertEqual(DockIconPreference.load(from: defaults), .whileOpen)
+    }
+
+    @MainActor
+    func testIslandExpandModeSurvivesReopeningAndFallsBackToHover() {
+        let (defaults, name) = defaults()
+        defer { removeTestDefaults(name) }
+        func reopen() -> IslandModel { IslandModel(demo: true, demoArguments: nil, defaults: defaults) }
+        let model = reopen()
+        XCTAssertEqual(model.expandMode, .hover)
+        for mode in [IslandExpandMode.click, .hover] {
+            model.expandMode = mode
+            XCTAssertEqual(defaults.string(forKey: "islandExpandMode"), mode.rawValue)
+            XCTAssertEqual(reopen().expandMode, mode)
+        }
+        defaults.set("future", forKey: "islandExpandMode")
+        XCTAssertEqual(reopen().expandMode, .hover)
+        XCTAssertEqual(defaults.string(forKey: "islandExpandMode"), "future")
     }
 }

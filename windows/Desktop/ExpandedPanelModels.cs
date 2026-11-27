@@ -14,6 +14,7 @@ internal sealed record PanelOptions
     public string RowStyle { get; init; } = "twoLine";
     public IReadOnlyList<string> RowFields { get; init; } = ["rate", "turnTime", "model", "source", "subagents", "cost"];
     public string CodexPeriods { get; init; } = "both";
+    public string AntigravityPeriods { get; init; } = "both";
     public string ClaudePeriods { get; init; } = "both";
     public string QuotaArrange { get; init; } = "pair";
     public bool QuotaDetails { get; init; } = true;
@@ -29,7 +30,7 @@ internal sealed record PanelOptions
 
     internal bool OneLine => RowStyle == "oneLine";
     /// Compares choices by value; the lists make record equality compare references.
-    internal string Key => string.Join(";", PageSize, RowStyle, string.Join(",", RowFields), CodexPeriods, ClaudePeriods, QuotaArrange,
+    internal string Key => string.Join(";", PageSize, RowStyle, string.Join(",", RowFields), CodexPeriods, ClaudePeriods, AntigravityPeriods, QuotaArrange,
         QuotaDetails, PaceTick, CodexResets, DeepseekDial, DeepseekPeak, SpendTasks, SpendElsewhere, WeekLine, string.Join(",", HeaderActions));
     /// Whether a task row draws the field in the chosen style, as Core's `shows`.
     internal bool Shows(string field) => RowFields.Contains(field) && (!OneLine || field is "rate" or "turnTime");
@@ -38,7 +39,7 @@ internal sealed record PanelOptions
     /// except Return to Top Center, which is opt-in, as Core's `movesToMenu`.
     internal static IReadOnlyList<string> Actions { get; } = ["markRead", "pin", "recenter", "settings"];
     internal bool InMenu(string action) => action != "recenter" && !InHeader(action);
-    internal string Periods(string provider) => provider switch { "codex" => CodexPeriods, "claude" => ClaudePeriods, _ => "both" };
+    internal string Periods(string provider) => provider switch { "codex" => CodexPeriods, "claude" => ClaudePeriods, "antigravity" => AntigravityPeriods, _ => "both" };
 }
 
 internal sealed record PanelGauge(string Provider, string Period, bool Split);

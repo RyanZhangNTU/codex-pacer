@@ -48,6 +48,13 @@ internal static class PreferencesCodec
         var root = JsonNode.Parse(bytes, documentOptions: new() { MaxDepth = 32 }) as JsonObject ?? throw new JsonException();
         int version = root["schemaVersion"]?.GetValue<int>() ?? throw new JsonException();
         if (version is not (1 or Version)) throw new JsonException();
+        if (root.ContainsKey("sshHostsOff"))
+        {
+            var ids = (root["sshHostsOff"] as JsonArray ?? new JsonArray()).OfType<JsonValue>()
+                .Select(item => item.TryGetValue<string>(out var id) ? id : null).Where(DesktopPreferences.ValidSSHHostId)
+                .Distinct(StringComparer.Ordinal).Take(DesktopPreferences.MaximumOffHosts);
+            root["sshHostsOff"] = JsonSerializer.SerializeToNode(ids);
+        }
         DesktopPreferences value;
         if (version == 1)
         {
@@ -185,6 +192,7 @@ internal static class PreferencesCodec
         Position = value.Position is "center" or "topLeft" or "bottomLeft" or "topRight" or "bottomRight" ? value.Position : "center",
         DisplayMode = value.DisplayMode is "notch" or "floating" ? value.DisplayMode : "automatic",
         IslandAppearance = value.IslandAppearance is "classic" or "graphite" or "liquidGlassLight" ? value.IslandAppearance : "liquidGlass",
+        IslandExpandMode = value.IslandExpandMode == "click" ? "click" : "hover",
         CompactBarSize = DesktopPreferences.BarSizes.Contains(value.CompactBarSize) ? value.CompactBarSize : "standard",
         CompactComponentOptions = value.CompactComponentOptions is { } options && Encoding.UTF8.GetByteCount(options) <= CompactChoices.ByteLimit ? options : null,
         IslandDisplayPlaces = value.IslandDisplayPlaces is { } places && Encoding.UTF8.GetByteCount(places) <= IslandScreenMemory.ByteLimit ? places : null,

@@ -37,7 +37,7 @@ public struct ApplicationLifecycleCoordinator: Sendable {
         }
     }
     public enum Resource: CaseIterable, Hashable, Sendable {
-        case codexProgressFlag, codexQuota, claudeQuota, cloud, claudeActivity, deepseekActivity, remoteSetup, realtime
+        case codexProgressFlag, codexQuota, claudeQuota, localQuota, cloud, claudeActivity, deepseekActivity, remoteSetup, realtime
         case balance, web, claudeWeb, watches, reader, harnesses
     }
     public typealias Cleanup = @Sendable () async -> Void
@@ -99,7 +99,7 @@ public struct ApplicationLifecycleCoordinator: Sendable {
     public func tick(_ input: Tick) -> Plan {
         var actions: [Action] = [.pruneActivities, .pruneHistory]
         guard acceptsObservedWork, !demo else { return Plan(actions) }
-        actions += [AgentProvider.codex, .claude].filter { configuration.enabled.contains($0) }.map { .quota($0, force: false) }
+        actions += HarnessRegistry.ids(where: \.hasQuotaWindows).filter(configuration.enabled.contains).map { .quota($0, force: false) }
         // Local Codex has no periodic read: its hooks announce every rollout, and start, wake
         // and module changes read it once.
         if configuration.enabled.contains(.codex), input.now.timeIntervalSince(input.lastRemoteDiscovery) >= 30 { actions.append(.discoverActivityRoutes(.codex)) }

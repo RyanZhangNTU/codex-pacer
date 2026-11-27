@@ -39,10 +39,11 @@ public partial class IslandWindow
     {
         appearance.Changed -= AppearanceChanged; semanticPaint.Dispose(); if (ownsAppearance) appearance.Dispose();
     }
-    private void OnMainAction(object sender, RoutedEventArgs args) { if (IsVisible && !presentationStopped) { SetPinned(!pinned); SetExpanded(true); } }
+    private void OnMainAction(object sender, RoutedEventArgs args) { if (IsVisible && !presentationStopped) BarClicked(); }
     private void UpdateMainAction()
     {
-        string name = ui.Text(pinned ? "common.unpin" : "common.pin");
+        string name = compactPreferences.IslandExpandMode == "click" ? ui.Text(expanded ? "island.collapse" : "island.expand")
+            : ui.Text(pinned ? "common.unpin" : "common.pin");
         foreach (var button in new[] { HeaderAction, StripAction }) { SetButtonName(button, name, tooltip: false); AutomationProperties.SetAutomationId(button, button == HeaderAction ? "island.main.row" : "island.main.strip"); }
     }
     private void FinishPageTransition()

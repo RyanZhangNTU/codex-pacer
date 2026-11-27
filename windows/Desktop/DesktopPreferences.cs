@@ -38,6 +38,7 @@ internal sealed record DesktopPreferences
     public string? IslandDisplayPlaces { get; init; }
     public bool ShowInFullscreen { get; init; }
     public string IslandAppearance { get; init; } = "liquidGlass";
+    public string IslandExpandMode { get; init; } = "hover";
     public string ExpandedQuotaStyle { get; init; } = "split";
     public string? CompactLayout { get; init; }
     // Core's CompactComponentOptions as JSON; null keeps every default.
@@ -52,6 +53,7 @@ internal sealed record DesktopPreferences
     public string CompactSingleTask { get; init; } = "stage";
     public string CompactMetric { get; init; } = "remaining";
     public string CodexQuotaWindow { get; init; } = "auto";
+    public Dictionary<string, string> ModuleWindows { get; init; } = new();
     public string ClaudeQuotaWindow { get; init; } = "auto";
     public string QuotaRingOuter { get; init; } = "";
     public string QuotaRingInner { get; init; } = "";
@@ -191,12 +193,24 @@ internal sealed record DesktopPreferences
     public string[] DisabledHarnessProgress { get; init; } = [];
     // Modules whose task rows leave out the credits each turn used.
     public string[] HiddenTurnCredits { get; init; } = [];
+    // Selected quota bucket, keyed by the descriptor's defaults key.
+    public Dictionary<string, string> HarnessQuotaGroups { get; init; } = new();
     // Data folders chosen for local modules, by module ID.
     public Dictionary<string, string> HarnessHomes { get; init; } = new();
     // Each credits module's dial center, bar value and reminders, by module ID.
     public Dictionary<string, HarnessCreditsChoice> HarnessCredits { get; init; } = new();
     internal HarnessCreditsChoice Credits(string provider) => HarnessCredits.TryGetValue(provider, out var choice) ? choice : HarnessCreditsChoice.Default;
     public bool MonitorSSH { get; init; } = true;
+    public string[] SshHostsOff { get; init; } = [];
+    internal const int MaximumOffHosts = 64;
+    internal static bool ValidSSHHostId(string? id) => id is { Length: <= 154 } &&
+        System.Text.RegularExpressions.Regex.IsMatch(id, @"\Aremote-ssh-(?:discovered|codex-managed):[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z");
+    internal DesktopPreferences SetSSHHost(string id, bool monitored)
+    {
+        if (!ValidSSHHostId(id)) return this;
+        var others = SshHostsOff.Where(previous => previous != id);
+        return this with { SshHostsOff = (monitored ? others : others.Prepend(id)).Take(MaximumOffHosts).ToArray() };
+    }
     public bool AutomaticUpdates { get; init; } = true;
     public int RetentionMinutes { get; init; } = 30;
     public string CodexExecutable { get; init; } = "";
@@ -216,6 +230,7 @@ internal sealed record DesktopPreferences
         && ValidWindow(DisplayID) && ValidWindow(DisplayName)
         && (DisplaySelection != "specified" || DisplayID is not ("" or "0") || DisplayName.Length > 0)
         && Appearances.Contains(IslandAppearance)
+        && IslandExpandMode is "hover" or "click"
         && ExpandedQuotaStyle is "split" or "classic"
         && DelegationTriggers.Contains(CodexDelegationTrigger) && ValidDelegationModel(CodexDelegationModel) && DelegationEfforts.Contains(CodexDelegationEffort)
         && DelegationRecords.Contains(CodexDelegationRecords) && DelegationRecordsHours.Contains(CodexDelegationRecordsHours)
@@ -228,6 +243,7 @@ internal sealed record DesktopPreferences
         && (ExpandedPanelOptions == null || Encoding.UTF8.GetByteCount(ExpandedPanelOptions) <= PanelChoices.OptionsByteLimit)
         && BarSizes.Contains(CompactBarSize)
         && CompactSingleTask is "stage" or "count" or "percent" && CompactMetric is "remaining" or "pace"
+        && ModuleWindows is { Count: <= 128 } && ModuleWindows.All(pair => ValidProviderId(pair.Key) && pair.Value is "auto" or "5h" or "7d")
         && ValidWindow(CodexQuotaWindow) && ValidWindow(ClaudeQuotaWindow)
         && ValidRing(QuotaRingOuter) && ValidRing(QuotaRingInner)
         && DeepSeekPanelStyle is "simple" or "detailed" && DeepSeekMode is "balance" or "budget"
@@ -244,8 +260,11 @@ internal sealed record DesktopPreferences
         && (ClaudeOrganization == "" || ClaudeOrganization is { Length: 36 } && Guid.TryParseExact(ClaudeOrganization, "D", out _))
         && ProviderModes is { Count: >= 3 and <= 128 }
         && LegacyProviders.All(ProviderModes.ContainsKey)
+        && SshHostsOff is { Length: <= MaximumOffHosts } && SshHostsOff.All(ValidSSHHostId)
+        && SshHostsOff.Distinct(StringComparer.Ordinal).Count() == SshHostsOff.Length
         && ProviderModes.All(pair => ValidProviderId(pair.Key) && ValidProviderMode(pair.Value))
         && ValidModuleList(DisabledHarnessProgress, legacy: false) && ValidModuleList(HiddenTurnCredits, legacy: true)
+        && HarnessQuotaGroups is { Count: <= 128 } && HarnessQuotaGroups.All(pair => pair.Key.Length is > 0 and <= 128 && pair.Value is { Length: > 0 and <= 64 })
         && HarnessHomes is { Count: <= 128 } && HarnessHomes.All(pair => ValidProviderId(pair.Key) && !IsLegacyProvider(pair.Key) && ValidPath(pair.Value))
         && HarnessCredits is { Count: <= 128 } && HarnessCredits.All(pair => ValidProviderId(pair.Key) && !IsLegacyProvider(pair.Key) && pair.Value is { IsValid: true });
 
@@ -331,6 +350,7 @@ internal sealed record DesktopPreferences
             deepseekProgressRing = DeepSeekProgressRing,
             disabledHarnessProgress = DisabledHarnessProgress,
             hiddenTurnCredits = HiddenTurnCredits,
+            harnessQuotaGroups = HarnessQuotaGroups,
             harnessHomes = HarnessHomes,
             harnessCredits = HarnessCredits.ToDictionary(pair => pair.Key, pair => new
             {
@@ -338,6 +358,7 @@ internal sealed record DesktopPreferences
                 expiryReminder = pair.Value.ExpiryReminder, expiryDays = pair.Value.ExpiryDays
             }),
             monitorSSH = MonitorSSH,
+            sshHostsOff = SshHostsOff,
             deepseekSettings = new { mode = DeepSeekMode, daily = DeepSeekDailyBudget, weekly = DeepSeekWeeklyBudget,
                 ringPeriod = DeepSeekRingPeriod, speedSource = DeepSeekSpeedSource, showsTurnCost = DeepSeekShowsTurnCost, balanceSource = DeepSeekBalanceSource },
             // The reminders that follow the bar's warnings notify only while it shows them. Only this

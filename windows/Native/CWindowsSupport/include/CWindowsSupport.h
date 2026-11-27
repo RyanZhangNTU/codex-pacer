@@ -61,6 +61,11 @@ void pacer_proxy_relay_close(void *relay);
 int pacer_is_windows_executable(const uint16_t *path);
 int pacer_windows_product_matches(const uint16_t *path, const uint16_t *product, const uint16_t *company);
 int pacer_harness_registry_path(size_t index, uint16_t *path, size_t capacity);
+int pacer_antigravity_product_matches(const uint16_t *path);
+int pacer_antigravity_uninstall_entry(uint32_t *index, uint16_t *icon, uint16_t *command, uint32_t capacity);
+int pacer_loopback_listener(uint32_t pid, uint16_t port);
+int pacer_http_local_post(void *stream, uint16_t port, const uint16_t *path, const uint16_t *headers,
+                          const uint8_t *body, size_t length, uint64_t deadline_ms, uint32_t *status);
 int pacer_url_handler_path(const uint16_t *scheme, size_t index, uint16_t *path, size_t capacity);
 int pacer_codex_package_path(size_t index, uint16_t *path, size_t capacity);
 int pacer_package_path(const uint16_t *family, size_t index, uint16_t *path, size_t capacity);

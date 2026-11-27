@@ -24,7 +24,7 @@ final class ModuleLibrarySettingsTests: XCTestCase {
         modules.setMode(.enabled, for: .workbuddy)
         let library = model.moduleLibrary(modules)
         XCTAssertEqual(library.prominent.map(\.provider), [.claude, .workbuddy], "Found or turned on, in registry order")
-        XCTAssertEqual(library.collapsed.map(\.provider), [.codex, .deepseek, .workbuddyAI])
+        XCTAssertEqual(library.collapsed.map(\.provider), [.codex, .deepseek, .workbuddyAI, .antigravity])
         let services = SettingsPane.groups(services: library.prominent.map(\.provider))[1]
         XCTAssertEqual(services, [.claude, SettingsPane(provider: .workbuddy), .modules, .collaboration, .remote], "The library follows the services, then Collaboration and Remote")
         XCTAssertEqual(SettingsPane(stored: "codex"), .codex, "A hidden built-in page still opens from saved state")

@@ -9,6 +9,17 @@ namespace CodexPacer.Windows;
 
 internal sealed class QuotaConnectionView : StackPanel
 {
+    internal static FrameworkElement? WithGroup(DashboardProvider reading, FrameworkElement? status)
+    {
+        if (reading.GroupWeeks == null || reading.Weekly.BucketName is not string name) return status;
+        var group = new StackPanel();
+        var label = new TextBlock { Text = name, FontSize = 11, Foreground = PacerPalette.Secondary, HorizontalAlignment = HorizontalAlignment.Center };
+        AutomationProperties.SetAutomationId(label, "quota." + reading.Provider + ".group");
+        AutomationProperties.SetName(label, name); group.Children.Add(label);
+        if (status != null) group.Children.Add(status);
+        return group;
+    }
+
     internal QuotaConnectionView(string provider, QuotaConnectionStatus status, UiText ui, Func<Task>? retry, Action? settings)
     {
         HorizontalAlignment = HorizontalAlignment.Stretch;

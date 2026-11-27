@@ -8,15 +8,16 @@ struct QuotaWindowView: View {
     var referenceColor: Color = PacerPalette.tick
     /// Read after the window's own description, such as where the quota came from.
     var note: String?
+    var showsTiming = true
 
     init(window: QuotaWindow, now: Date, allowPace: Bool, accent: Color, secondary: Color, referenceColor: Color = PacerPalette.tick) {
         self.init(reading: .init(window: window, allowPace: allowPace, now: now), accent: accent,
             secondary: secondary, referenceColor: referenceColor)
     }
     init(reading: QuotaDashboardPresentation.LegacyWindow, accent: Color, secondary: Color, referenceColor: Color = PacerPalette.tick,
-         note: String? = nil) {
+         note: String? = nil, showsTiming: Bool = true) {
         self.reading = reading; self.accent = accent; self.secondary = secondary; self.referenceColor = referenceColor
-        self.note = note
+        self.note = note; self.showsTiming = showsTiming
     }
 
     var body: some View {
@@ -35,11 +36,13 @@ struct QuotaWindowView: View {
                 } else { Text("—").font(.system(size: 24, weight: .semibold, design: .rounded)).foregroundStyle(secondary) }
             }
             quotaTrack
-            HStack(spacing: 8) {
-                Text(reading.countdown)
-                Spacer(minLength: 4)
-                Text(reading.paceText).foregroundStyle(reading.pacePercent.map { $0 < 85 ? Color.orange : $0 > 115 ? accent : secondary } ?? secondary)
-            }.font(.system(size: 11)).foregroundStyle(secondary).monospacedDigit()
+            if showsTiming {
+                HStack(spacing: 8) {
+                    Text(reading.countdown)
+                    Spacer(minLength: 4)
+                    Text(reading.paceText).foregroundStyle(reading.pacePercent.map { $0 < 85 ? Color.orange : $0 > 115 ? accent : secondary } ?? secondary)
+                }.font(.system(size: 11)).foregroundStyle(secondary).monospacedDigit()
+            }
         }.accessibilityElement(children: .combine)
         .accessibilityHint([reading.resetDate, L10n.text("quota.track_help"), note].compactMap { $0 }.joined(separator: " "))
     }

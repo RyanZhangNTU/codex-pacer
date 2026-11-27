@@ -273,3 +273,41 @@ final class QuotaDashboardModelTests: XCTestCase {
         XCTAssertEqual(turn.duration, 2 * AlternatingQuotaText.interval, accuracy: 0.001)
     }
 }
+
+extension QuotaDashboardModelTests {
+    func testAntigravityGroupDrivesMacGaugesAndLeavesBothPoolsInHistory() throws {
+        let domain = testDefaultsName("antigravity-gauges")
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { removeTestDefaults(domain) }
+        var modules = ProviderModules(codexMode: .disabled, claudeMode: .disabled, deepseekMode: .disabled)
+        modules.setMode(.enabled, for: .antigravity); modules.save(to: defaults)
+        let model = IslandModel(demo: true, demoArguments: nil, defaults: defaults,
+            installation: .init(codexInstalled: false, claudeInstalled: false))
+        model.now = now
+        let sample = snapshot([bucket("gemini", [window("antigravity:gemini-weekly", minutes: 10080, used: 10)]),
+                               bucket("3p", [window("antigravity:3p-5h", minutes: 300, used: 90),
+                                             window("antigravity:3p-weekly", minutes: 10080, used: 40)])])
+        publish(sample, for: .antigravity, to: model)
+        model.history.record(sample)
+        XCTAssertEqual(model.dashboardQuota(provider: .antigravity, period: .weekly).remainingPercent, 90)
+        XCTAssertNil(model.providerWindow(.antigravity, period: .fiveHour))
+        XCTAssertEqual(model.fiveHourAlert(.antigravity), .low(10))
+        XCTAssertEqual(model.compactPresentation().rings.first?.remaining, 90)
+        model.setQuotaPreference("3p", key: AntigravityQuotaGroup.defaultsKey)
+        model.setQuotaPreference("5h", key: QuotaWindowSelection.defaultsKey(for: .antigravity))
+        let bar = model.compactPresentation()
+        XCTAssertEqual(bar.rings.first?.remaining, 10)
+        XCTAssertEqual(bar.component(.quota).entries.first?.stripText, "10")
+        XCTAssertEqual(model.dashboardQuota(provider: .antigravity, period: .weekly).remainingPercent, 60)
+        let history = model.quotaHistoryPresentation(.antigravity)
+        XCTAssertEqual(history.buckets.map(\.id), ["gemini", "3p"])
+        XCTAssertEqual(history.buckets.compactMap(\.title), AntigravityQuotaGroup.allCases.map(\.name))
+        XCTAssertEqual(model.providerHistory(.antigravity).cycles.count, 2)
+        XCTAssertEqual(defaults.string(forKey: AntigravityQuotaGroup.defaultsKey), "3p")
+        for style in [ExpandedQuotaStyle.classic, .split] {
+            style.save(to: defaults)
+            let view = NSHostingView(rootView: QuotaDashboardView(model: model, providers: [.antigravity]).frame(width: 320))
+            XCTAssertGreaterThan(view.fittingSize.height, 80)
+        }
+    }
+}

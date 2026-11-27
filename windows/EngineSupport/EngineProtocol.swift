@@ -41,6 +41,7 @@ struct EngineCommand: Decodable {
         var showEmbeddedClaudeSessions: Bool?
         var showClaudeCloudProjects: Bool?
         var monitorSSH: Bool?
+        var sshHostsOff: SSHHostMonitoring?
         var deepseekSettings: EngineDeepSeekSettings?
         var reminderSettings: EngineReminderSettings?
         var expandedPanel: EngineExpandedPanelSettings?
@@ -60,6 +61,7 @@ struct EngineCommand: Decodable {
         var stale: Bool?
         /// Data folders chosen in Settings for local modules, by module ID.
         /// An empty path restores the default.
+        var harnessQuotaGroups: [String: String]?
         var harnessHomes: [String: String]?
         /// Modules whose task rows leave out the credits each turn used.
         var hiddenTurnCredits: [String]?
@@ -220,6 +222,18 @@ struct EngineModule: Codable, Equatable {
     var progressConnection: LocalHarnessProgressConnection? = nil
     /// The progress ring card, worded by Core, for a module whose app must trust Pacer's tool.
     var progressGuide: HarnessProgressGuide? = nil
+    struct PendingFloat: Codable, Equatable {
+        let title: String
+        let next: String
+    }
+    var pendingFloat: PendingFloat? = nil
+    var progressApprovals: [String]? = nil
+    var missedProgressConversation: MissedProgressConversation? = nil
+
+    static func approvalIDs(for provider: AgentProvider, in activity: HarnessActivity?) -> [String]? {
+        guard provider == .antigravity else { return nil }
+        return activity?.requests.filter(\.requestsProgressApproval).map(\.id) ?? []
+    }
     /// Registry facts, so the host draws every module from one description.
     var brand: EngineModuleBrand? = nil
     var website: URL? = nil
@@ -238,6 +252,8 @@ struct EngineModule: Codable, Equatable {
     var monitoring: EngineStatusRow? = nil
     /// Codex's Account row, read from its quota (`CodexAccountState`).
     var account: EngineStatusRow? = nil
+    var applicationInstalled: Bool? = nil
+    var quotaGroups: EngineQuotaGroups? = nil
 }
 
 /// One Status row as Core words it: its state, tone (`positive`, `neutral`,
@@ -264,6 +280,13 @@ struct EngineStatusRow: Codable, Equatable, Sendable {
         tone = account.tone.rawValue; text = account.text; detail = account.detail
         action = account == .signedOut && opensCodex ? "openCodex" : nil
     }
+}
+
+struct EngineQuotaGroups: Codable, Equatable {
+    struct Option: Codable, Equatable { let id: String, label: String }
+    let defaultsKey: String, title: String
+    let options: [Option]
+    let selected: String
 }
 
 struct EngineModuleLaunch: Codable, Equatable {
@@ -328,6 +351,27 @@ struct EngineQuota: Codable, Equatable {
                 }, verdict: verdict, verdictText: verdict.map { L10n.text("quota.verdict." + $0) },
                 pressing: !expired && (window.remainingPercent.map { $0 <= 15 } == true || verdict == "fast"),
                 valueText: window.remainingPercent.map { String(Int($0.rounded())) } ?? "—")
+        }
+    }
+}
+
+struct EngineGroupedQuota: Codable, Equatable {
+    struct Bucket: Codable, Equatable {
+        let id: String
+        let name: String?
+        let windows: [EngineQuota.Window]
+    }
+    let provider: String
+    let capturedAt: Double
+    let accountScope: String?
+    let buckets: [Bucket]
+
+    init(_ value: QuotaSnapshot, provider: AgentProvider, at now: Date) {
+        self.provider = provider.rawValue
+        capturedAt = value.capturedAt.timeIntervalSince1970
+        accountScope = value.accountScope
+        buckets = value.buckets.map { bucket in
+            Bucket(id: bucket.id, name: bucket.name, windows: EngineQuota(value.showing(bucket), provider: provider, at: now).windows)
         }
     }
 }
@@ -473,6 +517,7 @@ struct EngineSnapshot: Codable, Equatable {
     let navigationError: EngineNavigationFailure?
     let openingActivityIDs: [String]?
     var expandedPanel: EngineExpandedPanel? = nil
+    var groupedQuota: [EngineGroupedQuota]? = nil
     var accountCredits: [EngineAccountCredits]? = nil
     /// Codex task tracking through Pacer's hooks; nil while Codex is not managed.
     var codexHooks: EngineCodexHooks? = nil

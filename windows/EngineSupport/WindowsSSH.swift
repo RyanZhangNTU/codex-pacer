@@ -34,7 +34,7 @@ struct WindowsSSHServices: Sendable {
         WindowsClaudeAccountBinding.locations(environment: environment).map { $0.deletingLastPathComponent().appendingPathComponent("ssh_configs.json") }
     }
     func claudeTargets(codexHome: URL, claudeHome: URL) async -> [RemoteActivityTarget] {
-        await discovery.configured(codexHome: codexHome, claudeHome: claudeHome, userHome: userHome, desktopFile: desktopFile)
+        await discovery.discovered(codexHome: codexHome, claudeHome: claudeHome, userHome: userHome, desktopFile: desktopFile)
     }
     static func validIdentity(_ path: String) -> Bool {
         path.utf8.count <= 4096 && !path.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) } &&

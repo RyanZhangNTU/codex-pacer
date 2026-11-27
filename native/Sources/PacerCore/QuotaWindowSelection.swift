@@ -7,6 +7,10 @@ import Foundation
 public enum QuotaWindowSelection: String, CaseIterable, Sendable {
     case fiveHour = "5h", weekly = "7d"
 
+    package static func defaultsKey(for provider: AgentProvider) -> String {
+        provider == .codex ? "quotaWindowID" : provider.rawValue + "QuotaWindowID"
+    }
+
     public init(saved: String?, snapshot: QuotaSnapshot?) {
         switch saved {
         case Self.fiveHour.rawValue: self = .fiveHour

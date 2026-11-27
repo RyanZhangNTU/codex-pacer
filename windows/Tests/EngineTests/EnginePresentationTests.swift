@@ -23,8 +23,28 @@ final class EnginePresentationTests: XCTestCase {
         XCTAssertEqual(presentation.header.activeCount, 1)
         XCTAssertEqual(presentation.header.orbit, ["codex": 1])
         XCTAssertNil(presentation.header.ending)
+        XCTAssertEqual(row.subagentLines?.count, 3)
         let childrenRate = activities.dropFirst().compactMap { $0.displayedOutputEstimate(at: now)?.value }.reduce(0, +)
         XCTAssertEqual(try XCTUnwrap(row.tokensPerSecond), childrenRate, accuracy: 1e-9)
+    }
+
+    func testSubagentLineWireCarriesSeparateTagsTitleAndShortModel() throws {
+        var tasks = DemoScenario.subagentTasks(stage: .thinking, at: now)
+        tasks[1].subagentDisplay = SubagentDisplay(spawn: ["agent_path": "/parent/check_rows", "agent_role": "explorer"], header: [:])
+        // A new model without an effort clears the old one, so the change reports its effort too.
+        tasks[1].applyRuntime(["method": "metadata", "threadId": tasks[1].threadID!, "model": "gpt-6.2-sol", "reasoningEffort": "high",
+                               "at": now.timeIntervalSince1970])
+        let wire = EnginePresentation(activities: tasks, requests: [], inbox: CompletionInbox(), hideProjects: false, at: now)
+        let line = try XCTUnwrap(wire.rows.first?.subagentLines?.first { $0.typeTag == "Check rows" })
+        var fields = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(line)) as? [String: Any])
+        XCTAssertEqual(fields["typeTag"] as? String, "Check rows"); XCTAssertEqual(fields["nameTag"] as? String, "explorer")
+        let expected = ActivityTaskRowPresentation.subagentLine(tasks[1], options: .init(), at: now)
+        XCTAssertEqual(fields["title"] as? String, expected.title, "A Codex subagent's line says what it is doing")
+        XCTAssertEqual(fields["model"] as? String, expected.model)
+        XCTAssertTrue((fields["model"] as? String ?? "").hasPrefix("Sol 6.2 "), "The model carries its reasoning effort")
+        for key in ["typeTag", "nameTag", "title", "model", "statusText", "time"] { fields.removeValue(forKey: key) }
+        let old = try JSONDecoder().decode(EngineSubagentLine.self, from: JSONSerialization.data(withJSONObject: fields))
+        XCTAssertNil(old.typeTag); XCTAssertNil(old.nameTag); XCTAssertNil(old.model)
     }
 
     func testChildApprovalBelongsToItsFamilyButAnotherHostRemainsSeparate() throws {
@@ -159,6 +179,8 @@ final class EnginePresentationTests: XCTestCase {
         XCTAssertEqual(folded.delegationsFolded, L10n.text("delegation.folded", 2))
         XCTAssertEqual(folded.delegatedText, L10n.text("delegation.badge", 1), "The chip counts only the runs still running")
         let fields = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(folded)) as? [String: Any])
+        XCTAssertEqual((fields["delegations"] as? [[String: Any]])?.first?["modeTag"] as? String, L10n.text("delegation.mode.task"))
+        XCTAssertNil(fields["modeTag"])
         XCTAssertEqual(fields["delegationsFolded"] as? String, L10n.text("delegation.folded", 2))
         let whole = try row(3)
         XCTAssertEqual(whole.delegations?.count, 3)

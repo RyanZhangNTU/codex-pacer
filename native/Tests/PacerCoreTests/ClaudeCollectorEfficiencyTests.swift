@@ -136,6 +136,34 @@ with tempfile.TemporaryDirectory(prefix='pacer-claude-efficiency-') as temporary
         XCTAssertEqual(result["creationRotationOverflowPassed"] as? Bool, true)
     }
 
+    func testNewWorkflowRunAndItsFirstTranscriptTriggerDiscovery() throws {
+        let result = try evaluate(#"""
+with tempfile.TemporaryDirectory(prefix='pacer-workflow-') as temporary:
+    home=pathlib.Path(temporary);project=home/'projects'/'synthetic';session='fixture-session'
+    workflows=project/session/'subagents'/'workflows';workflows.mkdir(parents=True)
+    (project/(session+'.jsonl')).touch()
+    for n in range(17):
+        old=workflows/str(n);old.mkdir();os.utime(str(old),(100,100))
+    tailer=FixtureTailer(home)
+    try:
+        tailer.discover();finish(tailer)
+        run=workflows/'new-run';run.mkdir()
+        assert tailer.notify(workflows,0x100,b'new-run')
+        tailer.discover();assert run in tailer.watches.values()
+        for n in range(80):(run/('agent-%d.meta.json'%n)).touch()
+        agent=run/'agent-child.jsonl';agent.touch()
+        (run/'agent-child.meta.json').write_text(json.dumps({'agentType':'Explore','description':'Trace calls','unused':'PRIVATE'}))
+        assert tailer.notify(run,0x100,b'agent-child.jsonl')
+        tailer.discover()
+        row=next(r for r in finish(tailer) if r.get('subagentMeta'))
+        assert row['sessionId']=='child' and row['parentId']==session and 'PRIVATE' not in repr(row)
+        print(json.dumps(row))
+    finally:tailer.close()
+"""#)
+        XCTAssertEqual(result["agentType"] as? String, "Explore")
+        XCTAssertEqual(result["description"] as? String, "Trace calls")
+    }
+
     func testOneDecodePerLineKeepsWrapperOutputOwnedStopAndPrivateContentOutOfCursorContext() throws {
         let result = try evaluate(#"""
 with tempfile.TemporaryDirectory(prefix='pacer-claude-decode-') as temporary:

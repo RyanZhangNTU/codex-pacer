@@ -20,26 +20,27 @@ internal static class ExpandedPanelChecks
     internal static async Task Run(string language, bool dark, string output)
     {
         var engine = new EngineClient();
-        var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = "expandedPanel" };
+        var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = "expandedPanel", ShowInFullscreen = true };
         int configurations = 0;
         var session = new PreferencesSession(preferences, async value => { configurations++; await engine.SendAsync("configure", value); }, _ => true);
-        var island = new IslandWindow(engine, true, language == "zh-Hans", animationOverride: false) { IsHitTestVisible = false, ShowActivated = false };
+        var island = new IslandWindow(engine, true, language == "zh-Hans", animationOverride: false,
+            screenGeometry: PresentationWait.ReferenceScreen) { IsHitTestVisible = false, ShowActivated = false };
         session.Changed += island.ApplyPreferences;
         var ui = UiText.For(language == "zh-Hans");
         var window = new SettingsWindow(ui, session, new Startup(), true, dark, engine) { IsHitTestVisible = false, ShowActivated = false };
         string name = language + (dark ? "-dark" : "-light");
         try
         {
-            island.Show(); window.Show();
+            island.ApplyPreferences(preferences); island.Show(); window.Show();
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, configuration: preferences.EngineConfiguration(), referenceFixture: true);
-            island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();
+            await PresentationWait.RevealReferencePanelAsync(island, engine);
             var content = (StackPanel)island.FindName("PanelContent");
             var actions = (FrameworkElement)island.FindName("PanelActions");
             // The reference Codex account has banked resets, so its capsule adds its own row.
             Check(island.LogicalTarget.Width == 404 && island.LogicalTarget.Height == 438 + PresentationWait.ResetCapsule(island).Height
                 && ReferenceEquals(content.Children[0], island.FindName("TasksSection"))
                 && ReferenceEquals(actions.Parent, island.FindName("TaskHeaderTrailing")),
-                "Without a saved layout the panel keeps the reference tasks-then-quota panel with its buttons in the task header");
+                $"Expected the automatic tasks and quota layout, width 404 and height {PresentationWait.ReferenceHeight(island)}. Got {island.LogicalTarget}, first={content.Children.OfType<FrameworkElement>().FirstOrDefault()?.Name}, actions={((FrameworkElement?)actions.Parent)?.Name}");
 
             await Until(() => Present<Button>(window, "panel.block.tasks"));
             Check(Equals(Find<Button>(window, "panel.block.codex.toggle").Tag, "added") && Equals(Find<Button>(window, "panel.block.deepseekWeek.toggle").Tag, "add")
@@ -50,6 +51,23 @@ internal static class ExpandedPanelChecks
             Check(Descendants(Find<Button>(window, "panel.editor.tasks")).OfType<TextBlock>().Any(text => text.Text == AutomationProperties.GetName(Find<Button>(window, "panel.block.tasks"))),
                 "An outline block draws its name, not its content's type");
             window.CapturePreview(Path.Combine(output, "settings-panel-" + name + "-automatic.png"));
+            var hover = Find<RadioButton>(window, "panel.option.expand.hover");
+            var click = Find<RadioButton>(window, "panel.option.expand.click");
+            Check(hover.IsChecked == true && Equals(hover.Content, ui.Text("main.panel.expand.hover")) && Equals(click.Content, ui.Text("main.panel.expand.click")),
+                "The panel offers both expand modes and starts on hover");
+            Select(click);
+            await Until(() => session.Current.IslandExpandMode == "click" && click.IsEnabled);
+            Check(session.Current.ExpandedPanelLayout == null && !Find<Button>(window, "panel.restore").IsVisible,
+                "Changing how the bar opens keeps the automatic block layout and has nothing to restore");
+            island.CollapseForAutomation(); await island.WaitForPresentationAsync();
+            Invoke((Button)island.FindName("HeaderAction"));
+            await Until(() => island.IsExpandedForAutomation && island.IsActive);
+            Check(!((Button)island.FindName("HeaderAction")).IsKeyboardFocused, "A click-opened panel takes focus without drawing a focus ring on the bar");
+            window.Activate();
+            await Until(() => !island.IsExpandedForAutomation, "Returning to Settings dismisses the click-opened panel");
+            Select(hover);
+            await Until(() => session.Current.IslandExpandMode == "hover" && hover.IsChecked == true);
+            island.Reveal(); await island.WaitForPresentationAsync();
 
             // Moving Codex above the tasks splits it from the other quotas and hands it the buttons.
             int before = configurations;

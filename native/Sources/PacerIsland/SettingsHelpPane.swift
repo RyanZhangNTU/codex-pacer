@@ -107,6 +107,13 @@ struct SettingsHelpPane: View {
         case .claude: claudeRows
         case .deepseek: deepseekRows
         case .workbuddy, .workbuddyAI: workbuddyRows(provider)
+        case let module where module.quotaGroups != nil:
+            let prefix = "help." + module.rawValue
+            quotaRow(prefix + ".quota", provider: module, remaining: 66)
+            row(prefix + ".tasks", symbol: "person.2", tint: module.tint)
+            row(prefix + ".speed", symbol: "speedometer", tint: module.tint)
+            row(prefix + ".progress") { ProgressRingSample(fraction: 0.62, tint: module.tint) }
+            row(prefix + ".apps") { ProviderAppIcon(provider: module, size: 14, outline: true).foregroundStyle(module.tint) }
         default:
             row(title: L10n.text("help.harness.tasks.title", provider.displayName),
                 detail: L10n.text("help.harness.tasks.detail", provider.displayName)) { ProviderTile(provider: provider) }

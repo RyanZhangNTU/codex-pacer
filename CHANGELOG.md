@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.8.0
+
+- Mac and Windows: Google Antigravity. Pacer follows Antigravity's tasks: what each one is doing, when it waits for your approval or answer, its subagents, the model and speed, and both quota pools (Gemini, and Claude and GPT). Choose which pool the island shows on Antigravity's page.
+- Mac and Windows: Antigravity's progress ring. Turn it on, paste the example sentence into a new Antigravity conversation, and when Antigravity asks, choose **Yes, and always allow**, then **Submit**. A small guide with a picture of that prompt opens by itself and shows where to click.
+- Mac and Windows: Subagents show under their task, each with its state, model, effort and speed. A finished subagent no longer counts as running, and its speed no longer adds to the task's.
+- Mac and Windows: The island can open with a click instead of on hover: **Settings → Expanded Panel → Expand → On click** ([#293](https://github.com/RyanZhangNTU/codex-pacer/issues/293)).
+- Mac and Windows: Turn monitoring on or off for each SSH host on the Remote page.
+- Mac and Windows: The Module Library lists the services found on this computer and the rest in two groups; what each one shows is behind its ⓘ.
+- Mac and Windows: A task that ended without a measured speed no longer says it is awaiting usage, and clicking its ending notice or opening its app clears it.
+
 ## 4.7.0
 
 - Mac and Windows: Codex for Claude (Beta). Turn on **Claude calls Codex** in **Settings → Collaboration**, and Claude Code can hand a task, an investigation, a review or a fix to Codex through Pacer's `/pacer:codex` skill. Just ask Claude, for example "have Codex review this change", or type `/pacer:codex`; the trigger can be set to the command only.

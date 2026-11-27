@@ -21,6 +21,7 @@ package struct JSONFieldView {
         return Self(data: data, range: range, projectedItems: projectedItems)
     }
     package var isObject: Bool { data[range.lowerBound] == 123 }
+    var isString: Bool { data[range.lowerBound] == 34 }
     var isArray: Bool { data[range.lowerBound] == 91 }
     package var isNull: Bool { range.count == 4 && data[range.lowerBound] == 110 }
     var hasNonemptyString: Bool { data[range.lowerBound] == 34 && range.count > 2 }

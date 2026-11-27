@@ -37,23 +37,33 @@ public enum CompactBarPresentation {
         public var singleTask: SingleTask
         public var metric: Metric
         public var codexWindow: String
+        public var moduleWindows: [String: String]?
         public var claudeWindow: String
         public var rings: [RingChoice]
         public init(singleTask: SingleTask = .stage, metric: Metric = .remaining, codexWindow: String = "auto",
-                    claudeWindow: String = "auto", rings: [RingChoice] = [.automatic, .automatic]) {
+                    claudeWindow: String = "auto", moduleWindows: [String: String]? = nil, rings: [RingChoice] = [.automatic, .automatic]) {
+            self.moduleWindows = moduleWindows
             self.singleTask = singleTask; self.metric = metric; self.codexWindow = codexWindow; self.claudeWindow = claudeWindow; self.rings = rings
+        }
+        func window(for provider: AgentProvider) -> String {
+            switch provider {
+            case .codex: codexWindow
+            case .claude: claudeWindow
+            default: moduleWindows?[provider.rawValue] ?? "auto"
+            }
         }
         public var valid: Bool {
             rings.count == 2 &&
-                [codexWindow, claudeWindow].allSatisfy { $0.utf8.count <= 1024 && !$0.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) } }
+                ((moduleWindows ?? [:]).values + [codexWindow, claudeWindow]).allSatisfy { $0.utf8.count <= 1024 && !$0.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) } }
         }
-        private enum CodingKeys: String, CodingKey { case singleTask, metric, codexWindow, claudeWindow, rings }
+        private enum CodingKeys: String, CodingKey { case singleTask, metric, codexWindow, claudeWindow, moduleWindows, rings }
         public init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             singleTask = try values.decode(SingleTask.self, forKey: .singleTask)
             metric = try values.decode(Metric.self, forKey: .metric)
             codexWindow = try values.decode(String.self, forKey: .codexWindow)
             claudeWindow = try values.decode(String.self, forKey: .claudeWindow)
+            moduleWindows = try values.decodeIfPresent([String: String].self, forKey: .moduleWindows)
             // A ring saved by a version with another module draws nothing here
             // instead of invalidating the whole bar; a malformed value still does.
             rings = try values.decode([String].self, forKey: .rings).map { value in
@@ -252,11 +262,11 @@ public enum CompactBarPresentation {
         let date = context?.now ?? Date(timeIntervalSince1970: 0)
         func source(_ provider: AgentProvider) -> CompactBarContext.Source? { context?.sources.first { $0.provider == provider } }
         func selection(_ provider: AgentProvider) -> QuotaWindowSelection {
-            .init(saved: provider == .codex ? request.options.codexWindow : request.options.claudeWindow, snapshot: source(provider)?.snapshot)
+            .init(saved: request.options.window(for: provider), snapshot: source(provider)?.snapshot)
         }
         func selected(_ provider: AgentProvider) -> QuotaWindow? {
             QuotaDashboardPresentation.selectedWindow(provider: provider, snapshot: source(provider)?.snapshot,
-                selection: provider == .codex ? request.options.codexWindow : request.options.claudeWindow)
+                selection: request.options.window(for: provider))
         }
         let wallet = context?.wallet
         func windowed(_ provider: AgentProvider) -> Bool { HarnessRegistry.descriptor(for: provider)?.hasQuotaWindows == true }
@@ -307,7 +317,7 @@ public enum CompactBarPresentation {
         let usesBudget = layout.components.contains(.quotaGauge) && ringProviders.contains(.deepseek)
         func value(_ provider: AgentProvider) -> Double? {
             quotaValue(provider: provider, snapshot: source(provider)?.snapshot, failed: source(provider)?.failed == true,
-                metric: request.options.metric, selection: provider == .codex ? request.options.codexWindow : request.options.claudeWindow, now: date)
+                metric: request.options.metric, selection: request.options.window(for: provider), now: date)
         }
         let known = ordered.filter {
             if $0 == .deepseek { return wallet?.hasBalance == true || usesBudget }
@@ -332,7 +342,8 @@ public enum CompactBarPresentation {
             }
             let raw = value(provider), number = percent(raw)
             return .init(provider: provider, text: number == "—" ? number : number + "%",
-                stripText: number, stripUnit: "%", dimmed: false, value: raw,
+                stripText: number, stripUnit: "%", dimmed: source(provider)?.failed == true ||
+                    QuotaDashboardPresentation.isStale(snapshot: source(provider)?.snapshot, window: selected(provider), now: date), value: raw,
                 low: metric == .remaining && choices.lowColor && raw.map { $0 <= lowQuota } == true ? true : nil)
         }
         var entries = alternating.map(entry)
@@ -352,12 +363,16 @@ public enum CompactBarPresentation {
             let left = window?.elapsedTimePercent(at: date).map { 100 - $0 }, number = percent(left)
             return .init(provider: provider, text: number == "—" ? number : number + "%", stripText: number, dimmed: false, value: left)
         }
-        let quotaHelp = ordered.map(entry).map { entry in L10n.text("provider.compact_quota", entry.provider.displayName, entry.text, language: language) }.joined(separator: " · ")
+        func quotaName(_ provider: AgentProvider) -> String {
+            guard let groups = provider.quotaGroups, let id = source(provider)?.snapshot?.buckets.first?.id else { return provider.displayName }
+            return provider.displayName + " · " + groups.name(id, language: language)
+        }
+        let quotaHelp = ordered.map(entry).map { entry in L10n.text("provider.compact_quota", quotaName(entry.provider), entry.text, language: language) }.joined(separator: " · ")
         let gaugeHelp = rings.map { ring in
-            L10n.text("provider.compact_quota", ring.window.map { ring.provider.displayName + " " + $0 } ?? ring.provider.displayName,
+            L10n.text("provider.compact_quota", ring.window.map { quotaName(ring.provider) + " " + $0 } ?? quotaName(ring.provider),
                 ring.provider == .deepseek ? wallet?.budget ?? "—" : credits(ring.provider)?.text ?? ring.remaining.map { "\(Int(min(100, max(0, $0)).rounded()))%" } ?? "—", language: language)
         }.joined(separator: " · ")
-        let timeHelp = times.map { entry in L10n.text("provider.compact_time", entry.provider.displayName, entry.text, language: language) }.joined(separator: " · ")
+        let timeHelp = times.map { entry in L10n.text("provider.compact_time", quotaName(entry.provider), entry.text, language: language) }.joined(separator: " · ")
         let clockSummary = L10n.text("deepseek.clock_accessibility", L10n.text(wallet?.peakNow == true ? "deepseek.now.peak" : "deepseek.now.offpeak", language: language),
             DeepSeekDialPresentation.amount(wallet?.todayTotal ?? 0), language: language)
         let showsStatus = layout.components.contains(.status)

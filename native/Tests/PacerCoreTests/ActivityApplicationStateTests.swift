@@ -111,6 +111,32 @@ final class ActivityApplicationStateTests: XCTestCase {
         XCTAssertFalse(inbox.isClearableUnconfirmed(other))
     }
 
+    func testOpeningOnlyTheAppClearsAnEndingAndEndedRowsDoNotAwaitUsage() {
+        var state = ActivityApplicationState()
+        state.localActivities = [task(1), task(2, ended: true)]
+        state.reconcile(at: now, retention: 300, visibility: visible)
+        let rows = state.presentation(at: now).rows
+        XCTAssertNotNil(rows.first { $0.phase == .running }?.ratePlaceholder, "A running task can still be waiting for usage")
+        XCTAssertNil(rows.first { $0.phase == .completed }?.ratePlaceholder, "An ended task without a speed shows none")
+
+        // A harness without conversation links opens its app; that click clears the card too.
+        let ended = task(2, ended: true)
+        var inbox = state.inbox, activities = [ended]
+        let operation = ActivityNavigationOperation(activity: ended, target: ended, version: 0, activities: activities, inbox: inbox)
+        let result = operation.complete(.openedApplication, version: 0, active: true, activities: &activities, inbox: &inbox)
+        XCTAssertEqual(result.removed.map(\.id), [ended.id])
+        XCTAssertTrue(activities.isEmpty)
+    }
+
+    func testEndingNoticeNamesItsTaskSoAClickCanClearTheCard() {
+        var policy = AttentionPolicy()
+        XCTAssertTrue(policy.activityNotices([task(4)], at: now).isEmpty)
+        let ended = task(4, ended: true)
+        let notice = policy.activityNotices([ended], at: now.addingTimeInterval(1)).first
+        XCTAssertEqual(notice?.kind, .completed)
+        XCTAssertEqual(notice?.taskActivityID, ended.id)
+    }
+
     func testClearedUnconfirmedRowsExpireIndividuallyAndStayInTheirProfile() {
         var state = ActivityApplicationState()
         state.localActivities = (1...257).map { number in

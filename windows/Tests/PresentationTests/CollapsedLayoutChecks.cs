@@ -28,7 +28,7 @@ internal static class CollapsedLayoutChecks
         await using var commands = new EngineClient();
         var island = new IslandWindow(commands, true, false, animationOverride: true,
             screenGeometry: () => (new(0, 0, 1440, 900), new(0, 0, 1440, 860))) { IsHitTestVisible = false, ShowActivated = false };
-        var preferences = new DesktopPreferences { IslandAppearance = "classic", CompactBarSize = "large",
+        var preferences = new DesktopPreferences { IslandAppearance = "classic", CompactBarSize = "large", ShowInFullscreen = true,
             CompactLayout = """{"version":9,"leading":["activity","status","tps","firstOutput"],"trailing":["quotaGauge","quota","timeRemaining"]}""" };
         int frames = 0;
         island.FrameApplied += _ => frames++;
@@ -71,7 +71,8 @@ internal static class CollapsedLayoutChecks
                     Button? button = null;
                     await Until(() => (button = SelfAndDescendants(island).OfType<Button>()
                         .FirstOrDefault(value => value.IsVisible && AutomationProperties.GetAutomationId(value) == id))?.Content is CompactValueView view
-                        && view.Text == text && (unit == null || view.UnitText == unit));
+                        && view.Text == text && (unit == null || view.UnitText == unit),
+                        $"{display}/{position} {id} showing {text} {unit}");
                     await island.WaitForPresentationAsync();
                     Check(AutomationProperties.GetName(button!) == spoken + " t/s", "UI Automation reports the rate without padding or abbreviation");
                 }
@@ -84,16 +85,17 @@ internal static class CollapsedLayoutChecks
     internal static async Task Run(string language, bool dark, bool animations, string output)
     {
         var engine = new EngineClient();
-        var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = "collapsed" };
+        var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = "collapsed", ShowInFullscreen = true };
         int configurations = 0, saves = 0; bool reject = false;
         var session = new PreferencesSession(preferences, async value => { configurations++; await engine.SendAsync("configure", value); }, _ => { saves++; if (reject) { reject = false; return false; } return true; });
-        var island = new IslandWindow(engine, true, language == "zh-Hans", animationOverride: animations) { IsHitTestVisible = false, ShowActivated = false };
+        var island = new IslandWindow(engine, true, language == "zh-Hans", animationOverride: animations,
+            screenGeometry: PresentationWait.ReferenceScreen) { IsHitTestVisible = false, ShowActivated = false };
         session.Changed += island.ApplyPreferences;
         var window = new SettingsWindow(UiText.For(language == "zh-Hans"), session, new Startup(), true, dark, engine) { IsHitTestVisible = false, ShowActivated = false };
         string name = language + (dark ? "-dark" : "-light") + (animations ? "-motion" : "-reduced");
         try
         {
-            island.Show(); window.Show();
+            island.ApplyPreferences(preferences); island.Show(); window.Show();
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, referenceFixture: true);
             await Pump(); await island.WaitForPresentationAsync();
             var editor = SelfAndDescendants(window).OfType<CompactLayoutEditorView>().Single();
@@ -176,7 +178,7 @@ internal static class CollapsedLayoutChecks
             island.Reveal(); await island.WaitForPresentationAsync();
             var header = ((StackPanel)island.FindName("HeaderLeading")).Children.Cast<Button>()
                 .Concat(((StackPanel)island.FindName("HeaderTrailing")).Children.Cast<Button>()).ToArray();
-            var surface = (Grid)island.FindName("Header");
+            var surface = (Grid)island.FindName("HeaderContent");
             foreach (var button in header)
             {
                 var bounds = new Rect(button.TranslatePoint(new Point(), surface), button.RenderSize);
@@ -315,12 +317,8 @@ internal static class CollapsedLayoutChecks
         var input = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, key) { RoutedEvent = Keyboard.KeyDownEvent };
         target.RaiseEvent(input); return input.Handled;
     }
-    private static async Task Until(Func<bool> condition)
-    {
-        double end = Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency + 5;
-        while (!condition() && Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency < end) await Pump();
-        Check(condition(), "The compact editor did not settle in time");
-    }
+    private static Task Until(Func<bool> condition, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(condition))] string expected = "")
+        => PresentationWait.UntilAsync(condition, "The compact editor did not reach " + expected);
     private static async Task Pump() { await Task.Delay(30); await Application.Current.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle); }
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
     private sealed class Startup : IStartupRegistration { public StartupRegistrationState Read() => new(false, true); public bool Set(bool enabled) => true; }

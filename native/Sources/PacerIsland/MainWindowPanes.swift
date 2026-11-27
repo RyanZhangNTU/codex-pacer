@@ -263,11 +263,19 @@ struct HistoryPane: View {
             if let error = presentation.errorText {
                 Text(error).font(.system(size: 12)).foregroundStyle(MainPalette.attention).fixedSize(horizontal: false, vertical: true)
             }
-            if let snapshot = model.providerQuota(provider) {
-                if let cycle = model.providerCurrentCycle(provider) {
+            if let snapshot = model.fullQuota(provider) {
+                let cycles = provider.quotaGroups != nil ? snapshot.windows.compactMap {
+                    model.providerHistory(provider).currentCycle(for: $0, at: model.now)
+                } : [model.providerCurrentCycle(provider)].compactMap { $0 }
+                ForEach(cycles) { cycle in
+                    if provider.quotaGroups != nil,
+                       let group = presentation.buckets.first(where: { $0.windows.contains { $0.id == cycle.id } })?.title {
+                        Text(group).font(.system(size: 12, weight: .medium))
+                    }
                     QuotaCycleChart(data: QuotaChartData(cycle: cycle, resetCredits: snapshot.resetCredits, now: model.now),
                         accent: provider.tint, referenceColor: .primary).equatable().padding(.vertical, 4)
-                } else if let placeholder = presentation.placeholder {
+                }
+                if cycles.isEmpty, let placeholder = presentation.placeholder {
                     Text(placeholder).font(.system(size: 12)).foregroundStyle(.secondary)
                 }
                 if presentation.account != nil {
@@ -284,7 +292,8 @@ struct HistoryPane: View {
                                     Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                                 }
                                 ForEach(bucket.windows, id: \.id) { window in
-                                    QuotaWindowView(reading: window, accent: provider.tint, secondary: .secondary, referenceColor: .primary)
+                                    QuotaWindowView(reading: window, accent: provider.tint, secondary: .secondary, referenceColor: .primary,
+                                        showsTiming: snapshot.windows.first { $0.id == window.id }?.resetsAt != nil)
                                 }
                             }
                         }

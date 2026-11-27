@@ -53,6 +53,12 @@ final class ProviderInstallationMacTests: XCTestCase {
         try Data().write(to: standard.appendingPathComponent(workbuddy.dataFile))
         XCTAssertTrue(ProviderInstallationDetection.detect(userHome: home, environment: [:], applicationURLs: noApps,
             systemBinDirectories: []).isInstalled(.workbuddy))
+        // A fresh Antigravity profile is discoverable before its summaries database exists.
+        let antigravity = AntigravityHarness.definition.defaultHome(userHome: home)
+        XCTAssertFalse(managed.isInstalled(.antigravity))
+        try FileManager.default.createDirectory(at: antigravity, withIntermediateDirectories: true)
+        XCTAssertTrue(ProviderInstallationDetection.detect(userHome: home, environment: [:], applicationURLs: noApps,
+            systemBinDirectories: []).isInstalled(.antigravity))
         let modules = ProviderModules()
         XCTAssertEqual(modules.enabledProviders(detection: .init(codexInstalled: true, claudeInstalled: false, deepseekInstalled: true)),
             [.codex, .deepseek], "Each detected module turns on by itself")

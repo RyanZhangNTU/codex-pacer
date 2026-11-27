@@ -84,6 +84,14 @@ final class PanelController: NSObject {
                 self.model.close()
             }
         }) { monitors.append(monitor) }
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] event in
+            if let self, self.model.expandMode == .click, self.move == nil, self.model.expanded || self.model.pinned,
+               Self.isOutsideIsland(event.window, panel: self.panel, preview: self.snapPreview) {
+                self.cancelMove()
+                self.model.close()
+            }
+            return event
+        }) { monitors.append(monitor) }
         if let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
             guard let self else { return event }
             // A drag takes Escape before Escape-to-close.
@@ -101,6 +109,15 @@ final class PanelController: NSObject {
         layout(animated: false)
         panel.orderFrontRegardless()
         if model.pinned { panel.makeKey() }
+    }
+
+    static func isOutsideIsland(_ window: NSWindow?, panel: NSWindow, preview: NSWindow?) -> Bool {
+        // Menu tracking normally consumes its own events. A popup menu window can also be unparented.
+        guard let window, window.level != .popUpMenu else { return false }
+        for ancestor in sequence(first: window, next: { $0.parent ?? $0.sheetParent }) {
+            if ancestor === panel || ancestor === preview { return false }
+        }
+        return true
     }
 
     func show() {

@@ -26,9 +26,11 @@ public struct QuotaHistoryPresentation: Codable, Equatable, Sendable {
         refreshTitle = L10n.text(refreshing ? "common.retrying" : "common.refresh")
         self.chart = snapshot == nil ? nil : chart
         if let snapshot {
-            placeholder = chart == nil && weekly.windowID != nil ? L10n.text("quota.waiting_sample") : nil
+            let awaitsSample = snapshot.accountScope != nil && weekly.remainingTimePercent != nil
+            placeholder = chart == nil && weekly.windowID != nil && awaitsSample ? L10n.text("quota.waiting_sample") : nil
             buckets = snapshot.buckets.map { bucket in
-                .init(id: bucket.id, title: snapshot.buckets.count > 1 ? bucket.name ?? bucket.id : nil,
+                let title = provider.quotaGroups?.name(bucket.id) ?? (snapshot.buckets.count > 1 ? bucket.name ?? bucket.id : nil)
+                return .init(id: bucket.id, title: title,
                     windows: bucket.windows.map { window in
                         .init(window: window, allowPace: !snapshot.isStale(at: now) && error == nil && window.resetsAt.map { $0 > now } == true, now: now)
                     })

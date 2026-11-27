@@ -186,15 +186,20 @@ final class SubagentMetricsTests: XCTestCase {
         XCTAssertEqual(resumed.activities.first?.turnID, "second")
         XCTAssertEqual(resumed.activities.first?.turnStartedAt, start.addingTimeInterval(30))
     }
-    func testLogParentMetadataIsNumericOnlyAndSurvivesSourceMerge() throws {
+    func testLogParentComesOnlyFromParentIDAndDisplayTaskNameSurvivesSourceMerge() throws {
         var log = measured(2)
-        let bytes = try JSONSerialization.data(withJSONObject: ["type": "session_meta", "payload": ["id": id(2), "source": ["subagent": ["thread_spawn": ["parent_thread_id": id(1), "agent_path": "PRIVATE", "agent_nickname": "PRIVATE"]]]]])
+        let bytes = try JSONSerialization.data(withJSONObject: ["type": "session_meta", "payload": ["id": id(2), "source": ["subagent": ["thread_spawn": ["parent_thread_id": id(1), "agent_path": "/PRIVATE/check_rows", "agent_nickname": "Linnaeus", "agent_role": "explorer"]]]]])
         log.consume(bytes)
         XCTAssertEqual(log.parentThreadID, id(1))
         var stream = SessionActivity(id: id(2), phaseAwareRate: true)
         live(&stream, "turn/started", 12, turn: "new")
         let merged = try XCTUnwrap(ActivitySourceMerger.merge(logged: [log], streamed: [stream]).first)
         XCTAssertEqual(merged.parentThreadID, id(1))
+        let line = ActivityTaskRowPresentation.subagentLine(merged, options: .init(), at: start)
+        XCTAssertEqual(line.typeTag, "Check rows", "The task name is the tag, as Codex's own list writes it")
+        XCTAssertEqual(line.nameTag, "explorer", "A role other than the default follows it")
+        XCTAssertEqual(line.title, line.row.status, "The line says what the subagent is doing now")
+        XCTAssertFalse(line.accessibilityText.contains("Linnaeus"), "Codex's nickname is not shown")
         XCTAssertEqual(merged.displayedOutputEstimate(at: start.addingTimeInterval(12))?.value, 60)
         XCTAssertTrue(merged.displayedRateIsEstimated(at: start.addingTimeInterval(12)))
         XCTAssertNil(merged.responsePerformance)
@@ -236,5 +241,47 @@ final class SubagentMetricsTests: XCTestCase {
         XCTAssertEqual(grouped.count, 1)
         XCTAssertEqual(grouped.first?.runningSubagentCount, 1)
         XCTAssertEqual(grouped.first?.displayedRate(at: start.addingTimeInterval(11))?.value, 80)
+    }
+
+    func testASubagentAddsItsSpeedOnlyWhileItWrites() throws {
+        var parent = measured(1), child = measured(2, parent: 1, tokens: 300)
+        let at11 = start.addingTimeInterval(11), at40 = start.addingTimeInterval(40)
+        XCTAssertEqual(ActivityTaskGroup.make([parent, child]).first?.displayedRate(at: at11)?.value, 90)
+        // Still writing, though its last speed is old: it counts.
+        XCTAssertEqual(ActivityTaskGroup.make([parent, child]).first?.displayedRate(at: at40)?.value, 90)
+        // Waiting on its own tool with an old speed: only the task's own speed is left.
+        live(&child, "item/started", 12, ["itemId": "child-tool", "itemType": "commandExecution"])
+        XCTAssertEqual(ActivityTaskGroup.make([parent, child]).first?.displayedRate(at: at40)?.value, 60)
+        XCTAssertEqual(ActivityOverview(activities: [parent, child], at: at40).displayedRate, 60)
+        // Finished: it adds nothing, also once the task itself is done.
+        live(&child, "turn/completed", 41, ["status": "completed"])
+        XCTAssertEqual(ActivityTaskGroup.make([parent, child]).first?.displayedRate(at: start.addingTimeInterval(42))?.value, 60)
+        live(&parent, "turn/completed", 43, ["status": "completed"])
+        XCTAssertEqual(ActivityTaskGroup.make([parent, child]).first?.displayedRate(at: start.addingTimeInterval(44))?.value, 60)
+    }
+
+    func testCodexSpawnTagsItsTaskNameAndRoleAndTitlesItsState() throws {
+        func header(_ spawn: [String: Any]) throws -> SessionActivity {
+            var log = SessionActivity(id: id(2), phaseAwareRate: true)
+            log.consume(try JSONSerialization.data(withJSONObject: ["type": "session_meta", "payload": ["id": id(2), "cwd": "/synthetic/project",
+                "source": ["subagent": ["thread_spawn": spawn.merging(["parent_thread_id": id(1)]) { old, _ in old }]]]]))
+            return log
+        }
+        func line(_ fields: [String: Any]) throws -> ActivityTaskRowPresentation.SubagentLine {
+            ActivityTaskRowPresentation.subagentLine(try header(fields), options: .init(), at: start)
+        }
+        let named = try line(["agent_path": "/PRIVATE/fix_login_tests", "agent_role": "explorer", "agent_nickname": "Linnaeus"])
+        XCTAssertEqual(named.typeTag, "Fix login tests"); XCTAssertEqual(named.nameTag, "explorer")
+        XCTAssertEqual(named.row.title, "Fix login tests", "A row of its own is named for its task")
+        XCTAssertEqual(try line(["agent_path": "/root/lifecycle", "agent_role": "default"]).typeTag, "Lifecycle")
+        XCTAssertNil(try line(["agent_path": "/root/lifecycle", "agent_role": "default"]).nameTag, "The default role adds no tag")
+        for invalid in ["PRIVATE", "/parent/has space", String(repeating: "a", count: 65), "/parent/"] {
+            let fallback = try line(["agent_path": invalid, "agent_nickname": "Linnaeus", "agent_role": "worker"])
+            XCTAssertEqual(fallback.typeTag, "worker", "Without a task name the role is the tag"); XCTAssertNil(fallback.nameTag)
+        }
+        let absent = try line(["agent_role": NSNull(), "agent_nickname": "Linnaeus"])
+        XCTAssertNil(absent.typeTag); XCTAssertNil(absent.nameTag); XCTAssertEqual(absent.row.title, "project")
+        let orphan = try header(["parent_thread_id": "invalid", "agent_path": id(1)])
+        XCTAssertNil(orphan.parentThreadID); XCTAssertNil(orphan.subagentDisplay)
     }
 }

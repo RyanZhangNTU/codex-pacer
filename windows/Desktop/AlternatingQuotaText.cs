@@ -52,8 +52,15 @@ public sealed class AlternatingQuotaText : Grid
     internal bool SharedPhase { get; set; }
     private static readonly Stopwatch SharedEpoch = Stopwatch.StartNew();
     /// The value a rotation shows between turns, or before it runs: the shared turn, else the first.
-    private int RestingIndex => SharedPhase && animates && !Pair && layers.Count > 1
-        ? QuotaAlternationSchedule.At(SharedEpoch.Elapsed.TotalSeconds, layers.Count).Current : 0;
+    private int RestingIndex
+    {
+        get
+        {
+            if (!SharedPhase || !animates || Pair || layers.Count < 2) return 0;
+            var frame = QuotaAlternationSchedule.At(SharedEpoch.Elapsed.TotalSeconds, layers.Count);
+            return frame.NextOpacity > 0.5 ? frame.Next : frame.Current;
+        }
+    }
     internal string? ShownText => items.Length == 0 ? null : items[Math.Clamp(ShownIndex, 0, items.Length - 1)].Text;
     /// Starts or stops the turns with the same values, e.g. while the island is covered.
     internal void SetAnimates(bool animate) { if (animate != animates) Update(items.ToArray(), animate); }

@@ -1,5 +1,27 @@
 # Harness validation
 
+## Antigravity on Windows · 2026-11-27
+
+The reviewer ran the Release build in place of the installed app on Windows 11 with Antigravity 2.35.2. The module turned on by itself. Its quota appeared after Antigravity started, and History showed both pools. Four stale hub files remained in the folder, and a restart added a new one; Pacer bound the live server each time.
+
+On this computer the profile folder belongs to Administrators, which refused the plugin until the plugin root stopped requiring the user as owner. The guide's restart closed and reopened Antigravity, which then loaded the plugin. The reviewer clicked “Yes, allow this time” for the first progress report. The next report asked again. Clicking row 3, “Yes, and always allow”, saved the global grant. The finished call carried its percent. Antigravity 2.35.2 records that call as `MCP_TOOL` with an `mcpTool` payload, not as `GENERIC`. Reading that payload made the ring show 10%, 40% and 100% on a running task, and the guide turned ready.
+
+A command and a subagent showed the right stages. The child line was titled with its role, and the parent showed a background wait while the child ran. A question showed an awaiting reply and cancel showed interruption at the last reported percent. Each request sent one notification that opens only the app. A finished task kept its final rate.
+
+Turning the ring off while Antigravity ran left the removal pending. Within three seconds of quitting Antigravity, the plugin, its `plugin_data` folder and its `mcp` cache were gone. That cache also holds `instructions.md` with the reporter's own instructions. The global `config.json` kept the grant throughout removal.
+
+## Antigravity on macOS · 2026-11-26
+
+The reviewer observed Antigravity 2.35.2 on this Mac. A new conversation appeared while its first reply was running. The observed first-output latency was 3.43 s. The task showed tool and thinking stages, a child labeled with its role, and a background wait while the child ran. Questions and approvals each produced a single request. Canceling cleared the request and showed interruption. A completed long reply kept its final rate of about 200 t/s. The measured long call had 10,468 output tokens over 3.42 s to first token and 47.27 s of streaming, about 207 t/s.
+
+Both quota pools had a private account scope. Plugin installation and removal preserved the global config. The progress tool itself appeared as an approval. The first conversation opened after installation had no MCP tool available, and the next new conversation had it.
+
+The isolated Mac checks used a synthetic home and excluded the reviewer's live scratch suite. All 37 Antigravity checks and all 263 WorkBuddy, progress and quota checks passed. The full suite listed 1,445 tests, with one Windows-only skip and three failing sandbox-dependent cases (process-start lookup, Darwin notification delivery and lost mouse-up). The full test build and packaged app produced zero warnings, and the packaged stdio reporter smoke test passed. The shared platform contract, its 37 tests, both Windows resource checks and the 12 web identity checks passed on Mac.
+
+Offscreen demo renders in English and Simplified Chinese, in light and dark, covered the module library, onboarding, Settings, Help, History, both island layouts, the layout editors and the unused quota pool. The synthetic ended task showed 200 t/s. Switching to the unused pool showed full quota without a reset countdown.
+
+**Pending live acceptance.** Click row 3, **“Yes, and always allow”**, in Antigravity. Verify that the saved grant makes the guide ready and the next completed report fills the requesting task’s ring. Check the newly added cache cleanup with the installed app’s schema. The Windows run above found that a finished call is `MCP_TOOL` and that the cache holds `instructions.md`; both are now handled in Core.
+
 ## WorkBuddy, WorkBuddy AI and credits by kind (November 2026)
 
 Both WorkBuddy builds were installed on one Windows PC, each signed in to a different account. They keep separate data folders, sign-ins, sites and link schemes, and their app icons are identical, so WorkBuddy AI reuses WorkBuddy's artwork.

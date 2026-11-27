@@ -30,6 +30,7 @@ struct TaskRowView: View {
     private var status: String { presentation.status }
     private var subagents: Int { presentation.subagents }
     private var subagentText: String {
+        if activity.provider.opensApplicationForTasks { return activity.provider.taskOpenLabel }
         if activity.claudeCloud != nil { return L10n.text("claude.cloud.workers_help", subagents) }
         return L10n.text(subagents == 1 ? "activity.subagent_running" : "activity.subagents_running", subagents)
     }
@@ -42,7 +43,7 @@ struct TaskRowView: View {
         L10n.text("performance.first_output", activity.firstTokenLatency.map { String(format: "%.1f s", $0) } ?? "—")
     }
     private var performanceText: String {
-        let speed = rate.map { String(format: "%.1f t/s", $0.value) } ?? L10n.text("performance.awaiting_usage")
+        let speed = rate.map { String(format: "%.1f t/s", $0.value) } ?? (phase == .running ? L10n.text("performance.awaiting_usage") : "—")
         // A cloud run's first output is only known when its turn ends.
         return activity.claudeCloud != nil && phase == .running ? speed : speed + "  ·  " + latencyText
     }
@@ -103,9 +104,11 @@ struct TaskRowView: View {
         return [enabled ? openHelp : L10n.text("activity.no_link"), costHelp].compactMap { $0 }.joined(separator: " ")
     }
 
-    private var accessibilityText: String {
+    var showsSubagentDots: Bool { options.rowFields.contains(.subagents) && !presentation.subagentDotStates.isEmpty }
+
+    var accessibilityText: String {
         let state = [unread ? L10n.text("common.not_viewed") : nil, status, progressRing?.accessibilityText, turnTime,
-                     subagents > 0 ? subagentText : nil, presentation.delegatedCount > 0 ? presentation.delegatedCountText : nil]
+                     showsSubagentDots ? presentation.subagentDotsAccessibility : (subagents > 0 ? subagentText : nil), presentation.delegatedCount > 0 ? presentation.delegatedCountText : nil]
         let model = [modelLabel, effortLabel.map { L10n.text("model.effort_help", $0) }].compactMap { $0 }.joined(separator: " ")
         return activity.provider.displayName + ", " + L10n.text("activity.row_accessibility", name,
             state.compactMap { $0 }.joined(separator: ", "), sourceName ?? L10n.text("common.local")) + ", " + model + (activity.claudeCloud == nil || rate != nil ? ", " + performanceText : "")
@@ -115,47 +118,51 @@ struct TaskRowView: View {
     /// Rows of one line are this tall; two-line rows take 54 points.
     static func height(_ style: ExpandedPanelOptions.RowStyle) -> CGFloat { style == .oneLine ? 38 : 54 }
     private var oneLine: Bool { options.rowStyle == .oneLine }
-    private var showsRateLine: Bool { options.shows(.rate) || (options.shows(.turnTime) && turnTime != nil) }
-    private var showsModelLine: Bool { options.shows(.model) || (options.shows(.cost) && cost != nil) }
+    private var showsRate: Bool { options.shows(.rate) && (rate != nil || activity.claudeCloud == nil) }
+    private var showsTime: Bool { options.shows(.turnTime) && turnTime != nil }
+    private var showsCost: Bool { options.shows(.cost) && cost != nil }
     /// A request for the user, a wait for an answer or a failure replaces the
     /// readings in a one-line row.
     private var statusLeads: Bool { attention != nil || phase == .waitingForInput || activity.turnFailed }
 
     @ViewBuilder private func rowContent(measuring: Bool) -> some View {
-        if oneLine {
-            HStack(spacing: 8) {
-                statusIcon(measuring: measuring)
-                title(measuring: measuring)
-                if presentation.delegatedCount > 0 { DelegatedCountChip(text: presentation.delegatedCountText) }
-                if statusLeads {
-                    Text(status).font(.system(size: 11, weight: .medium)).foregroundStyle(detailColor).lineLimit(1).fixedSize()
-                } else if showsRateLine {
-                    rateLine
+        HStack(spacing: oneLine ? 8 : 10) {
+            statusIcon(measuring: measuring)
+            textLines(measuring: measuring)
+        }
+        .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
+    }
+
+    func textLines(measuring: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            TaskLineLayout(measuring: measuring, hasModel: false, hasTime: showsTime && !(oneLine && statusLeads)) { _, showTime in
+                HStack(alignment: oneLine ? .center : .firstTextBaseline, spacing: oneLine ? 8 : 16) {
+                    title(measuring: measuring)
+                    if oneLine, presentation.delegatedCount > 0 { DelegatedCountChip(text: presentation.delegatedCountText) }
+                    if oneLine, showsSubagentDots {
+                        SubagentDotsView(presentation: presentation, limit: ActivityTaskRowPresentation.compactSubagentDotLimit)
+                    }
+                    if oneLine, statusLeads {
+                        Text(status).font(.system(size: 11, weight: .medium)).foregroundStyle(detailColor).lineLimit(1).fixedSize()
+                    } else if showsRate || showTime { rateLine(showTime: showTime) }
                 }
             }
-            .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
-        } else {
-            HStack(spacing: 10) {
-                statusIcon(measuring: measuring)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .firstTextBaseline, spacing: 16) {
-                        title(measuring: measuring)
-                        if showsRateLine { rateLine }
-                    }
+            if !oneLine {
+                TaskLineLayout(measuring: measuring, hasModel: options.shows(.model), hasTime: false) { showModel, _ in
                     HStack(alignment: .firstTextBaseline, spacing: 16) {
                         statusLine.frame(maxWidth: measuring ? nil : .infinity, alignment: .leading)
-                        if showsModelLine { modelLine }
+                        if showsCost || showModel { modelLine(showModel: showModel) }
                     }
                 }
             }
-            .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
         }
     }
 
     private func title(measuring: Bool) -> some View {
         Text(name).font(.system(size: 13, weight: .semibold))
             .foregroundStyle(dimmed ? PacerPalette.secondary : PacerPalette.primary).lineLimit(1)
-            .frame(maxWidth: measuring ? Self.measuredTitleWidth : .infinity, alignment: .leading)
+            .truncationMode(.tail)
+            .frame(minWidth: 48, maxWidth: measuring ? Self.measuredTitleWidth : .infinity, alignment: .leading)
     }
 
     /// The ring and the state share one icon, 28 points or 22 in a one-line
@@ -190,7 +197,9 @@ struct TaskRowView: View {
             Text(status).foregroundStyle(detailColor).lineLimit(1).layoutPriority(1)
             // Codex for Claude runs this Claude task holds.
             if presentation.delegatedCount > 0 { DelegatedCountChip(text: presentation.delegatedCountText) }
-            if subagents > 0, options.shows(.subagents) {
+            if showsSubagentDots {
+                SubagentDotsView(presentation: presentation)
+            } else if subagents > 0, options.shows(.subagents) {
                 HStack(spacing: 3) {
                     Image(systemName: "person.2").font(.system(size: 9, weight: .semibold))
                     Text(presentation.subagentText).monospacedDigit()
@@ -211,19 +220,19 @@ struct TaskRowView: View {
         .font(.system(size: 11, weight: .medium))
     }
 
-    private var rateLine: some View {
+    private func rateLine(showTime: Bool) -> some View {
         let showsRate = options.shows(.rate)
         return HStack(alignment: .firstTextBaseline, spacing: 0) {
             if showsRate, let rate {
                 Text(presentation.rateText ?? "").font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(rate.isFresh && !dimmed ? PacerPalette.primary : PacerPalette.secondary)
                 Text(" t/s").font(.system(size: 10, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
-            } else if showsRate, activity.claudeCloud == nil {
+            } else if showsRate, activity.claudeCloud == nil, phase == .running {
                 Text(L10n.text("performance.awaiting_usage")).font(.system(size: 11, weight: .medium))
                     .foregroundStyle(PacerPalette.tertiary)
             }
-            if let turnTime, options.shows(.turnTime) {
-                if showsRate, rate != nil || activity.claudeCloud == nil {
+            if showTime, let turnTime, options.shows(.turnTime) {
+                if showsRate, rate != nil || (activity.claudeCloud == nil && phase == .running) {
                     Text(" · ").font(.system(size: 11, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
                 }
                 Text(turnTime).font(.system(size: 11, weight: .medium))
@@ -233,7 +242,7 @@ struct TaskRowView: View {
         .monospacedDigit().lineLimit(1).fixedSize()
     }
 
-    private var modelLine: some View {
+    private func modelLine(showModel: Bool) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
             if let cost, options.shows(.cost) {
                 HStack(alignment: .center, spacing: 4) {
@@ -244,7 +253,7 @@ struct TaskRowView: View {
                 }
                 .padding(.trailing, 3)
             }
-            if options.shows(.model) {
+            if showModel, options.shows(.model) {
                 Text(modelLabel)
                 if let effortLabel { Text(effortLabel).opacity(0.62) }
             }

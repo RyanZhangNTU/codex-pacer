@@ -5,37 +5,38 @@ import SwiftUI
 
 /// The progress ring card for a module whose app must trust Pacer's tool,
 /// as Core words it: the title with ⓘ, a chip and the switch; then the
-/// steps while setting up, or one line and its action for a problem. Ready,
-/// it is the switch row alone, like any other service's ring.
+/// steps while setting up, then the result or a recovery action.
 struct ProgressGuideRows: View {
     @ObservedObject var model: IslandModel
     let provider: AgentProvider
     @Binding var isOn: Bool
+    var language: AppLanguage = L10n.language
     /// The connectors link did not open; the app itself opened instead, if it could.
     @State private var openFailed = false
     static let anchor = "progress-guide"
 
     /// Pacer couldn't open the app; the user opens it and finds the connectors.
     static func openFailed(_ provider: AgentProvider) -> String {
-        L10n.text("harness.progress_state.open_failed", HarnessRegistry.descriptor(for: provider)?.name ?? provider.displayName)
+        let connectors = HarnessRegistry.localHarnesses.first { $0.descriptor.id == provider }?.connectorsPath
+        return L10n.text(connectors == nil ? "progress_guide.plugin.open_failed" : "harness.progress_state.open_failed", provider.displayName)
     }
 
     /// The card shown: nothing while the ring is off, unless removing the tool failed.
-    static func guide(_ model: IslandModel, _ provider: AgentProvider, isOn: Bool) -> HarnessProgressGuide? {
-        let guide = model.progressGuide(provider)
-        return isOn || guide?.stage == .cleanupFailed ? guide : nil
+    static func guide(_ model: IslandModel, _ provider: AgentProvider, isOn: Bool, language: AppLanguage? = nil) -> HarnessProgressGuide? {
+        let guide = model.progressGuide(provider, language: language)
+        return isOn || guide?.stage == .cleanupFailed || guide?.stage == .removalPending ? guide : nil
     }
     /// Steps or a problem to show under the header.
     static func opens(_ guide: HarnessProgressGuide?) -> Bool { guide.map(ProgressGuideBody.shows) == true }
 
     var body: some View {
-        let guide = Self.guide(model, provider, isOn: isOn)
+        let guide = Self.guide(model, provider, isOn: isOn, language: language)
         VStack(alignment: .leading, spacing: 0) {
-            ProgressGuideHeader(guide: guide, info: guide?.info ?? model.progressGuideInfo(provider), isOn: $isOn)
+            ProgressGuideHeader(guide: guide, info: guide?.info ?? model.progressGuideInfo(provider), isOn: $isOn, language: language)
                 .frame(minHeight: 28)
             if let guide, Self.opens(guide) {
                 Rectangle().fill(MainPalette.separator).frame(height: 1).padding(.top, 8)
-                ProgressGuideBody(guide: guide, provider: provider, restart: model.harnessRestarts[provider], perform: perform)
+                ProgressGuideBody(guide: guide, provider: provider, restart: model.harnessRestarts[provider], language: language, perform: perform)
                     .padding(.top, 4)
                 if openFailed, [.openConnectors, .openApp].contains(guide.action) {
                     Text(Self.openFailed(provider)).font(.system(size: 12)).foregroundStyle(MainPalette.attention)
@@ -57,9 +58,12 @@ struct ProgressGuideRows: View {
     }
 
     private func perform(_ action: HarnessProgressGuide.Action) {
+        if model.isDemo, action != .retry, action != .openApp { model.openDesktopApplication(provider); return }
         switch action {
         case .retry: model.syncLocalHarnessProgress(force: provider)
-        case .openApp: Task { openFailed = !(await MacLocalHarnessApplication.openApplication(provider: provider)) }
+        case .openApp:
+            let screen = NSApp.keyWindow?.screen
+            Task { openFailed = !(await model.openHarnessGuideApp(provider, screen: screen)) }
         case .openConnectors:
             // Without the connectors link, the app itself is the next best place.
             let screen = NSApp.keyWindow?.screen
@@ -79,10 +83,11 @@ private struct ProgressGuideHeader: View {
     let guide: HarnessProgressGuide?
     let info: String
     @Binding var isOn: Bool
+    let language: AppLanguage
     @State private var showsInfo = false
 
     var body: some View {
-        let title = L10n.text("main.claude.ring")
+        let title = L10n.text("main.claude.ring", language: language)
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text(title).font(.system(size: 13, weight: ProgressGuideRows.opens(guide) ? .semibold : .regular))
@@ -136,13 +141,14 @@ struct ProgressGuideChip: View {
 /// The steps, or a problem's line and action, under the header. Each step
 /// is one line; the current one carries its picture, its action and what
 /// the card waits for.
-private struct ProgressGuideBody: View {
+struct ProgressGuideBody: View {
     let guide: HarnessProgressGuide
     let provider: AgentProvider
     var restart: IslandModel.HarnessRestart?
+    let language: AppLanguage
     let perform: (HarnessProgressGuide.Action) -> Void
 
-    static func shows(_ guide: HarnessProgressGuide) -> Bool { !guide.steps.isEmpty || guide.line != nil || guide.action != nil }
+    static func shows(_ guide: HarnessProgressGuide) -> Bool { !guide.steps.isEmpty || guide.line != nil || guide.action != nil || guide.picture != nil }
 
     var body: some View {
         if guide.steps.isEmpty {
@@ -150,6 +156,7 @@ private struct ProgressGuideBody: View {
                 if let line = guide.line {
                     Text(line).font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true)
                 }
+                ProgressGuidePicture(picture: guide.picture, approvalCard: guide.approvalCard, provider: provider)
                 actionButton
             }
             .padding(.vertical, 4)
@@ -174,11 +181,14 @@ private struct ProgressGuideBody: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(minHeight: 20)
                 if current {
-                    switch guide.picture {
-                    case .customConnector?: CustomConnectorPicture()
-                    case .trust?: TrustPicture(provider: provider)
-                    case nil: EmptyView()
+                    if let example = guide.example {
+                        ProgressGuideExample(text: example, language: language)
                     }
+                    if let detail = step.detail {
+                        Text(detail).font(.system(size: 12.5)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    ProgressGuidePicture(picture: guide.picture, approvalCard: guide.approvalCard, provider: provider)
                     if guide.action == .restartApp, restart == .confirm {
                         Text(L10n.text("progress_guide.restart.confirm", provider.displayName)).font(.system(size: 12))
                             .foregroundStyle(MainPalette.attention).fixedSize(horizontal: false, vertical: true)
@@ -224,6 +234,37 @@ private struct ProgressGuideBody: View {
     }
 }
 
+struct ProgressGuideExample: View {
+    let text: String
+    let language: AppLanguage
+    @State private var lastCopy: Date?
+
+    var body: some View {
+        let copy = L10n.text("progress_guide.action.copy", language: language)
+        let copied = L10n.text("support.share.copied", language: language)
+        HStack(alignment: .top, spacing: 10) {
+            Text(text).font(.system(size: 13))
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                if TextClipboard.write(text) { lastCopy = Date() }
+            } label: {
+                // Reserve the feedback's width so copying doesn't rewrap the prompt.
+                Text(copied).hidden().overlay { Text(lastCopy == nil ? copy : copied) }
+            }
+            .buttonStyle(.main).fixedSize()
+            .accessibilityLabel(lastCopy == nil ? copy : copied)
+        }
+        .padding(10)
+        .background(MainPalette.infoFill, in: RoundedRectangle(cornerRadius: 8))
+        .task(id: lastCopy) {
+            guard lastCopy != nil else { return }
+            try? await Task.sleep(for: .seconds(1.5))
+            if !Task.isCancelled { lastCopy = nil }
+        }
+    }
+}
+
 private struct StepDot: View {
     let number: Int
     let state: HarnessProgressGuide.StepState
@@ -244,6 +285,76 @@ private struct StepDot: View {
             }
         }
         .frame(width: 20, height: 20)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Both surfaces draw the current step from the same Core presentation.
+struct ProgressGuidePicture: View {
+    let picture: HarnessProgressGuide.Picture?
+    let approvalCard: AntigravityApprovalCard?
+    let provider: AgentProvider
+
+    var body: some View {
+        switch picture {
+        case .customConnector: CustomConnectorPicture()
+        case .trust: TrustPicture(provider: provider)
+        case .antigravityApproval:
+            if let approvalCard { AntigravityApprovalPicture(card: approvalCard) }
+        case nil: EmptyView()
+        }
+    }
+}
+
+/// The docked approval card after selecting the lasting grant, ready to submit.
+struct AntigravityApprovalPicture: View {
+    let card: AntigravityApprovalCard
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(card.title, systemImage: "lock.fill")
+                .font(.system(size: 14, weight: .bold))
+            Text(card.resource).font(.system(size: 11, design: .monospaced))
+                .lineLimit(1).minimumScaleFactor(0.8)
+                .padding(.horizontal, 8).padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.secondary.opacity(0.22)))
+            // As Antigravity draws it above the input box: plain grey digits, no
+            // separators, the chosen row on a light grey fill, and Skip and
+            // Submit on the same line as the last row.
+            VStack(spacing: 2) {
+                ForEach(Array(card.choices.enumerated()), id: \.offset) { index, choice in
+                    let selected = choice == card.always
+                    HStack(spacing: 10) {
+                        Text(String(index + 1)).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+                        Text(choice).foregroundStyle(selected ? Color.primary : Color.secondary)
+                        if choice == card.no {
+                            Text(card.noHint).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.tail)
+                            Spacer(minLength: 8)
+                            Image(systemName: "mic").foregroundStyle(.secondary)
+                            Text(card.skip).foregroundStyle(.secondary)
+                            Text(card.submit + " ↵")
+                                .fontWeight(.semibold).foregroundStyle(.white)
+                                .padding(.horizontal, 10).padding(.vertical, 4)
+                                .background(Color(red: 0.13, green: 0.36, blue: 0.76), in: Capsule())
+                                .padding(2)
+                                .overlay { PulsingRing(cornerRadius: 14, lineWidth: 2) }
+                                .fixedSize()
+                        }
+                    }
+                    .font(.system(size: 12)).lineLimit(1)
+                    .padding(.horizontal, 8).padding(.vertical, 5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background { if selected { RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.10)) } }
+                    .overlay { if selected { PulsingRing(cornerRadius: 7, lineWidth: 2) } }
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: 420, alignment: .leading)
+        .background(Color.gray.opacity(0.12), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.secondary.opacity(0.35)))
         .accessibilityHidden(true)
     }
 }

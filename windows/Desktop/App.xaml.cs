@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -23,7 +24,7 @@ public partial class App : Application
     private Forms.NotifyIcon? tray;
     private System.Drawing.Icon? trayIcon;
     private IslandWindow? island;
-    private bool quitting;
+    private bool quitting, sleeping;
     private DesktopPreferences preferences = new();
     private PreferencesStore? preferencesStore;
     private PreferencesSession? settingsSession;
@@ -34,6 +35,9 @@ public partial class App : Application
     private IStartupRegistration? startupRegistration;
     private UiText? ui;
     private bool demo;
+    private bool demoSubagents, demoAntigravity, demoAntigravityGuide;
+    private readonly HashSet<string> shownProgressApprovals = new(StringComparer.Ordinal);
+    private readonly HashSet<string> shownMissedConversations = new(StringComparer.Ordinal);
     private string? demoPreferencesFile;
     private Guid? demoPreferencesScope;
     private bool? demoDark;
@@ -69,7 +73,10 @@ public partial class App : Application
             catch { Shutdown(1); }
             return;
         }
-        demo = e.Args.Contains("--demo");
+        demoAntigravity = e.Args.Contains("--demo-antigravity");
+        demoAntigravityGuide = e.Args.Contains("--demo-antigravity-guide");
+        demo = demoAntigravity || demoAntigravityGuide || e.Args.Contains("--demo");
+        demoSubagents = demo && e.Args.Contains("--demo-subagents");
         int themeIndex = Array.IndexOf(e.Args, "--theme");
         if (themeIndex >= 0)
         {
@@ -107,9 +114,9 @@ public partial class App : Application
         if (providersIndex >= 0)
         {
             if (!demo || providersIndex + 1 >= e.Args.Length) throw new ArgumentException("Provider fixtures require demo mode.");
-            string[] known = ["codex", "claude", "deepseek", "workbuddy", "workbuddy-ai"];
+            string[] known = ["codex", "claude", "deepseek", "workbuddy", "workbuddy-ai", "antigravity"];
             string[] providers = e.Args[providersIndex + 1] == "all" ? ["codex", "claude", "deepseek"] : e.Args[providersIndex + 1].Split(',');
-            if (providers.Length is < 1 or > 5 || providers.Distinct().Count() != providers.Length || providers.Any(value => !known.Contains(value)))
+            if (providers.Length < 1 || providers.Length > known.Length || providers.Distinct().Count() != providers.Length || providers.Any(value => !known.Contains(value)))
                 throw new ArgumentException("Unknown demo providers.");
             preferences = preferences with { ProviderModes = known.ToDictionary(provider => provider, provider => providers.Contains(provider) ? "enabled" : "disabled") };
         }
@@ -121,17 +128,17 @@ public partial class App : Application
             if (position < 0) throw new ArgumentException("Unknown island position.");
         }
         int stage = 0, stageIndex = Array.IndexOf(e.Args, "--stage");
-        if (stageIndex >= 0 && (!demo || stageIndex + 1 >= e.Args.Length || !int.TryParse(e.Args[stageIndex + 1], out stage) || stage < 0 || stage > 3))
-            throw new ArgumentException("Demo stage must be between zero and three.");
+        int lastStage = demoAntigravityGuide ? 4 : 3;
+        if (stageIndex >= 0 && (!demo || stageIndex + 1 >= e.Args.Length || !int.TryParse(e.Args[stageIndex + 1], out stage) || stage < 0 || stage > lastStage))
+            throw new ArgumentException($"Demo stage must be between 0 and {lastStage}.");
         int capture = Array.IndexOf(e.Args, "--capture-preview");
         bool captureSettings = e.Args.Contains("--settings-preview");
         if (captureSettings && (!demo || capture < 0)) throw new ArgumentException("Settings capture requires a demo preview destination.");
         int paneIndex = Array.IndexOf(e.Args, "--settings-pane");
         if (paneIndex >= 0)
         {
-            if (!demo || !captureSettings || paneIndex + 1 >= e.Args.Length || e.Args[paneIndex + 1] is not ("overview" or "history" or "general" or "appearance" or "collapsed" or "expandedPanel" or "codex" or "claude" or "deepseek" or "modules" or "harness.workbuddy" or "harness.workbuddy-ai" or "notifications" or "reminders" or "remote" or "about" or "support"))
+            if (!demo || !captureSettings || paneIndex + 1 >= e.Args.Length || e.Args[paneIndex + 1] is not ("overview" or "history" or "general" or "appearance" or "collapsed" or "expandedPanel" or "codex" or "claude" or "deepseek" or "modules" or "harness.workbuddy" or "harness.workbuddy-ai" or "harness.antigravity" or "notifications" or "reminders" or "remote" or "about" or "support"))
                 throw new ArgumentException("Settings pane fixtures require a supported demo preview.");
-            preferences = preferences with { LastSettingsPane = e.Args[paneIndex + 1] };
         }
         if (capture >= 0 && (!demo || capture + 1 >= e.Args.Length || !Path.IsPathFullyQualified(e.Args[capture + 1])))
             throw new ArgumentException("Preview capture requires demo mode and an absolute output path.");
@@ -188,6 +195,7 @@ public partial class App : Application
             (preferences, preferencesUnavailable) = preferencesStore.Load(migrateOptIns: !demo);
             if (positionIndex < 0) position = Array.IndexOf(positions, preferences.Position);
         }
+        if (paneIndex >= 0) preferences = preferences with { LastSettingsPane = e.Args[paneIndex + 1] };
         string language = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh" ? "zh-Hans" : "en";
         if (preferencesStore != null && preferences.Language != "system") language = preferences.Language;
         int languageIndex = Array.IndexOf(e.Args, "--language");
@@ -209,6 +217,7 @@ public partial class App : Application
             // Colors come with the registry entry; the island redraws on its next snapshot.
             PacerPalette.RegisterModules(snapshot.Modules);
             WindowsConversationApplication.Register(snapshot.Modules);
+            UpdateProgressGuideFloat();
             foreach (var account in accounts.All)
                 account.SetEnabled(snapshot.Modules?.Any(module =>
                     module.Provider == account.Provider && module is { Enabled: true, ReportsAccountCredits: true }) == true);
@@ -226,7 +235,7 @@ public partial class App : Application
         var applications = demo ? new WindowsDesktopApplications(_ => true, _ => true) : new WindowsDesktopApplications();
         island = new IslandWindow(engine, demo, language == "zh-Hans", position, desktopApplications: applications,
             displayMode: positionIndex >= 0 ? 2 : Array.IndexOf(new[] { "automatic", "notch", "floating" }, preferences.DisplayMode),
-            canConnectDeepSeekWeb: () => webConnection.Available, harnessAccounts: accounts);
+            canConnectDeepSeekWeb: () => webConnection.Available, harnessAccounts: accounts, demoAntigravityGuide: demoAntigravityGuide);
         island.Presence.Changed += OnPresenceChanged;
         if (capture < 0 || activationQa != null)
             instanceActivation = new WindowsInstanceActivation(island, action =>
@@ -299,7 +308,8 @@ public partial class App : Application
                     !await applications.OpenConversationAsync(plan, context => engine.QueryAsync<bool>("activateActivityHost", new { context }))) return false;
                 await engine.SendAsync("completeActivityOpen", new { context = link.Context }); return true;
             },
-            provider => { Dispatcher.Invoke(() => OpenProviderSettings(provider)); return true; });
+            provider => { Dispatcher.Invoke(() => OpenProviderSettings(provider)); return true; },
+            () => WindowsConversationApplication.OpenApplicationAsync("antigravity"));
         notifications = new NotificationSession(settingsSession,
             demo ? new DemoSystemNotifications() : new WindowsSystemNotifications(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico")),
             action => Dispatcher.InvokeAsync(action), action => _ = notificationActions.HandleReferenceAsync(action), demo, () => applications.CanOpenHarness);
@@ -353,7 +363,8 @@ public partial class App : Application
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException) { }
             await engine.StartAsync(executable, demo, language, configuration: preferences.EngineConfiguration(), referenceFixture: referenceFixture,
-                claudeRuntimeRoot: runtimeRoot, codexProgressRuntimeRoot: codexProgressRuntimeRoot, crashLog: crashLog);
+                claudeRuntimeRoot: runtimeRoot, codexProgressRuntimeRoot: codexProgressRuntimeRoot, crashLog: crashLog, demoSubagents: demoSubagents,
+                demoAntigravity: demoAntigravity, demoAntigravityGuide: demoAntigravityGuide);
             ShellProjection.Ready();
             engineReady.TrySetResult();
             engineReadyTicks = Environment.TickCount64;
@@ -413,7 +424,26 @@ public partial class App : Application
         settings.Show(); settings.Activate();
     }
 
-    private readonly System.Collections.Generic.Dictionary<string, string> pushedAccountCredits = new(StringComparer.Ordinal);
+    private void UpdateProgressGuideFloat()
+    {
+        if (engine is not { } client || settingsSession == null || ui == null || island == null) return;
+        HarnessGuideFloat.Follow();
+        var module = client.LatestSnapshot?.Modules?.FirstOrDefault(value => value.Provider == "antigravity");
+        bool active = !sleeping && !quitting && !client.IsConnectionClosed;
+        if (module == null) return;
+        bool ringEnabled = !settingsSession.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal);
+        var trigger = module.GetProgressGuideFloatTrigger(shownProgressApprovals, shownMissedConversations, active, ringEnabled, demo, demoAntigravityGuide);
+        if (trigger == null) return;
+        trigger.Remember(shownProgressApprovals, shownMissedConversations);
+        if (HarnessGuideFloat.Current?.Provider == module.Provider) return;
+        var appearance = island.AppearanceSource?.Current;
+        bool dark = demoDark ?? appearance?.Dark ?? SettingsWindow.IsSystemDark();
+        var resources = HarnessGuideFloat.StandaloneResources(dark, appearance, AccentPalette.Controls(settingsSession.Current.AccentColor, !demo));
+        var area = Forms.Screen.FromHandle(AppWindows.GetForegroundWindow()).WorkingArea;
+        HarnessGuideFloat.Open(module, client, settingsSession, ui, resources, !dark, area);
+    }
+
+    private readonly Dictionary<string, string> pushedAccountCredits = new(StringComparer.Ordinal);
     private async Task PushAccountCreditsAsync(string provider)
     {
         // Sleep hides the reading without changing the account; the engine keeps
@@ -452,6 +482,9 @@ public partial class App : Application
         {
             start.ArgumentList.Add("--demo"); start.ArgumentList.Add("--language");
             start.ArgumentList.Add(preferences.Language == "system" ? (CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh" ? "zh-Hans" : "en") : preferences.Language);
+            if (demoSubagents) start.ArgumentList.Add("--demo-subagents");
+            if (demoAntigravity) start.ArgumentList.Add("--demo-antigravity");
+            if (demoAntigravityGuide) start.ArgumentList.Add("--demo-antigravity-guide");
         }
         if (demoPreferencesFile != null)
         {
@@ -484,6 +517,7 @@ public partial class App : Application
     {
         if (quitting) return;
         quitting = true;
+        HarnessGuideFloat.Current?.Close();
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         NetworkChange.NetworkAddressChanged -= OnNetworkAddressChanged;
         if (island != null) island.Presence.Changed -= OnPresenceChanged;
@@ -514,6 +548,8 @@ public partial class App : Application
         if (method == null) return;
         Dispatcher.BeginInvoke(new Action(async () =>
         {
+            sleeping = change.Mode == PowerModes.Suspend;
+            if (sleeping) HarnessGuideFloat.Current?.Close();
             if (quitting || !engineReady.Task.IsCompletedSuccessfully || engine == null) return;
             foreach (var account in harnessAccounts?.All ?? []) account.SetSleeping(change.Mode == PowerModes.Suspend);
             try { await engine.SendAsync(method); }

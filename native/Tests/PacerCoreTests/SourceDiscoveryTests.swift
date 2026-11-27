@@ -175,6 +175,20 @@ final class SourceDiscoveryTests: XCTestCase {
         try JSONSerialization.data(withJSONObject:state).write(to:home.appendingPathComponent(".codex-global-state.json"))
         XCTAssertEqual(RemoteActivityTarget.configured(home:home).map(\.alias), ["one"])
     }
+    func testCodexOffHostsLeaveSlotsForLaterDesktopEntries() throws {
+        let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
+        let aliases = (0..<10).map { "fixture-\($0)" }
+        let ids = aliases.map { ConnectionSource.sshPrefix + $0 }
+        let rows = zip(ids, aliases).map { ["hostId": $0, "alias": $1, "source": "discovered"] }
+        try JSONSerialization.data(withJSONObject: ["codex-managed-remote-connections": rows,
+            "remote-connection-auto-connect-by-host-id": Dictionary(uniqueKeysWithValues: ids.map { ($0, true) })])
+            .write(to: home.appendingPathComponent(".codex-global-state.json"))
+        let off = SSHHostMonitoring(offIDs: Array(ids.prefix(2)))
+        for discovered in [RemoteActivityTarget.configured(home: home), RemoteActivityTarget.claudeCodexTargets(home: home)] {
+            XCTAssertEqual(off.monitored(discovered).map(\.id), Array(ids.dropFirst(2)))
+        }
+    }
+
     func testSSHDiscoveryFollowsTheCurrentDesktopAccount() throws {
         let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
         let file = home.appendingPathComponent(".codex-global-state.json")

@@ -1,6 +1,54 @@
 import Foundation
 import CryptoKit
 
+/// The saved order is newest first so a new opt-out always takes effect at the limit.
+public struct SSHHostMonitoring: Decodable, Equatable, Sendable {
+    public static let defaultsKey = "sshHostsOff"
+    public static let maximumOff = 64
+    public static let sourceLimit = 8
+    public private(set) var offIDs: [String]
+
+    public init(offIDs: [String] = []) {
+        var seen = Set<String>()
+        self.offIDs = []
+        for id in offIDs where ConnectionSource.isValidSSHSourceID(id, prefix: ConnectionSource.sshPrefix) || ConnectionSource.isManagedSSHSourceID(id) {
+            if seen.insert(id).inserted { self.offIDs.append(id) }
+            if self.offIDs.count == Self.maximumOff { break }
+        }
+    }
+
+    /// The engine receives the same string array as the desktop preferences file.
+    public init(from decoder: Decoder) throws {
+        var ids: [String] = []
+        if var values = try? decoder.unkeyedContainer() {
+            while !values.isAtEnd {
+                let value = try values.superDecoder()
+                if let id = try? value.singleValueContainer().decode(String.self) { ids.append(id) }
+            }
+        }
+        self.init(offIDs: ids)
+    }
+
+    public init(defaults: UserDefaults) {
+        self.init(offIDs: defaults.array(forKey: Self.defaultsKey)?.compactMap { $0 as? String } ?? [])
+    }
+
+    public func setting(_ id: String, monitored: Bool) -> Self {
+        var ids = offIDs.filter { $0 != id }
+        if !monitored { ids.insert(id, at: 0) }
+        return Self(offIDs: ids)
+    }
+
+    public func monitored(_ discovered: [RemoteActivityTarget]) -> [RemoteActivityTarget] {
+        monitored(discovered, id: \.id)
+    }
+
+    func monitored<T>(_ discovered: [T], id: KeyPath<T, String>) -> [T] {
+        let off = Set(offIDs)
+        return Array(discovered.lazy.filter { !off.contains($0[keyPath: id]) }.prefix(Self.sourceLimit))
+    }
+}
+
 public struct RemoteActivityTarget: Equatable, Sendable {
     public let id: String
     public let name: String
@@ -95,7 +143,7 @@ public struct RemoteActivityTarget: Equatable, Sendable {
                 try value.forEachField(maximumCount: 4096) { route, _ in routes.append(route) }
             }
         } catch { routes = [] }
-        let maximumTargets = 8
+        let maximumTargets = SSHHostMonitoring.maximumOff + SSHHostMonitoring.sourceLimit
         var discovered: [RemoteActivityTarget] = [], managed: [RemoteActivityTarget] = []
         var seen = Set<String>()
         for row in rows {
@@ -107,7 +155,7 @@ public struct RemoteActivityTarget: Equatable, Sendable {
             }
             switch c["source"]?.string() {
             case "discovered":
-                guard id.hasPrefix(ConnectionSource.sshPrefix), let alias = c["alias"]?.string(),
+                guard ConnectionSource.isValidSSHSourceID(id, prefix: ConnectionSource.sshPrefix), let alias = c["alias"]?.string(),
                       alias.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil else { continue }
                 discovered.append(.init(id: id, name: c["displayName"]?.string(limit: 4096) ?? alias, alias: alias, home: path))
             case "codex-managed":

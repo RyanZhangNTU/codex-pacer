@@ -260,7 +260,7 @@ struct SettingsView: View {
             if model.claudeConnectionNeeded { return (name + " · " + L10n.text("claude.account.signed_out"), L10n.text("main.attention.quota_waits")) }
         }
         if let summary = progressAttention(provider), let guide = model.progressGuide(provider) {
-            return (name + " · " + summary, guide.steps.first { $0.state == .current }?.title ?? guide.line ?? "")
+            return (IslandModel.progressAttentionTitle(summary, provider: provider), guide.steps.first { $0.state == .current }?.title ?? guide.line ?? "")
         }
         return nil
     }
@@ -332,7 +332,7 @@ struct SettingsView: View {
                 options: $componentOptions, deepseekBudgets: $deepseekBudgets,
                 providers: AgentProvider.allCases.filter { moduleEnabled($0) }, openNotifications: { pane = .notifications })
         case .expandedPanel:
-            SettingsExpandedPanelPane(savedLayout: $panelLayout, options: $panelOptions, selection: $panelSelection,
+            SettingsExpandedPanelPane(expandMode: $model.expandMode, savedLayout: $panelLayout, options: $panelOptions, selection: $panelSelection,
                 quotaStyle: $quotaStyle, retention: $completedRetention, showsAppButtons: $showsAppButtons,
                 providers: AgentProvider.allCases.filter { moduleEnabled($0) },
                 deepseekDetailed: DeepSeekPanelStyle.load() == .detailed,

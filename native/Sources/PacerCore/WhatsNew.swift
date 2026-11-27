@@ -36,6 +36,12 @@ public enum WhatsNew {
     /// Newest first. Add a version's highlights while preparing its release;
     /// both Localizable.strings catalogs need every key.
     public static let releases = [
+        Release(version: "4.8.0", items: [
+            Item(symbol: "sparkle", titleKey: "whats_new.antigravity", detailKey: "whats_new.antigravity_detail", control: .openModules),
+            Item(symbol: "person.2", titleKey: "whats_new.subagent_lines", detailKey: "whats_new.subagent_lines_detail"),
+            Item(symbol: "cursorarrow.rays", titleKey: "whats_new.click_to_open", detailKey: "whats_new.click_to_open_detail",
+                 control: .openExpandedPanel)
+        ]),
         // Codex for Claude needs the Claude module; Settings › opens Collaboration, where its guide waits.
         Release(version: "4.7.0", items: [
             Item(symbol: "arrow.triangle.branch", titleKey: "whats_new.codex_for_claude", detailKey: "whats_new.codex_for_claude_detail",
