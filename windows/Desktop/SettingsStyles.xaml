@@ -1,5 +1,24 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:CodexPacer.Windows">
+ <Style x:Key="ApprovalPictureRing" TargetType="Border">
+  <Setter Property="IsEnabled" Value="{DynamicResource {x:Static SystemParameters.ClientAreaAnimationKey}}"/>
+  <Style.Triggers>
+   <MultiTrigger>
+    <MultiTrigger.Conditions>
+     <Condition Property="IsVisible" Value="True"/>
+     <Condition Property="IsEnabled" Value="True"/>
+    </MultiTrigger.Conditions>
+    <MultiTrigger.EnterActions>
+     <BeginStoryboard Name="ApprovalPulse">
+      <Storyboard Timeline.DesiredFrameRate="20">
+       <DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0.45" Duration="0:0:0.8" AutoReverse="True" RepeatBehavior="Forever"/>
+      </Storyboard>
+     </BeginStoryboard>
+    </MultiTrigger.EnterActions>
+    <MultiTrigger.ExitActions><RemoveStoryboard BeginStoryboardName="ApprovalPulse"/></MultiTrigger.ExitActions>
+   </MultiTrigger>
+  </Style.Triggers>
+ </Style>
  <DataTemplate x:Key="SettingsButtonText"><TextBlock Text="{Binding}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/></DataTemplate>
  <Style x:Key="SettingsProgressBar" TargetType="ProgressBar">
   <Setter Property="Height" Value="6"/><Setter Property="Minimum" Value="0"/><Setter Property="Maximum" Value="1"/>

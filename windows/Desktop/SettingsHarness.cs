@@ -122,7 +122,7 @@ internal sealed partial class SettingsWindow
             };
             display.Add(InfoRow(groups.Title, choice, id: id + ".quota_group"));
         }
-        if (descriptor.HasTaskProgress == true) display.Add(BuildHarnessProgressRow(client, provider, id, descriptor));
+        if (descriptor.HasTaskProgress == true) display.Add(BuildHarnessProgressRow(provider, id, descriptor));
         if (descriptor.ReportsAccountCredits == true || descriptor.ReportsSessionUsage == true)
         {
             var credits = Toggle("provider.turn_usage", "main.info.harness_turn_credits", id + ".turn_credits", out var creditsSwitch);
@@ -156,7 +156,7 @@ internal sealed partial class SettingsWindow
 
     /// The progress ring switch. A module whose app must trust Pacer's tool also
     /// gets Core's step card under it, until the app has reported progress.
-    private UIElement BuildHarnessProgressRow(EngineClient client, string provider, string id, EngineModule descriptor)
+    internal UIElement BuildHarnessProgressRow(string provider, string id, EngineModule descriptor)
     {
         string title = ui.Text("main.claude.ring");
         var progress = new CheckBox { Style = (Style)FindResource("SettingsSwitch"), VerticalAlignment = VerticalAlignment.Center };
@@ -225,7 +225,7 @@ internal sealed partial class SettingsWindow
         foreach (UIElement child in harnessProgressBody.Children) PageAccessibility.Retire(child);
         harnessProgressBody.Children.Clear();
         // A stage with only an action, such as opening an app never opened, still shows its button, as on the Mac.
-        bool shown = guide != null && (guide.Steps.Count > 0 || guide.Line != null || guide.Action != null);
+        bool shown = guide != null && (guide.Steps.Count > 0 || guide.Line != null || guide.Action != null || guide.Picture != null);
         harnessProgressBody.Visibility = shown ? Visibility.Visible : Visibility.Collapsed;
         if (!shown) return;
 
@@ -234,22 +234,24 @@ internal sealed partial class SettingsWindow
             if (guide!.Action is not string action || guide.ActionTitle is not string title) return null;
             // A prompt turns the button into its confirmation.
             if (harnessGuidePrompt is { Kind: "tasks" }) { action = "restartConfirmed"; title = ui.Text("progress_guide.restart.confirm_action"); }
-            var button = new Button { Content = title, IsEnabled = editable && !demo, Margin = new Thickness(0, 0, 10, 0) };
+            bool canAct = editable && (!demo || action == "openApp");
+            var button = new Button { Content = title, IsEnabled = canAct, Margin = new Thickness(0, 0, 10, 0) };
             if (action != "retry") button.Style = (Style)FindResource("SettingsProminentButton");
             Identify(button, id + ".progress_action", title); editors.Add(button);
             button.Click += async (_, _) =>
             {
+                if (!canAct) return;
                 button.IsEnabled = false;
                 bool done = action switch
                 {
                     "openConnectors" => await OpenHarnessConnectorsAsync(provider, guide.Stage == "launch"),
-                    "openApp" => await WindowsConversationApplication.OpenApplicationAsync(provider),
+                    "openApp" => await OpenHarnessGuideAppAsync(provider),
                     "restartApp" => await RestartHarnessAppAsync(provider, confirmed: false),
                     "restartConfirmed" => await RestartHarnessAppAsync(provider, confirmed: true),
                     _ => await RetryHarnessProgressAsync(provider)
                 };
                 if (harnessProgressBody == null) return;
-                button.IsEnabled = editable && !demo;
+                button.IsEnabled = canAct;
                 if (!done && action == "retry") ShowIssue("harness.progress_state.failed");
                 else if (!done) ShowIssueText(HarnessAccountCard.Fields(ui, WindowsConversationApplication.CanOpenConnectors(provider)
                     ? "harness.progress_state.open_failed" : "progress_guide.plugin.open_failed",
@@ -286,12 +288,29 @@ internal sealed partial class SettingsWindow
             return row;
         }
 
-        if (guide!.Steps.Count == 0)
+        void AddPicture(StackPanel parent)
+        {
+            if (ProgressGuidePicture.Draw(guide.Picture, guide.ApprovalCard, provider, ui, settingsLight) is not { } picture) return;
+            picture.Margin = new Thickness(0, 8, 0, 0);
+            if (picture.HorizontalAlignment != HorizontalAlignment.Stretch) { parent.Children.Add(picture); return; }
+            // As on the Mac, a stretching picture fills the width up to its maximum, from the left.
+            var holder = new Grid();
+            holder.ColumnDefinitions.Add(new ColumnDefinition { MaxWidth = picture.MaxWidth });
+            picture.MaxWidth = double.PositiveInfinity;
+            holder.Children.Add(picture);
+            parent.Children.Add(holder);
+        }
+
+        if (guide.Steps.Count == 0)
         {
             var problem = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
-            var line = Label(guide.Line!, 12.5); line.TextWrapping = TextWrapping.Wrap;
-            Identify(line, id + ".progress_line", guide.Line!); problem.Children.Add(line);
-            problem.Children.Add(ActionRow());
+            if (guide.Line is string message)
+            {
+                var line = Label(message, 12.5); line.TextWrapping = TextWrapping.Wrap;
+                Identify(line, id + ".progress_line", message); problem.Children.Add(line);
+            }
+            AddPicture(problem);
+            if (guide.Action != null || waitingText != null) problem.Children.Add(ActionRow());
             harnessProgressBody.Children.Add(problem);
             return;
         }
@@ -316,38 +335,23 @@ internal sealed partial class SettingsWindow
             title.SetResourceReference(TextBlock.ForegroundProperty, step.State switch { "done" => "SettingsSecondary", "current" => "SettingsPrimary", _ => "SettingsDisabled" });
             body.Children.Add(title);
             // Only the current step shows where to click, as one large picture.
-            if (step.State == "current" && guide.Picture is "trust" or "customConnector")
+            if (step.State == "current")
             {
-                var art = guide.Picture == "trust" ? TrustPicture(provider) : CustomConnectorPicture();
-                art.Margin = new Thickness(0, 8, 0, 0); body.Children.Add(art);
+                if (step.Detail is string detail)
+                {
+                    var text = Label(detail, 12.5);
+                    text.Margin = new Thickness(0, 4, 0, 0); text.TextWrapping = TextWrapping.Wrap;
+                    text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+                    Identify(text, id + ".progress_detail", detail); body.Children.Add(text);
+                }
+                AddPicture(body);
+                if (guide.Action != null || waitingText != null) body.Children.Add(ActionRow());
             }
-            if (step.State == "current" && (guide.Action != null || waitingText != null)) body.Children.Add(ActionRow());
             line.Children.Add(body);
             Identify(line, id + ".progress_step" + index, step.Title);
             AutomationProperties.SetItemStatus(line, ui.Text("progress_guide.state." + step.State));
             harnessProgressBody.Children.Add(line);
         }
-    }
-
-    /// The top of the app's connectors page, drawn: its tabs, and Custom
-    /// Connector at the right inside a ring, the one button to click now.
-    private DecorativeBorder CustomConnectorPicture()
-    {
-        var bar = new DockPanel { LastChildFill = true };
-        var button = new Border { CornerRadius = new CornerRadius(8), Padding = new Thickness(12, 5, 12, 6), Background = new SolidColorBrush(Color.FromRgb(29, 29, 31)) };
-        button.Child = new TextBlock { Text = "\u270E " + ui.Text("progress_guide.trust_card.custom"), FontSize = 12.5, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White };
-        var ring = new Border { BorderThickness = new Thickness(2.5), CornerRadius = new CornerRadius(11), Padding = new Thickness(3), Child = button, VerticalAlignment = VerticalAlignment.Center };
-        ring.SetResourceReference(Border.BorderBrushProperty, "SettingsAccent");
-        DockPanel.SetDock(ring, Dock.Right); bar.Children.Add(ring);
-        var tabs = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        foreach (var (key, chosen) in new[] { ("progress_guide.trust_card.experts", false), ("progress_guide.trust_card.skills", false), ("progress_guide.trust_card.tab", true) })
-        {
-            var tab = Label(ui.Text(key), 14, chosen ? FontWeights.Bold : FontWeights.Normal); tab.Margin = new Thickness(0, 0, 18, 0);
-            tab.SetResourceReference(TextBlock.ForegroundProperty, chosen ? "SettingsPrimary" : "SettingsDisabled");
-            tabs.Children.Add(tab);
-        }
-        bar.Children.Add(tabs);
-        return PictureFrame(bar);
     }
 
     /// A credits dial on this page draws with the page's theme brushes and the brand's shade for it.
@@ -359,44 +363,12 @@ internal sealed partial class SettingsWindow
             settingsLight ? Brushes.White : Brushes.Black, PacerPalette.BrandShade(provider, settingsLight));
     }
 
-    /// Pacer's tool in the app's custom connectors, drawn, with Trust inside a ring.
-    private DecorativeBorder TrustPicture(string provider)
-    {
-        var item = new Border { CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(1), Padding = new Thickness(11, 9, 11, 10), MaxWidth = 380, HorizontalAlignment = HorizontalAlignment.Left };
-        item.SetResourceReference(Border.BorderBrushProperty, "SettingsSeparator"); item.SetResourceReference(Border.BackgroundProperty, "SettingsCard");
-        var grid = new Grid(); grid.ColumnDefinitions.Add(new ColumnDefinition()); grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var lines = new StackPanel { Margin = new Thickness(0, 0, 12, 0) };
-        var name = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 3) };
-        name.Children.Add(new Border { Width = 16, Height = 16, CornerRadius = new CornerRadius(4), Background = new SolidColorBrush(Color.FromRgb(48, 176, 199)), Margin = new Thickness(0, 0, 7, 0) });
-        name.Children.Add(Label("pacer_progress", 12.5, FontWeights.SemiBold));
-        lines.Children.Add(name);
-        var caption = Label(ui.Text("progress_guide.trust_card.caption"), 11); caption.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); lines.Children.Add(caption);
-        var detail = Label(ui.Text("progress_guide.trust_card.detail"), 11.5); detail.TextWrapping = TextWrapping.Wrap; detail.Margin = new Thickness(0, 2, 0, 0); lines.Children.Add(detail);
-        grid.Children.Add(lines);
-        // As the Mac draws it: white on the brand's deeper shade on a light page, dark ink on its light shade on a dark one.
-        var trust = new Border { CornerRadius = new CornerRadius(7), Padding = new Thickness(14, 4, 14, 5), Background = PacerPalette.BrandShade(provider, settingsLight) };
-        trust.Child = new TextBlock { Text = ui.Text("progress_guide.trust_card.button"), FontSize = 12.5, FontWeight = FontWeights.SemiBold,
-            Foreground = settingsLight ? Brushes.White : new SolidColorBrush(Color.FromArgb(204, 0, 0, 0)) };
-        var ring = new Border { BorderThickness = new Thickness(2.5), CornerRadius = new CornerRadius(10), Padding = new Thickness(3), Child = trust, VerticalAlignment = VerticalAlignment.Center };
-        ring.SetResourceReference(Border.BorderBrushProperty, "SettingsAccent");
-        Grid.SetColumn(ring, 1); grid.Children.Add(ring);
-        item.Child = grid;
-        return PictureFrame(item);
-    }
-
-    // A picture only: the step's title and button carry the meaning.
-    private static DecorativeBorder PictureFrame(UIElement content)
-    {
-        var frame = new DecorativeBorder { CornerRadius = new CornerRadius(10), Padding = new Thickness(14, 12, 14, 12), Child = content, MaxWidth = 520, HorizontalAlignment = HorizontalAlignment.Left };
-        frame.SetResourceReference(Border.BackgroundProperty, "SettingsInfoFill");
-        return frame;
-    }
-
     // Which modules' connectors the user opened from the card, and when, for
     // the guide's open and custom steps.
     private static readonly Dictionary<string, DateTime> openedHarnessConnectors = new(StringComparer.Ordinal);
     // Modules whose app Pacer is restarting: a check in between sees it closed.
     private static readonly HashSet<string> restartingHarnessApps = new(StringComparer.Ordinal);
+    internal static bool RestartingHarness(string provider) => restartingHarnessApps.Contains(provider);
 
     // A confirmation the card shows in place of its action.
     private sealed record HarnessGuidePrompt(string Provider, string Stage, string Kind);
@@ -416,8 +388,17 @@ internal sealed partial class SettingsWindow
         if (!await WindowsConversationApplication.OpenProgressConnectorsAsync(provider)) return false;
         openedHarnessConnectors[provider] = DateTime.UtcNow;
         OpenGuideFloat(provider);
+        _ = AppWindows.BringForwardAsync(HarnessModule(provider)?.Launch?.Executables);
         await RefreshHarnessProgressConnectionAsync(polling: true, provider);
         return true;
+    }
+
+    private async Task<bool> OpenHarnessGuideAppAsync(string provider)
+    {
+        OpenGuideFloat(provider);
+        if (demo || await WindowsConversationApplication.OpenApplicationAsync(provider)) return true;
+        CloseGuideFloat(provider);
+        return false;
     }
 
     /// One click for the reopen step: Pacer closes the app and opens it at its
@@ -428,14 +409,16 @@ internal sealed partial class SettingsWindow
         bool busy = engine?.LatestSnapshot?.Tasks.Any(task => task.Provider == provider && task.Phase is not ("completed" or "interrupted")) == true;
         if (busy && !confirmed) { ShowGuidePrompt(provider, "tasks"); return true; }
         harnessGuidePrompt = null;
-        restartingHarnessApps.Add(provider);
+        if (!restartingHarnessApps.Add(provider)) return true;
         // The guide says Pacer is restarting the app right away; it takes seconds.
-        OpenGuideFloat(provider, bringForward: false);
+        OpenGuideFloat(provider);
+        bool reopenFloat = false;
         try
         {
             var result = await WindowsConversationApplication.RestartForGuideAsync(provider, executables);
             if (result == WindowsConversationApplication.RestartResult.StillRunning)
             {
+                reopenFloat = HarnessGuideFloat.Current?.Provider == provider;
                 CloseGuideFloat(provider);
                 issue.Text = ui.Text("progress_guide.restart.failed").Replace("%@", module.DisplayName ?? provider, StringComparison.Ordinal);
                 issue.Visibility = Visibility.Visible;
@@ -445,32 +428,29 @@ internal sealed partial class SettingsWindow
                 issue.Visibility = Visibility.Collapsed;
             }
             else if (result != WindowsConversationApplication.RestartResult.Restarted) { CloseGuideFloat(provider); return false; }
-            openedHarnessConnectors[provider] = DateTime.UtcNow;
+            if (module.Launch.ConnectorsPath != null) openedHarnessConnectors[provider] = DateTime.UtcNow;
         }
         finally { restartingHarnessApps.Remove(provider); }
-        OpenGuideFloat(provider);
+        if (reopenFloat) OpenGuideFloat(provider);
+        else HarnessGuideFloat.Follow();
+        if (module.Launch.ConnectorsPath != null) _ = AppWindows.BringForwardAsync(executables);
         await RefreshHarnessProgressConnectionAsync(polling: true, provider);
         return true;
     }
 
     /// Opens the floating guide for the app the card just opened, or keeps the
-    /// one already open for it, and brings the app forward if it didn't come
-    /// forward itself. The guide outlives Settings: people often close it once
-    /// they're in the app.
-    private void OpenGuideFloat(string provider, bool bringForward = true)
+    /// one already open for it. It follows the app after Settings closes.
+    private void OpenGuideFloat(string provider)
     {
-        if (demo || engine is not { } client || HarnessModule(provider) is not { } module || !WindowsConversationApplication.CanOpenConnectors(provider)) return;
+        if (engine is not { } client || HarnessModule(provider) is not { } module) return;
         var area = System.Windows.Forms.Screen.FromHandle(new System.Windows.Interop.WindowInteropHelper(this).Handle).WorkingArea;
-        HarnessGuideFloat.Open(provider, client, session, ui, Resources, kind => kind == "trust" ? TrustPicture(provider) : CustomConnectorPicture(), area);
-        if (bringForward) _ = AppWindows.BringForwardAsync(module.Launch?.Executables);
+        HarnessGuideFloat.Open(module, client, session, ui, Resources, settingsLight, area);
     }
 
     private static void CloseGuideFloat(string provider)
     {
         if (HarnessGuideFloat.Current is { } shown && shown.Provider == provider) shown.Close();
     }
-
-    private static void FollowGuideFloat() => HarnessGuideFloat.Follow();
 
     private async Task<bool> RetryHarnessProgressAsync(string provider)
     {

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 
 namespace CodexPacer.Windows;
@@ -98,12 +99,24 @@ internal sealed record EngineModule(string Provider, string Mode, bool? Installe
     EngineModuleBrand? Brand = null, string? Website = null, string? Balance = null, bool? Prominent = null,
     bool? Local = null, DeepSeekWeekPresentation? Week = null, EngineModuleLaunch? Launch = null,
     HarnessProgressGuide? ProgressGuide = null, EngineStatusRow? Monitoring = null, EngineStatusRow? Account = null,
-    EngineQuotaGroups? QuotaGroups = null, bool? ApplicationInstalled = null)
+    EngineQuotaGroups? QuotaGroups = null, bool? ApplicationInstalled = null,
+    IReadOnlyList<string>? ProgressApprovals = null, PendingGuideFloat? PendingFloat = null)
 {
     /// Found on this computer or turned on explicitly. Older engines send
     /// nothing, so their modules stay listed.
     internal bool IsProminent => Prominent ?? true;
     internal bool? HasApplication => ApplicationInstalled ?? Installed;
+
+    internal bool ShouldOpenApprovalFloat(IReadOnlySet<string> shown, bool active, bool demo, bool guideDemo) =>
+        active && (!demo || guideDemo) && Enabled && Provider == "antigravity"
+        && ProgressGuide is { Stage: not "ready", FloatPicture: "antigravityApproval" }
+        && ProgressApprovals?.Any(id => !shown.Contains(id)) == true;
+
+    internal string ProgressAttentionTitle(string summary)
+    {
+        string name = DisplayName ?? Provider;
+        return summary.Contains(name, StringComparison.Ordinal) ? summary : name + " · " + summary;
+    }
 }
 /// A row of a module page's Status card, worded by Core: state, tone
 /// (`positive`, `neutral`, `attention`), text, a line under it and one action.
@@ -111,7 +124,10 @@ internal sealed record EngineStatusRow(string State, string Tone, string Text, s
 /// The progress ring card for a module whose app must trust Pacer's tool, worded by Core.
 internal sealed record HarnessProgressGuide(string Stage, string Chip, string Tone, IReadOnlyList<HarnessProgressStep> Steps,
     string? Line, string? Action, string? ActionTitle, bool Attention, string? Summary, bool Waiting, string Info,
-    string? WaitingText = null, string? Picture = null, string? FloatTitle = null, string? FloatNext = null);
+    string? WaitingText = null, string? Picture = null, string? FloatTitle = null, string? FloatNext = null,
+    string? FloatPicture = null, AntigravityApprovalCard? ApprovalCard = null);
+internal sealed record PendingGuideFloat(string Title, string Next);
+internal sealed record AntigravityApprovalCard(string Permission, string Title, string Resource, string Once, string Conversation, string Always, string Deny);
 internal sealed record HarnessProgressStep(string Title, string State, string? Detail = null);
 internal sealed record EngineGroupOption(string Id, string Label);
 internal sealed record EngineQuotaGroups(string DefaultsKey, string Title, IReadOnlyList<EngineGroupOption> Options, string Selected);

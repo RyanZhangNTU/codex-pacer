@@ -324,6 +324,86 @@ final class WindowsAntigravityTests: XCTestCase {
         }
     }
 
+    func testProgressApprovalIDsOnlyIncludeMatchingAntigravityRequests() throws {
+        var sample = DemoScenario.antigravityTasks(at: Date())
+        let progress = try XCTUnwrap(sample.requests.first(where: \.requestsProgressApproval))
+        sample.requests.append(.init(id: "other-tool", threadID: progress.threadID, sourceHostID: nil,
+                                     sourceName: nil, kind: .approval, detectedAt: Date(), provider: .antigravity))
+        XCTAssertEqual(EngineModule.approvalIDs(for: .antigravity, in: sample), [progress.id])
+        XCTAssertNil(EngineModule.approvalIDs(for: .workbuddy, in: sample))
+        sample.requests.removeAll(where: \.requestsProgressApproval)
+        XCTAssertEqual(EngineModule.approvalIDs(for: .antigravity, in: sample), [])
+    }
+
+    func testGuideDemoProjectsFourStagesAndOneApprovalID() async throws {
+        let capture = Capture()
+        let runtime = EngineRuntime(demo: true, dismissalStore: nil, output: { capture.receive($0) }, demoAntigravityGuide: true)
+        func send(_ method: String, _ params: [String: Any]) async throws {
+            let frame = try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": method, "method": method,
+                "supportsHarnessModules": true, "params": params])
+            _ = await runtime.receive(frame)
+        }
+        try await send("initialize", ["providerModes": ["antigravity": "enabled"]])
+        let stages: [HarnessProgressGuide.Stage] = [.adding, .newConversation, .allowTool, .ready]
+        for (index, stage) in stages.enumerated() {
+            try await send("demoStage", ["demoStage": index])
+            let module = try XCTUnwrap(capture.snapshot?.modules?.first { $0.provider == "antigravity" })
+            let guide = try XCTUnwrap(module.progressGuide)
+            XCTAssertEqual(guide.stage, stage)
+            XCTAssertEqual(module.progressApprovals, index == 2 ? ["demo-progress-approval"] : [])
+            XCTAssertEqual(guide.floatPicture, index == 2 ? .antigravityApproval : nil)
+            XCTAssertEqual(guide.picture, index == 3 ? nil : .antigravityApproval)
+            XCTAssertEqual(guide.approvalCard?.always, index == 3 ? nil : "Yes, and always allow")
+            if index == 1 || index == 2 { XCTAssertNotNil(guide.steps.first { $0.state == .current }?.detail) }
+        }
+        await runtime.stop()
+    }
+
+    private func inspectGrants(profile: URL, allow: [String], deny: [String]) async throws -> LocalHarnessProgressSetup.State? {
+        let target = LocalHarnessProgressSetup.Target(pluginProfile: profile, reporter: profile.appendingPathComponent("pacer.exe").path, enabled: true)
+        let storage = WindowsProgressPluginStorage(profile: profile)
+        XCTAssertEqual(LocalHarnessProgressSetup.apply(target, storage: storage), .configured)
+        let data = try JSONSerialization.data(withJSONObject: ["userSettings": ["globalPermissionGrants": ["allow": allow, "deny": deny]]])
+        try data.write(to: target.home.appendingPathComponent("config.json"))
+        var queue = ProgressSetupQueue<LocalHarnessProgressSetup.Target>()
+        let ticket = try XCTUnwrap(queue.request(target))
+        return await LocalHarnessProgressSetup.sync(ticket, storage: storage, inspectOnly: true,
+            prepare: { _ in XCTFail("Inspection must reuse the installed reporter"); return nil }, owns: { _, _, _ in true })
+    }
+
+    func testInspectReadsOnlyEffectiveProgressGrantsFromTemporaryProfile() async throws {
+        let profile = try directory(), grant = "mcp(codex-pacer_pacer_progress/report_progress)"
+        let cases: [([String], [String], LocalHarnessProgressConnection?)] = [
+            ([grant], [], .trusted),
+            (["mcp(codex-pacer_pacer_progress/*)"], [], .trusted),
+            (["mcp(*)"], [grant], .needsTrust),
+            ([grant], ["mcp(*)"], .needsTrust),
+            (["mcp(codex-pacer_pacer_progress/report_progress_extra)"], [], nil)
+        ]
+        for (allow, deny, expected) in cases {
+            let state = try await inspectGrants(profile: profile, allow: allow, deny: deny)
+            XCTAssertEqual(state?.setup, .configured)
+            XCTAssertEqual(state?.connection, expected)
+        }
+    }
+
+    func testInspectReadsUserOwnedConfigUnderAdministratorsOwnedProfile() async throws {
+        let profile = try directory()
+        let admin = UnsafeMutableRawPointer.allocate(byteCount: 68, alignment: MemoryLayout<UInt64>.alignment)
+        defer { admin.deallocate() }
+        var size: DWORD = 68
+        XCTAssertTrue(CreateWellKnownSid(WinBuiltinAdministratorsSid, nil, admin, &size))
+        var path = WindowsLocalProfileStorage.wide(profile)
+        let result = SetNamedSecurityInfoW(&path, SE_FILE_OBJECT, DWORD(OWNER_SECURITY_INFORMATION), admin, nil, nil, nil)
+        if result == ERROR_INVALID_OWNER || result == ERROR_PRIVILEGE_NOT_HELD || result == ERROR_ACCESS_DENIED {
+            throw XCTSkip("This token cannot assign the temporary profile to Administrators.")
+        }
+        XCTAssertEqual(result, DWORD(ERROR_SUCCESS))
+        let state = try await inspectGrants(profile: profile, allow: ["mcp(codex-pacer_pacer_progress/report_progress)"], deny: [])
+        XCTAssertEqual(state?.setup, .configured)
+        XCTAssertEqual(state?.connection, .trusted)
+    }
+
     /// Windows often gives the profile folder to Administrators or SYSTEM; the
     /// plugin's root must not need the user as owner, while a folder below it does.
     func testPluginRootAcceptsTheProfileFolderWhateverItsOwner() throws {

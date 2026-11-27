@@ -815,10 +815,10 @@ public partial class IslandWindow : Window
             if (modules.FirstOrDefault(value => value.Provider == key)?.ProgressGuide?.Stage != dismissedProgressHints[key]) dismissedProgressHints.Remove(key);
         var running = snapshot.Presentation?.Rows.Where(row => row.Phase is not ("completed" or "interrupted")).Select(row => row.Provider).ToHashSet(StringComparer.Ordinal) ?? [];
         var module = modules.FirstOrDefault(value => value.Enabled && value.ProgressGuide is { Attention: true, Summary: not null } guide
-            && running.Contains(value.Provider) && !dismissedProgressHints.ContainsKey(value.Provider));
+            && (running.Contains(value.Provider) || value.ProgressApprovals is { Count: > 0 }) && !dismissedProgressHints.ContainsKey(value.Provider));
         progressHintProvider = module?.Provider;
         if (module?.ProgressGuide is not { } shown) { ProgressHint.Visibility = Visibility.Collapsed; return; }
-        string text = (module.DisplayName ?? module.Provider) + " · " + shown.Summary;
+        string text = module.ProgressAttentionTitle(shown.Summary!);
         ProgressHintText.Text = text; AutomationProperties.SetName(ProgressHint, text);
         ProgressHintOpen.Content = ui.Text("progress_guide.hint.open");
         AutomationProperties.SetName(ProgressHintOpen, ui.Text("progress_guide.hint.open"));

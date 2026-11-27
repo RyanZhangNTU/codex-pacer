@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -23,7 +24,7 @@ public partial class App : Application
     private Forms.NotifyIcon? tray;
     private System.Drawing.Icon? trayIcon;
     private IslandWindow? island;
-    private bool quitting;
+    private bool quitting, sleeping;
     private DesktopPreferences preferences = new();
     private PreferencesStore? preferencesStore;
     private PreferencesSession? settingsSession;
@@ -34,8 +35,8 @@ public partial class App : Application
     private IStartupRegistration? startupRegistration;
     private UiText? ui;
     private bool demo;
-    /// The demo's Codex task works with three subagents, as the Mac's `--demo-subagents`.
-    private bool demoSubagents, demoAntigravity;
+    private bool demoSubagents, demoAntigravity, demoAntigravityGuide;
+    private readonly HashSet<string> shownProgressApprovals = new(StringComparer.Ordinal);
     private string? demoPreferencesFile;
     private Guid? demoPreferencesScope;
     private bool? demoDark;
@@ -71,9 +72,10 @@ public partial class App : Application
             catch { Shutdown(1); }
             return;
         }
-        demo = e.Args.Contains("--demo");
+        demoAntigravity = e.Args.Contains("--demo-antigravity");
+        demoAntigravityGuide = e.Args.Contains("--demo-antigravity-guide");
+        demo = demoAntigravity || demoAntigravityGuide || e.Args.Contains("--demo");
         demoSubagents = demo && e.Args.Contains("--demo-subagents");
-        demoAntigravity = demo && e.Args.Contains("--demo-antigravity");
         int themeIndex = Array.IndexOf(e.Args, "--theme");
         if (themeIndex >= 0)
         {
@@ -213,6 +215,7 @@ public partial class App : Application
             // Colors come with the registry entry; the island redraws on its next snapshot.
             PacerPalette.RegisterModules(snapshot.Modules);
             WindowsConversationApplication.Register(snapshot.Modules);
+            UpdateProgressApprovalFloat();
             foreach (var account in accounts.All)
                 account.SetEnabled(snapshot.Modules?.Any(module =>
                     module.Provider == account.Provider && module is { Enabled: true, ReportsAccountCredits: true }) == true);
@@ -358,7 +361,8 @@ public partial class App : Application
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException) { }
             await engine.StartAsync(executable, demo, language, configuration: preferences.EngineConfiguration(), referenceFixture: referenceFixture,
-                claudeRuntimeRoot: runtimeRoot, codexProgressRuntimeRoot: codexProgressRuntimeRoot, crashLog: crashLog, demoSubagents: demoSubagents, demoAntigravity: demoAntigravity);
+                claudeRuntimeRoot: runtimeRoot, codexProgressRuntimeRoot: codexProgressRuntimeRoot, crashLog: crashLog, demoSubagents: demoSubagents,
+                demoAntigravity: demoAntigravity, demoAntigravityGuide: demoAntigravityGuide);
             ShellProjection.Ready();
             engineReady.TrySetResult();
             engineReadyTicks = Environment.TickCount64;
@@ -418,7 +422,24 @@ public partial class App : Application
         settings.Show(); settings.Activate();
     }
 
-    private readonly System.Collections.Generic.Dictionary<string, string> pushedAccountCredits = new(StringComparer.Ordinal);
+    private void UpdateProgressApprovalFloat()
+    {
+        if (engine is not { } client || settingsSession == null || ui == null || island == null) return;
+        HarnessGuideFloat.Follow();
+        var module = client.LatestSnapshot?.Modules?.FirstOrDefault(value => value.Provider == "antigravity");
+        bool active = !sleeping && !quitting && !client.IsConnectionClosed;
+        if (module == null || !module.ShouldOpenApprovalFloat(shownProgressApprovals, active, demo, demoAntigravityGuide)
+            || settingsSession.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal)) return;
+        shownProgressApprovals.UnionWith(module.ProgressApprovals!);
+        if (HarnessGuideFloat.Current?.Provider == module.Provider) return;
+        var appearance = island.AppearanceSource?.Current;
+        bool dark = demoDark ?? appearance?.Dark ?? SettingsWindow.IsSystemDark();
+        var resources = HarnessGuideFloat.StandaloneResources(dark, appearance, AccentPalette.Controls(settingsSession.Current.AccentColor, !demo));
+        var area = Forms.Screen.FromHandle(AppWindows.GetForegroundWindow()).WorkingArea;
+        HarnessGuideFloat.Open(module, client, settingsSession, ui, resources, !dark, area);
+    }
+
+    private readonly Dictionary<string, string> pushedAccountCredits = new(StringComparer.Ordinal);
     private async Task PushAccountCreditsAsync(string provider)
     {
         // Sleep hides the reading without changing the account; the engine keeps
@@ -459,6 +480,7 @@ public partial class App : Application
             start.ArgumentList.Add(preferences.Language == "system" ? (CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh" ? "zh-Hans" : "en") : preferences.Language);
             if (demoSubagents) start.ArgumentList.Add("--demo-subagents");
             if (demoAntigravity) start.ArgumentList.Add("--demo-antigravity");
+            if (demoAntigravityGuide) start.ArgumentList.Add("--demo-antigravity-guide");
         }
         if (demoPreferencesFile != null)
         {
@@ -491,6 +513,7 @@ public partial class App : Application
     {
         if (quitting) return;
         quitting = true;
+        HarnessGuideFloat.Current?.Close();
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         NetworkChange.NetworkAddressChanged -= OnNetworkAddressChanged;
         if (island != null) island.Presence.Changed -= OnPresenceChanged;
@@ -521,6 +544,8 @@ public partial class App : Application
         if (method == null) return;
         Dispatcher.BeginInvoke(new Action(async () =>
         {
+            sleeping = change.Mode == PowerModes.Suspend;
+            if (sleeping) HarnessGuideFloat.Current?.Close();
             if (quitting || !engineReady.Task.IsCompletedSuccessfully || engine == null) return;
             foreach (var account in harnessAccounts?.All ?? []) account.SetSleeping(change.Mode == PowerModes.Suspend);
             try { await engine.SendAsync(method); }

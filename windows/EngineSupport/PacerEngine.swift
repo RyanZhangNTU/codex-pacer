@@ -38,7 +38,9 @@ public enum PacerEngine {
             arguments[LanguagePreference.defaultsKey] = language.rawValue
             UserDefaults.standard.setVolatileDomain(arguments, forName: UserDefaults.argumentDomain)
         }
-        let demo = CommandLine.arguments.contains("--demo")
+        let demoAntigravity = CommandLine.arguments.contains("--demo-antigravity")
+        let demoAntigravityGuide = CommandLine.arguments.contains("--demo-antigravity-guide")
+        let demo = demoAntigravity || demoAntigravityGuide || CommandLine.arguments.contains("--demo")
         let readOnly = CommandLine.arguments.contains("--read-only-diagnostics")
         let quotaDiagnostics = readOnly && CommandLine.arguments.contains("--quota-diagnostics")
         defer { if quotaDiagnostics { QuotaReadDiagnostics.shared.report() } }
@@ -87,7 +89,7 @@ public enum PacerEngine {
             codexProgressPaths: .init(root: progressRoot), allowsStorageRecovery: !readOnly,
             antigravityAppInstalled: { WindowsAntigravityInstallation.shared.resolve() != nil },
             demoSubagents: demo && CommandLine.arguments.contains("--demo-subagents"),
-            demoAntigravity: demo && CommandLine.arguments.contains("--demo-antigravity"))
+            demoAntigravity: demoAntigravity, demoAntigravityGuide: demoAntigravityGuide)
         await runtime.hello()
         let input = EngineInput()
         var framer = EngineFramer()
@@ -271,6 +273,7 @@ actor EngineRuntime {
     private let managesLocalHarnessProgress: Bool
     private var localProgressQueues: [AgentProvider: ProgressSetupQueue<LocalHarnessProgressSetup.Target>] = [:]
     private var localProgressTasks: [AgentProvider: Task<Void, Never>] = [:]
+    private var recheckAntigravityAfterSetup = false
     private var localProgressStatuses: [AgentProvider: LocalHarnessProgressSetup.State] = [:]
     /// The module's app as the host last saw it, for the reopen step.
     private var localHarnessApps: [AgentProvider: HarnessProgressGuide.AppPresence] = [:]
@@ -513,6 +516,7 @@ actor EngineRuntime {
     /// The demo's Codex task works with three subagents, as the Mac's `--demo-subagents`.
     private let demoSubagents: Bool
     private let demoAntigravity: Bool
+    private let demoAntigravityGuide: Bool
 
     init(demo: Bool, now: @escaping @Sendable () -> Date = { Date() },
          dismissalStore: CompletionDismissalStore? = .applicationDefault,
@@ -548,11 +552,12 @@ actor EngineRuntime {
          },
          output: @escaping @Sendable (Data) -> Void = { try? FileHandle.standardOutput.write(contentsOf: $0) },
          antigravityAppInstalled: (@Sendable () -> Bool)? = nil,
-         demoSubagents: Bool = false, demoAntigravity: Bool = false) {
+         demoSubagents: Bool = false, demoAntigravity: Bool = false, demoAntigravityGuide: Bool = false) {
         self.antigravityHost = antigravityHost; self.localQuotaDirectory = localQuotaDirectory
         self.demo = demo; self.now = now; self.output = output; self.quotaServices = quotaServices; self.desktopServices = desktopServices
         self.allowsStorageRecovery = allowsStorageRecovery; self.demoSubagents = demo && demoSubagents
-        self.demoAntigravity = demo && demoAntigravity
+        self.demoAntigravity = demo && (demoAntigravity || demoAntigravityGuide)
+        self.demoAntigravityGuide = demo && demoAntigravityGuide
         self.sourceSettings = sourceSettings
         self.localHarnessDefinitions = localHarnessDefinitions
         self.balanceServices = balanceServices
@@ -1550,8 +1555,15 @@ actor EngineRuntime {
     }
 
     private func receiveHarness(_ provider: AgentProvider, snapshot: HarnessActivity, version: UInt64) {
-        guard active, lifecycle.version(provider) == version, enabled.contains(provider),
-              let update = harnessActivities.receive(provider, snapshot: snapshot) else { return }
+        guard active, lifecycle.version(provider) == version, enabled.contains(provider) else { return }
+        let previous = EngineModule.approvalIDs(for: provider, in: harnessActivities[provider])
+        guard let update = harnessActivities.receive(provider, snapshot: snapshot) else { return }
+        // Antigravity writes the grant as it resolves the request, even if the user closed the float.
+        if let previous, !previous.isEmpty, let pending = EngineModule.approvalIDs(for: provider, in: update.activity),
+           !Set(previous).isSubset(of: pending), let definition = localHarnesses.definition(for: provider) {
+            if localProgressTasks[provider] != nil { recheckAntigravityAfterSetup = true }
+            else { scheduleLocalHarnessProgress(definition, inspectOnly: true) }
+        }
         if update.scopeChanged {
             navigationState.cancel(provider: provider)
             navigationOpens = navigationOpens.filter { $0.value.activity.provider != provider }
@@ -1582,6 +1594,7 @@ actor EngineRuntime {
             module.balance = registered.balance?.rawValue
         }
         if provider == .antigravity { module.applicationInstalled = detectedAntigravityApp }
+        module.progressApprovals = EngineModule.approvalIDs(for: provider, in: harnessActivities[provider])
         module.prominent = moduleLibrary.entries.first { $0.provider == provider }?.prominent
         if let groups = descriptor?.quotaGroups {
             module.quotaGroups = .init(defaultsKey: groups.defaultsKey, title: L10n.text(groups.labelPrefix + ".group"),
@@ -1595,6 +1608,9 @@ actor EngineRuntime {
                 addedAt: state?.addedAt, removedAt: state?.removedAt, app: localHarnessApps[provider], view: localHarnessViews[provider],
                 openedConnectors: openedHarnessConnectors[provider] != nil, pluginPlatform: definition?.installsProgressPlugin == true ? .windows : nil,
                 requestsApproval: harnessActivities[provider]?.requestsProgressApproval == true)
+            if let guide = module.progressGuide, let pending = HarnessProgressGuide.pendingFloat(stage: guide.stage, name: descriptor.name) {
+                module.pendingFloat = .init(title: pending.title, next: pending.next)
+            }
         }
         if let daily = demo && provider == .workbuddy ? DemoScenario.workbuddyDaily(at: now()) : harnessActivities[provider]?.usage?.daily {
             module.week = HarnessWeekPresentation.week(provider: provider, daily: daily, now: now())
@@ -1726,6 +1742,10 @@ actor EngineRuntime {
         // Inspections repeat while the guide waits; only a change is published.
         let changed = localProgressStatuses[provider] != status
         localProgressStatuses[provider] = status
+        if provider == .antigravity, recheckAntigravityAfterSetup {
+            recheckAntigravityAfterSetup = false
+            if active, let definition = localHarnesses.definition(for: provider) { scheduleLocalHarnessProgress(definition, inspectOnly: true) }
+        }
         if projectionReady && changed { publish(notices: []) }
     }
     private func scheduleClaudeHooks(force: Bool = false) {
@@ -3079,14 +3099,17 @@ actor EngineRuntime {
                 rows += cloud.activities; requests = cloud.attention
             }
             if demoAntigravity, enabled.contains(.antigravity) {
-                var sample = DemoScenario.antigravityTasks(at: date)
+                var sample = DemoScenario.antigravityTasks(at: date, requestsProgressApproval: !demoAntigravityGuide || stage == .responding)
                 sample.scope = "demo-antigravity"
                 rows += sample.activities; requests += sample.requests
                 harnessActivities.replace(.antigravity, with: sample)
                 let reading = DemoScenario.antigravityQuota(at: date)
                 localQuota[.antigravity] = reading
                 localQuotaHistory[.antigravity, default: .init()].receive(snapshot: reading.snapshot, history: reading.history, warning: nil)
-                localProgressStatuses[.antigravity] = disabledHarnessProgress.contains(.antigravity) ? nil : .init(.configured)
+                if demoAntigravityGuide { localHarnessApps[.antigravity] = .running(since: date) }
+                localProgressStatuses[.antigravity] = disabledHarnessProgress.contains(.antigravity) ? nil :
+                    .init(demoAntigravityGuide && stage == .thinking ? .settingUp : .configured,
+                          reported: demoAntigravityGuide && stage == .completed, addedAt: demoAntigravityGuide ? date : nil)
             }
             demoActivity = HarnessActivity(activities: rows, requests: requests)
             quota = Dictionary(uniqueKeysWithValues: [AgentProvider.codex, .claude].compactMap { provider in

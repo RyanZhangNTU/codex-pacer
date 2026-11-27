@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Media;
 using CodexPacer.Windows;
@@ -59,7 +60,8 @@ internal static class AntigravityPresentationChecks
             var guide = Module()!.ProgressGuide!;
             Check(guide.Stage == "allowTool" && guide.Steps.Count == 4 && guide.Steps[0].Title == ui.Text("progress_guide.plugin.restart")
                 && guide.Steps[2].State == "current" && guide.Picture == "antigravityApproval",
-                "The guide must lead from restart and a new task to the permission card");
+                $"The guide must lead from restart and a new task to the permission card (stage {guide.Stage}, steps {guide.Steps.Count}, "
+                + $"first '{guide.Steps.FirstOrDefault()?.Title}', third {guide.Steps.ElementAtOrDefault(2)?.State}, picture {guide.Picture})");
             CheckGuideStates(settings, ui, guide);
             settings.CapturePreview(Path.Combine(output, $"antigravity-settings-{language}-{(dark ? "dark" : "light")}.png"));
 
@@ -160,8 +162,30 @@ internal static class AntigravityPresentationChecks
         }
     }
 
+    private static readonly AntigravityApprovalCard EnglishCard = new("Permission", "Allow using this MCP tool?",
+        "codex-pacer_pacer_progress/report_progress", "Yes, allow this time", "Yes, and always allow in this conversation",
+        "Yes, and always allow", "Deny");
+
+    private static void CheckPicture(DependencyObject parent, AntigravityApprovalCard card)
+    {
+        var picture = Get<DecorativeBorder>(parent, "progress_approval.picture");
+        var rows = Descendants(picture).OfType<Grid>().Where(row => AutomationProperties.GetAutomationId(row).StartsWith("progress_approval.row", StringComparison.Ordinal)).ToArray();
+        Check(rows.Length == 4 && Texts(picture).Take(3).SequenceEqual([card.Permission, card.Title, card.Resource]),
+            "The permission label, title and tool target must come from the engine card");
+        string[] choices = [card.Once, card.Conversation, card.Always, card.Deny];
+        for (int index = 0; index < rows.Length; index++)
+        {
+            Check(Texts(rows[index]).SequenceEqual([(index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture), choices[index]]),
+                "Each choice must follow its numbered badge in the engine's order");
+            Check((Find<Border>(rows[index], "progress_approval.ring") != null) == (index == 2), "Only the lasting grant gets a ring");
+        }
+        Check(!Descendants(picture).OfType<System.Windows.Controls.Primitives.ButtonBase>().Any(), "The drawing must have no buttons or radio controls");
+    }
+
     private static void CheckGuideStates(SettingsWindow settings, UiText ui, HarnessProgressGuide guide)
     {
+        var card = guide.ApprovalCard ?? throw new InvalidOperationException("Missing approval card");
+        Check(card == EnglishCard, "Antigravity's permission prompt uses the same English labels in both languages");
         foreach (var (stage, index) in new[] { ("restartForPlugin", 0), ("newConversation", 1), ("allowTool", 2) })
         {
             var steps = guide.Steps.Select((step, i) => step with { State = i < index ? "done" : i == index ? "current" : "pending" }).ToArray();
@@ -170,21 +194,93 @@ internal static class AntigravityPresentationChecks
             var current = Get<Grid>(settings, Prefix + "progress_step" + index);
             Check(Name(current) == steps[index].Title && AutomationProperties.GetItemStatus(current) == ui.Text("progress_guide.state.current"),
                 "The current plugin step must have a localized accessible state");
+            CheckPicture(current, card);
+            if (index != 0) Check(!string.IsNullOrEmpty(steps[index].Detail), "The conversation and approval steps must explain the next action");
+            var detail = Find<TextBlock>(current, Prefix + "progress_detail");
+            Check(detail?.Text == steps[index].Detail && (detail == null || detail.TextWrapping == TextWrapping.Wrap),
+                "The current step must show its complete, wrapping detail");
+            Check(Descendants(settings).OfType<DecorativeBorder>().Count(x => AutomationProperties.GetAutomationId(x) == "progress_approval.picture") == 1,
+                "Only the current step may have a picture");
         }
-        string quit = ui.Text("progress_guide.plugin.quit");
-        settings.RefreshHarnessProgressGuide(Provider, guide with { Stage = "removalPending", Steps = [], Line = quit,
-            Action = "retry", ActionTitle = ui.Text("progress_guide.action.retry") }, true);
-        settings.UpdateLayout();
-        Check(Get<TextBlock>(settings, Prefix + "progress_line").Text == quit && Get<Button>(settings, Prefix + "progress_action").IsVisible,
-            "Pending removal must explain when to quit the app and offer a retry");
-        foreach (var stage in new[] { "adding", "ready" })
+        foreach (var stage in new[] { "adding", "turnedOff", "conflict", "failed", "ready", "removalPending", "cleanupFailed" })
         {
-            string? message = stage == "ready" ? ui.Text("progress_guide.plugin.report") : null;
-            settings.RefreshHarnessProgressGuide(Provider, guide with { Stage = stage, Steps = [], Line = message, Action = null }, true);
-            if (message != null) Check(Get<TextBlock>(settings, Prefix + "progress_line").Text == message, "Ready must explain the ring");
-            else Check(Get<StackPanel>(settings, Prefix + "progress_guide").Visibility == Visibility.Collapsed, "Adding shows only the chip");
+            bool preview = stage is "adding" or "turnedOff" or "conflict" or "failed";
+            string? line = stage switch { "adding" => null, "ready" => ui.Text("progress_guide.plugin.report"),
+                "removalPending" => ui.Text("progress_guide.plugin.quit"), _ => stage };
+            settings.RefreshHarnessProgressGuide(Provider, guide with { Stage = stage, Steps = [], Line = line,
+                Picture = preview ? "antigravityApproval" : null, FloatPicture = null, ApprovalCard = preview ? card : null,
+                Action = stage == "removalPending" ? "retry" : null, ActionTitle = ui.Text("progress_guide.action.retry") }, true);
+            settings.UpdateLayout();
+            var body = Get<StackPanel>(settings, Prefix + "progress_guide");
+            Check((Find<DecorativeBorder>(body, "progress_approval.picture") != null) == preview, "Settings must follow Core's picture for " + stage);
+            if (preview) CheckPicture(body, card);
+            if (line != null)
+            {
+                var message = Get<TextBlock>(body, Prefix + "progress_line");
+                Check(message.Text == line, "The guide must show the status or recovery instruction");
+                var picture = preview ? Get<DecorativeBorder>(body, "progress_approval.picture") : null;
+                if (picture != null) Check(((StackPanel)message.Parent).Children[1] is var below && (below == picture || below is Grid holder && holder.Children.Contains(picture)),
+                    "The recovery picture belongs directly below its instruction");
+                // As on the Mac, it starts at the left edge rather than centering.
+                if (picture != null) Check(picture.TranslatePoint(new Point(0, 0), message).X <= 0.5, "The picture must line up with its instruction");
+            }
+            if (stage == "removalPending") Check(Get<Button>(body, Prefix + "progress_action").IsVisible, "Pending removal must offer a retry");
         }
         settings.RefreshHarnessProgressGuide(Provider, guide, true);
+    }
+
+    // Exercise both WPF surfaces with an in-memory module and no engine or provider process.
+    internal static async Task RunGuideFixtures(string language, bool dark)
+    {
+        var ui = UiText.For(language == "zh-Hans");
+        var steps = new HarnessProgressStep[] { new("Restart", "done"), new("New conversation", "done", "Try again"),
+            new("Choose a grant", "current", "Why Antigravity asks.\nWhen it asks again."), new("Ready", "pending") };
+        var guide = new HarnessProgressGuide("allowTool", "Setup", "attention", steps, null, null, null, true, null, true, "",
+            Picture: "antigravityApproval", FloatTitle: "Choose the lasting grant", FloatNext: steps[2].Detail,
+            FloatPicture: "antigravityApproval", ApprovalCard: EnglishCard);
+        var module = new EngineModule(Provider, "enabled", true, true, ProgressConnector: true, ProgressGuide: guide);
+        var session = new PreferencesSession(new DesktopPreferences(), _ => Task.CompletedTask, _ => true);
+        var settings = new SettingsWindow(ui, session, new DemoStartupRegistration(), true, dark) { ShowActivated = false };
+        var area = new System.Drawing.Rectangle(0, 0, 1280, 900);
+        var pending = new PendingGuideFloat("Restarting the app", "Start a new conversation");
+        var floating = new HarnessGuideFloat(Provider, ui, HarnessGuideFloat.StandaloneResources(dark, null, null), !dark, area, pending);
+        try
+        {
+            settings.Content = settings.BuildHarnessProgressRow(Provider, "settings." + Provider, module);
+            settings.Show();
+            CheckGuideStates(settings, ui, guide);
+            await ProviderHomeSettingsChecks.CheckGuideFloat(settings, ui, !dark);
+            settings.AllowClose = true; settings.Close();
+            floating.Update(module, true, DateTime.UtcNow);
+            Check(Get<TextBlock>(floating, "guide_float.title").Text == pending.Title && Get<TextBlock>(floating, "guide_float.next").Text == pending.Next
+                && Find<DecorativeBorder>(floating, "progress_approval.picture") == null, "The restart must keep its pending instruction until the app returns");
+            floating.Present(guide with { FloatPicture = null });
+            Check(Find<DecorativeBorder>(floating, "progress_approval.picture") == null, "The float must ignore the Settings preview");
+            floating.Present(guide with { Picture = null });
+            floating.UpdateLayout();
+            CheckPicture(floating, EnglishCard);
+            Check(!floating.ShowActivated && !floating.IsActive, "The approval guide must leave the foreground app active");
+            var ring = Get<Border>(floating, "progress_approval.ring");
+            ring.Resources[SystemParameters.ClientAreaAnimationKey] = true;
+            await PresentationWait.UntilAsync(() => ring.Opacity < 0.98, "The lasting grant must pulse with animations enabled");
+            ring.Resources[SystemParameters.ClientAreaAnimationKey] = false;
+            await PresentationWait.UntilAsync(() => !ring.IsEnabled && !ring.HasAnimatedProperties && ring.Opacity == 1,
+                "Reduced motion must leave a static, visible ring");
+            var ready = module with { ProgressGuide = guide with { Stage = "ready", FloatTitle = ui.Text("progress_guide.plugin.report"),
+                FloatNext = null, FloatPicture = null }, ProgressApprovals = ["still-pending"] };
+            var now = DateTime.UtcNow;
+            floating.Update(ready, false, now);
+            floating.UpdateLayout();
+            Check(Find<DecorativeBorder>(floating, "progress_approval.picture") == null
+                && Get<TextBlock>(floating, "guide_float.title").Text == ready.ProgressGuide.FloatTitle,
+                "The ready message replaces the permission card even with a pending ID");
+            floating.Update(ready, false, now.AddSeconds(7.9));
+            Check(floating.IsVisible, "The ready message must remain visible for eight seconds");
+            floating.Update(ready, false, now.AddSeconds(8));
+            Check(!floating.IsVisible, "The float must close after eight seconds at ready");
+            Console.WriteLine($"PASS Antigravity guide pictures and steps ({language}, {(dark ? "dark" : "light")})");
+        }
+        finally { if (floating.IsVisible) floating.Close(); if (settings.IsVisible) { settings.AllowClose = true; settings.Close(); } }
     }
 
     private static void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

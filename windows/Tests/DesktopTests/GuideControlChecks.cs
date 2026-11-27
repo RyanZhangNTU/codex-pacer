@@ -5,6 +5,7 @@ internal static class GuideControlChecks
 {
     internal static async Task Run()
     {
+        CheckApprovalFloat();
         foreach (bool codex in new[] { false, true }) foreach (bool claude in new[] { false, true })
         {
             var value = new DesktopPreferences { ShowEmbeddedCodexSessions = codex, ShowEmbeddedClaudeSessions = claude, HideProjects = true };
@@ -42,5 +43,26 @@ internal static class GuideControlChecks
         }
         finally { File.Delete(file); }
     }
+    private static void CheckApprovalFloat()
+    {
+        var guide = new HarnessProgressGuide("allowTool", "Setup", "attention", [], null, null, null, true, null, true, "",
+            FloatPicture: "antigravityApproval");
+        var module = new EngineModule("antigravity", "enabled", true, true, ProgressGuide: guide, ProgressApprovals: ["a", "b"]);
+        var shown = new HashSet<string>(StringComparer.Ordinal);
+        bool Opens(EngineModule candidate, bool active = true, bool demo = false, bool guideDemo = false) =>
+            candidate.ShouldOpenApprovalFloat(shown, active, demo, guideDemo);
+
+        Check(Opens(module) && Opens(module, demo: true, guideDemo: true), "A new card opens in live and guide demo modes");
+        Check(!Opens(module, demo: true) && !Opens(module, active: false), "Ordinary demos and inactive hosts stay quiet");
+        Check(!Opens(module with { Enabled = false }) && !Opens(module with { Provider = "workbuddy" }), "Only enabled Antigravity can open the approval guide");
+        Check(!Opens(module with { ProgressGuide = guide with { Stage = "ready" } }), "Ready wins over a stale approval");
+        Check(!Opens(module with { ProgressGuide = guide with { FloatPicture = null, Picture = "antigravityApproval" } }),
+            "A Settings preview alone cannot open a float");
+        shown.UnionWith(module.ProgressApprovals!);
+        Check(!Opens(module) && !Opens(module with { ProgressApprovals = [] }) && !Opens(module with { ProgressApprovals = ["a"] }),
+            "Closing the float and a polling gap both preserve the dismissed IDs");
+        Check(Opens(module with { ProgressApprovals = ["b", "c"] }), "A different step in the same conversation gets its own float");
+    }
+
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
 }

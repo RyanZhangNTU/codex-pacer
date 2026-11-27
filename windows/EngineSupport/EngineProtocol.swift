@@ -222,6 +222,17 @@ struct EngineModule: Codable, Equatable {
     var progressConnection: LocalHarnessProgressConnection? = nil
     /// The progress ring card, worded by Core, for a module whose app must trust Pacer's tool.
     var progressGuide: HarnessProgressGuide? = nil
+    struct PendingFloat: Codable, Equatable {
+        let title: String
+        let next: String
+    }
+    var pendingFloat: PendingFloat? = nil
+    var progressApprovals: [String]? = nil
+
+    static func approvalIDs(for provider: AgentProvider, in activity: HarnessActivity?) -> [String]? {
+        guard provider == .antigravity else { return nil }
+        return activity?.requests.filter(\.requestsProgressApproval).map(\.id) ?? []
+    }
     /// Registry facts, so the host draws every module from one description.
     var brand: EngineModuleBrand? = nil
     var website: URL? = nil

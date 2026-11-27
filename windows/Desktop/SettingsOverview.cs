@@ -83,7 +83,7 @@ internal sealed partial class SettingsWindow
                 || items.Any(value => value.Id == module.Provider)) continue;
             string detail = guide.Steps.FirstOrDefault(step => step.State == "current")?.Title ?? guide.Line ?? "";
             string provider = module.Provider;
-            items.Add(new(provider, PaneTitle(provider) + " · " + summary, detail, ui.Text("main.overview.open"), () => NavigateAsync(provider)));
+            items.Add(new(provider, module.ProgressAttentionTitle(summary), detail, ui.Text("main.overview.open"), () => NavigateAsync(provider)));
         }
         int problems = RemoteProblems(snapshot);
         if (problems > 0)

@@ -70,6 +70,13 @@ internal static class Program
             await using var projections = new EngineClient();
             try
             {
+                if (Has("approvalGuide") && groups.Length == 1)
+                {
+                    foreach (string language in new[] { "en", "zh-Hans" })
+                        foreach (bool dark in new[] { false, true }) await AntigravityPresentationChecks.RunGuideFixtures(language, dark);
+                    Check(Errors.Count == 0, "The approval guide must not report WPF runtime errors");
+                    result = 0; return;
+                }
                 if (Has("progress") && groups.Length == 1)
                 {
                     await ProgressRingMotionChecks.Run();
@@ -119,7 +126,11 @@ internal static class Program
                     foreach (bool dark in new[] { false, true })
                     {
                         scenario = language + "/dark=" + dark;
-                        if (All("antigravity")) await Attempt(nameof(AntigravityPresentationChecks), () => AntigravityPresentationChecks.Run(language, dark, output));
+                        if (All("antigravity")) await Attempt(nameof(AntigravityPresentationChecks), async () =>
+                        {
+                            await AntigravityPresentationChecks.RunGuideFixtures(language, dark);
+                            await AntigravityPresentationChecks.Run(language, dark, output);
+                        });
                         if (Has("persistence"))
                         {
                             await Attempt(nameof(PersistentSettingsChecks), () => PersistentSettingsChecks.Run(language, dark, output, desktop ?? throw new ArgumentException("Supply the desktop executable for restart checks.")));
