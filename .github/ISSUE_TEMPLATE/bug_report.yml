@@ -40,6 +40,9 @@ body:
         - Codex
         - Claude Code
         - DeepSeek Harness
+        - WorkBuddy
+        - WorkBuddy AI
+        - Antigravity
         - Not related to a module
     validations:
       required: true
