@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f4dc0ddc2fe8eac7817e70cb6950550a31bfbcb78d62247e2cf0f921b9f212ce",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "5dedc527f2d2561594aac2375d476c61953f402b76c996c2d376773d6cb90ed9",
     "windows/EngineSupport/Resources/Localization/en.json": "9c5c3afa9978273c9160fabc0506c301ea0cb77b9090d382d0ec78e963927bff"
   },
   "strings": {
@@ -1423,9 +1423,9 @@
     "progress_guide.onboarding.many": "%@ each need a few steps before their rings show.",
     "progress_guide.onboarding.one": "%@ needs a few steps before its ring shows.",
     "progress_guide.onboarding.separator": " and ",
-    "progress_guide.plugin.allow": "When Antigravity asks \u201c%1$@\u201d for Pacer\u2019s progress tool, click row 3, \u201c%2$@\u201d.",
+    "progress_guide.plugin.allow": "When Antigravity asks \u201c%1$@\u201d for Pacer\u2019s progress tool, click option 3, \u201c%2$@\u201d, then click \u201c%3$@\u201d or press Enter.",
     "progress_guide.plugin.allow_hint": "Allow Pacer\u2019s progress tool in Antigravity.",
-    "progress_guide.plugin.choose": "Click row 3, \u201c%@\u201d.",
+    "progress_guide.plugin.choose": "Click option 3, \u201c%1$@\u201d, then click \u201c%2$@\u201d or press Enter.",
     "progress_guide.plugin.conflict": "Move the files you want to keep out of the codex-pacer plugin folder before trying again.",
     "progress_guide.plugin.conversation": "Open Antigravity, start a new conversation, and paste this prompt.",
     "progress_guide.plugin.conversation_hint": "Start a new conversation in Antigravity.",

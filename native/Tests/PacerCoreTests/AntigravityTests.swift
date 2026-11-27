@@ -245,9 +245,9 @@ private final class WatchClock: ActivityFileEvents, @unchecked Sendable {
         lock.withLock { handlers[url] = changed }
         return Watch()
     }
-    func write(_ url: URL) throws {
+    func write(_ url: URL, requiresDiscovery: Bool = false) throws {
         let handler = try XCTUnwrap(lock.withLock { handlers[url] })
-        handler(ActivityFileEvent())
+        handler(ActivityFileEvent(requiresDiscovery: requiresDiscovery))
     }
     func schedule(_ queue: DispatchQueue, _ delay: TimeInterval, _ work: DispatchWorkItem) {
         lock.withLock {
@@ -293,12 +293,16 @@ private final class CountingFiles: PlatformFileSystem, @unchecked Sendable {
     private let files = TestFileSystem()
     private let lock = NSLock()
     private var stats: [String: Int] = [:], reads: [String: Int] = [:]
+    private var fixedStamps: [URL: PlatformFileMetadata] = [:]
+    init(freezeStampsFor urls: [URL] = []) {
+        for url in urls { fixedStamps[url] = files.metadata(url) }
+    }
     private func key(_ url: URL) -> String { url.standardizedFileURL.path }
     func counts(_ urls: [URL]) -> [Int] { lock.withLock { urls.map { stats[key($0), default: 0] } } }
     func readCount(_ url: URL) -> Int { lock.withLock { reads[key(url), default: 0] } }
     func metadata(_ url: URL, followingSymbolicLinks: Bool) -> PlatformFileMetadata? {
         lock.withLock { stats[key(url), default: 0] += 1 }
-        return files.metadata(url, followingSymbolicLinks: followingSymbolicLinks)
+        return fixedStamps[url] ?? files.metadata(url, followingSymbolicLinks: followingSymbolicLinks)
     }
     func resolvedDirectory(_ url: URL) -> URL { files.resolvedDirectory(url) }
     func entries(in directory: URL) throws -> [URL] { try files.entries(in: directory) }
@@ -547,10 +551,14 @@ final class AntigravityTests: XCTestCase {
                 XCTAssertEqual(setup.picture, .antigravityApproval)
                 XCTAssertEqual(setup.example != nil, setup.stage == .newConversation)
                 let card = try XCTUnwrap(setup.approvalCard)
-                XCTAssertEqual(card.permission, "Permission")
                 XCTAssertEqual(card.title, "Allow using this MCP tool?")
                 XCTAssertEqual(card.resource, "codex-pacer_pacer_progress/report_progress")
-                XCTAssertEqual(card.choices, ["Yes, allow this time", "Yes, and always allow in this conversation", "Yes, and always allow", "Deny"])
+                XCTAssertEqual(card.choices, ["Yes, allow this time", "Yes, and always allow in this conversation", "Yes, and always allow", "No"])
+                XCTAssertEqual(card.noHint, "(tell the agent what to do instead)")
+                XCTAssertEqual(card.skip, "Skip")
+                XCTAssertEqual(card.submit, "Submit")
+                XCTAssertEqual(card.permission, "Permission")
+                XCTAssertEqual(card.deny, "Deny")
             }
             let ready = try XCTUnwrap(guide(.configured, platform, connection: .trusted, approval: true))
             XCTAssertEqual(ready.stage, .ready)
@@ -566,6 +574,15 @@ final class AntigravityTests: XCTestCase {
                 (AppLanguage.english, "Use terminal commands to check today's date and this computer's name, then tell me both in one sentence."),
                 (.simplifiedChinese, "用终端命令查一下今天的日期和这台电脑的名字，然后用一句话告诉我。")
             ] {
+                let approval = try XCTUnwrap(guide(.configured, platform, approval: true, language: language))
+                let step = try XCTUnwrap(approval.steps.first { $0.state == .current })
+                for title in [step.title, try XCTUnwrap(approval.floatTitle)] {
+                    XCTAssertTrue(title.contains("3"))
+                    let choice = try XCTUnwrap(title.range(of: "“Yes, and always allow”"))
+                    let submit = try XCTUnwrap(title.range(of: "“Submit”"))
+                    XCTAssertLessThan(choice.upperBound, submit.lowerBound)
+                    XCTAssertTrue(title[submit.upperBound...].contains(language == .english ? "Enter" : "回车键"))
+                }
                 let conversation = try XCTUnwrap(guide(.configured, platform, app: .running(since: epoch), language: language))
                 XCTAssertEqual(conversation.steps.firstIndex { $0.state == .current }, platform == .windows ? 1 : 0)
                 XCTAssertEqual(conversation.example, expected)
@@ -1377,6 +1394,42 @@ extension AntigravityTests {
         }
     }
 
+    func testNewConversationDiscoveryWithUnchangedSummaryStamps() async throws {
+        // Either the new .db entry wakes the watcher, or the row arrives silently
+        // (including when its summary commits after the directory event).
+        for (directoryEvent, bound, policy, delay) in [
+            (true, true, ActivityRefreshPolicy.expanded, 1.0),
+            (true, true, .collapsed, 5.0),
+            (false, true, .collapsed, 15.0),
+            (false, false, .collapsed, 60.0)
+        ] {
+            let f = try Fixture(), clock = WatchClock(), updates = Updates()
+            let summaries = f.store.summariesURL
+            if !bound { try f.hub(pid: 99) } // A stale hub file has no live process.
+            let files = CountingFiles(freezeStampsFor: [summaries, URL(fileURLWithPath: summaries.path + "-wal"),
+                                                        URL(fileURLWithPath: summaries.path + "-shm")])
+            let m = AntigravityMonitor(io: .init(files: files, events: clock, antigravity: f.host, now: { clock.now }),
+                                       schedule: clock.schedule)
+            await m.start(home: f.home, policy: policy) { await updates.receive($0) }
+            try f.write([input, Step("GENERIC", "WAITING", 2, "pacer")], state: "RUNNING", at: 3)
+            if directoryEvent {
+                // Database and sidecar creation form one batch. No summary file event.
+                try clock.write(f.store.conversationsDirectory, requiresDiscovery: true)
+                try clock.write(f.store.conversationsDirectory, requiresDiscovery: true)
+            }
+            let early = try await clock.advance(to: delay - 0.001)
+            let before = await updates.last
+            XCTAssertEqual(early, 0)
+            XCTAssertTrue(before.activities.isEmpty)
+            let passes = try await clock.advance(to: delay)
+            let result = await updates.last
+            XCTAssertEqual(passes, 1)
+            XCTAssertEqual(result.activities.first?.threadID, rootID)
+            XCTAssertEqual(result.requestsProgressApproval, bound)
+            await m.stop()
+        }
+    }
+
     func testColdConversationReadsOnlyChangedFiles() async throws {
         let f = try Fixture(), files = CountingFiles(), clock = WatchClock(), updates = Updates()
         let m = AntigravityMonitor(io: .init(files: files, events: clock, antigravity: f.host, now: { clock.now }),
@@ -1389,11 +1442,14 @@ extension AntigravityTests {
         let dbFolder = f.store.conversationURL(childID).deletingLastPathComponent()
         let folders = [log.deletingLastPathComponent(), dbFolder]
         await m.start(home: f.home, policy: .collapsed) { await updates.receive($0) }
+        _ = try await clock.advance(to: 0)
         let initial = files.counts(folders)
         XCTAssertEqual(files.readCount(log), 1)
         let calls = f.host.requests.count
         for _ in 0..<3 { await m.refresh() }
-        XCTAssertEqual(files.counts(folders), initial, "Unchanged transcripts skip parent checks; neither step DB was opened")
+        _ = try await clock.advance(to: 0)
+        XCTAssertEqual(files.counts(folders), [initial[0], initial[1] + 3],
+                       "Each pass checks the directory watch once, without opening either step DB or walking transcript parents")
         XCTAssertEqual(f.host.requests.count - calls, 6)
         XCTAssertEqual(files.readCount(log), 1)
 
@@ -1401,17 +1457,19 @@ extension AntigravityTests {
         try f.setModified(log, epoch)
         let beforeLog = f.host.requests.count
         await m.refresh()
+        _ = try await clock.advance(to: 0)
         XCTAssertEqual(files.readCount(log), 2)
         XCTAssertTrue(f.host.requests.dropFirst(beforeLog).contains { String(decoding: $0.body, as: UTF8.self).contains(childID) })
-        XCTAssertEqual(files.counts([dbFolder]), [initial[1]])
+        XCTAssertEqual(files.counts([dbFolder]), [initial[1] + 4])
 
         // A DB/WAL-only transition is visible even with an unchanged summary.
         try f.sql("UPDATE steps SET status=8 WHERE idx=1", db: "conversations/\(childID).db")
         f.host.install("RUNNING", steps: [cold[0], Step("PLANNER_RESPONSE", "GENERATING", -10)], id: childID, parent: nil)
         await m.refresh()
+        _ = try await clock.advance(to: 0)
         let active = await updates.last.activities.first { $0.threadID == childID }
         XCTAssertEqual(active?.phase, .running)
-        XCTAssertEqual(files.counts([dbFolder]), [initial[1] + 1])
+        XCTAssertEqual(files.counts([dbFolder]), [initial[1] + 6], "One watch check and one changed step DB read")
         XCTAssertEqual(files.readCount(log), 2)
         await m.stop()
     }

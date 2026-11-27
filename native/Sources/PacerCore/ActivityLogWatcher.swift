@@ -109,19 +109,19 @@ public final class ActivityLogWatcher: @unchecked Sendable {
 
     /// A fallback poll and a batch of writes cover the same files. Whichever
     /// fires first consumes both, including events already queued for discovery.
-    func poll(after delay: TimeInterval) {
+    func poll(after delay: TimeInterval, requiresDiscovery: Bool = false) {
         queue.async { [self] in
             cancelPoll()
             let token = pollRevision
             let work = DispatchWorkItem { [weak self] in
                 guard let self, self.pollRevision == token else { return }
-                self.deliver()
+                self.deliver(requiresDiscovery: requiresDiscovery)
             }
             poll = work; schedule(queue, delay, work)
         }
     }
-    private func deliver() {
-        let discover = pendingEvents.values.contains(true)
+    private func deliver(requiresDiscovery: Bool = false) {
+        let discover = requiresDiscovery || pendingEvents.values.contains(true)
         pendingEvents.removeAll()
         cancelPending()
         cancelPoll()

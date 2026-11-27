@@ -88,7 +88,7 @@ Codex、Claude Code、DeepSeek Harness、WorkBuddy 和 Antigravity 都会报告�
 在 Pacer 的 Antigravity 页面打开“任务进度圆环”。设置期间，这里会显示 Antigravity 授权卡片的示意图。如果使用 Windows，先重启 Antigravity，让它载入进度工具。
 
 1. 在设置或浮动指南中，点击示例旁的“复制”。打开 Antigravity，新建对话，粘贴这句话，让它查一下今天的日期和电脑的名字。如果 Pacer 发现这个对话没有加载进度工具，浮动指南会提醒你再新建一个对话，粘贴同一句话。
-2. 当 Antigravity 针对 Pacer 的进度工具询问 **“Allow using this MCP tool?”** 时，Pacer 会自动弹出浮动指南。点击第 3 项 **“Yes, and always allow”**。Antigravity 使用外部工具前会先询问。选“Yes, allow this time”，下次报告进度时还会再问。选“Yes, and always allow in this conversation”，新对话中还会再问。只有“Yes, and always allow”能让它以后都不再询问。
+2. 当 Antigravity 针对 Pacer 的进度工具询问 **“Allow using this MCP tool?”** 时，Pacer 会自动弹出浮动指南。点击第 3 项 **“Yes, and always allow”**，再点击 **“Submit”** 或按回车键。Antigravity 使用外部工具前会先询问。选“Yes, allow this time”，下次报告进度时还会再问。选“Yes, and always allow in this conversation”，新对话中还会再问。只有“Yes, and always allow”能让它以后都不再询问。
 3. Antigravity 保存授权后，Pacer 就会显示“已就绪”。任务报告进度时，圆环会随之更新。关闭再打开圆环或模块，Antigravity 仍会记得这项授权。
 
 SSH 主机上的 Codex 任务（以及 Windows 上 WSL 里的 Codex 任务）也会报告进度：Pacer 会在每台已连接、装有 Codex 的主机上设置好。已经在运行的任务，要等 Codex 重新连接到该主机后才会开始报告。

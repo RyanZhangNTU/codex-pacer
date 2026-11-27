@@ -57,7 +57,8 @@ struct AntigravityStore {
     }
 
     var summariesURL: URL { home.appendingPathComponent("conversation_summaries.db", isDirectory: false) }
-    func conversationURL(_ id: String) -> URL { home.appendingPathComponent("conversations/\(id).db", isDirectory: false) }
+    var conversationsDirectory: URL { home.appendingPathComponent("conversations", isDirectory: true) }
+    func conversationURL(_ id: String) -> URL { conversationsDirectory.appendingPathComponent("\(id).db", isDirectory: false) }
     func transcriptURL(_ id: String) -> URL { home.appendingPathComponent("brain/\(id)/.system_generated/logs/transcript_full.jsonl", isDirectory: false) }
 
     static func uuid(_ value: String?) -> String? { value.flatMap(UUID.init(uuidString:))?.uuidString.lowercased() }

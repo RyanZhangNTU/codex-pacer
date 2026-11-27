@@ -95,8 +95,8 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
         let store = AntigravityStore(home: home, files: io.files)
         self.store = store; self.policy = policy; self.publish = publish
         client = AntigravityLocalClient(home: home, io: io)
-        let watcher = ActivityLogWatcher(files: io.files, events: io.events, interval: policy.interval, fileExtensions: nil, schedule: schedule) { [weak self] _ in
-            Task { await self?.refresh(ifCurrent: current) }
+        let watcher = ActivityLogWatcher(files: io.files, events: io.events, interval: policy.interval, fileExtensions: nil, schedule: schedule) { [weak self] discover in
+            Task { await self?.refresh(ifCurrent: current, discover: discover) }
         }
         self.watcher = watcher
         urls = baseURLs(store)
@@ -112,7 +112,8 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
             if parent.path == directory.path || parent.path.isEmpty { break }
             directory = parent
         }
-        return [directory, store.home.appendingPathComponent("daemon", isDirectory: true), store.summariesURL, sidecar(store.summariesURL)]
+        return [directory, store.home.appendingPathComponent("daemon", isDirectory: true), store.conversationsDirectory,
+                store.summariesURL, sidecar(store.summariesURL)]
     }
 
     private func sidecar(_ url: URL) -> URL { URL(fileURLWithPath: url.path + "-wal", isDirectory: false) }
@@ -130,8 +131,12 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
         self.policy = policy
         await refresh()
     }
-    private func refresh(ifCurrent current: UInt64) async {
-        if current == generation { await refresh() }
+    private func refresh(ifCurrent current: UInt64, discover: Bool = false) async {
+        guard current == generation else { return }
+        // A new conversation DB can appear while the open summary DB and WAL
+        // still have their old Windows timestamps.
+        if discover { summaryCache = nil }
+        await refresh()
     }
     func refresh() async {
         guard let store, let client, let publish else { return }
@@ -164,7 +169,11 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
         reading = false
         let active = previous?.activities.contains { [.running, .waitingForInput].contains($0.phase) } == true ||
             cache.values.contains { $0.summary?.running == true || $0.summary?.background == true }
-        watcher?.poll(after: dirty || !disagreements.isEmpty || retryFiles || active ? policy.interval : 60)
+        if dirty || !disagreements.isEmpty || retryFiles || active {
+            watcher?.poll(after: policy.interval)
+        } else {
+            watcher?.poll(after: hubGeneration == nil ? 60 : 15, requiresDiscovery: true)
+        }
     }
 
     private func reconcile(_ store: AntigravityStore, client: AntigravityLocalClient, generation current: UInt64, rechecking: Set<String>) async -> HarnessActivity? {

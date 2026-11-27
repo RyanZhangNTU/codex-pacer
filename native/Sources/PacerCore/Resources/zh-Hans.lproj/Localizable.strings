@@ -1871,8 +1871,8 @@
 "progress_guide.plugin.conversation_missed_tool" = "这个对话没有加载 Pacer 的进度工具，请再新建一个对话，粘贴同一句话。";
 "progress_guide.plugin.restart" = "重启 Antigravity，载入进度工具。";
 "progress_guide.plugin.restarting" = "正在重启 %@…";
-"progress_guide.plugin.allow" = "当 Antigravity 针对 Pacer 的进度工具询问“%1$@”时，点击第 3 项“%2$@”。";
-"progress_guide.plugin.choose" = "点击第 3 项“%@”。";
+"progress_guide.plugin.allow" = "当 Antigravity 针对 Pacer 的进度工具询问“%1$@”时，点击第 3 项“%2$@”，再点击“%3$@”或按回车键。";
+"progress_guide.plugin.choose" = "点击第 3 项“%1$@”，再点击“%2$@”或按回车键。";
 "progress_guide.plugin.reason" = "Antigravity 用外部工具前会先问你。";
 "progress_guide.plugin.scopes" = "只有第 3 项一直有效：选第 1 项下次还会问，选第 2 项换个对话还会问。";
 "progress_guide.plugin.report" = "现在，进度环会显示每个任务完成了多少。";

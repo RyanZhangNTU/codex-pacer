@@ -1,22 +1,27 @@
 import Foundation
 
-/// Antigravity 2.35.2's MCP permission card. Its labels stay in the app's
-/// language in both guides. Clicking a numbered row submits the choice.
+/// Antigravity's docked MCP approval card. Both guides quote its English labels.
 public struct AntigravityApprovalCard: Codable, Equatable, Sendable {
+    // The Windows in-stream illustration still consumes these two wire fields.
     public let permission: String
+    public let deny: String
     public let title: String
     public let resource: String
     public let once: String
     public let conversation: String
     public let always: String
-    public let deny: String
+    public let no: String
+    public let noHint: String
+    public let skip: String
+    public let submit: String
 
-    public var choices: [String] { [once, conversation, always, deny] }
+    public var choices: [String] { [once, conversation, always, no] }
 
-    static let current = Self(permission: "Permission", title: "Allow using this MCP tool?",
+    static let current = Self(permission: "Permission", deny: "Deny", title: "Allow using this MCP tool?",
                               resource: AntigravityProgressPlugin.toolTarget,
                               once: "Yes, allow this time", conversation: "Yes, and always allow in this conversation",
-                              always: "Yes, and always allow", deny: "Deny")
+                              always: "Yes, and always allow", no: "No", noHint: "(tell the agent what to do instead)",
+                              skip: "Skip", submit: "Submit")
 }
 
 /// The shared Settings and floating guide for apps that need the user's
@@ -257,7 +262,7 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
         let conversation = text(stage == .conversationMissedTool ? "plugin.conversation_missed_tool" : "plugin.conversation")
         let conversationStep: Stage = stage == .conversationMissedTool ? .conversationMissedTool : .newConversation
         example = stage == conversationStep ? text("plugin.example") : nil
-        let allow = text("plugin.allow", card.title, card.always)
+        let allow = text("plugin.allow", card.title, card.always, card.submit)
         let reason = text("plugin.reason") + "\n" + text("plugin.scopes")
         let done = text("plugin.report")
         let flow: [Stage] = platform == .windows ? [.restartForPlugin, conversationStep, .allowTool, .ready] : [conversationStep, .allowTool, .ready]
@@ -277,7 +282,7 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
         approvalCard = picture == nil ? nil : card
         floatPicture = requestsApproval ? picture : nil
         if floatPicture == .antigravityApproval {
-            floatTitle = text("plugin.choose", card.always)
+            floatTitle = text("plugin.choose", card.always, card.submit)
             floatNext = reason
         } else {
             switch stage {

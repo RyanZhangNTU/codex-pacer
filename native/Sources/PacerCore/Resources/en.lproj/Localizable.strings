@@ -1871,8 +1871,8 @@
 "progress_guide.plugin.conversation_missed_tool" = "This conversation didn’t get Pacer’s progress tool, so start one more new conversation and paste the same sentence.";
 "progress_guide.plugin.restart" = "Restart Antigravity to load the progress tool.";
 "progress_guide.plugin.restarting" = "Restarting %@…";
-"progress_guide.plugin.allow" = "When Antigravity asks “%1$@” for Pacer’s progress tool, click row 3, “%2$@”.";
-"progress_guide.plugin.choose" = "Click row 3, “%@”.";
+"progress_guide.plugin.allow" = "When Antigravity asks “%1$@” for Pacer’s progress tool, click option 3, “%2$@”, then click “%3$@” or press Enter.";
+"progress_guide.plugin.choose" = "Click option 3, “%1$@”, then click “%2$@” or press Enter.";
 "progress_guide.plugin.reason" = "Antigravity asks before it uses an outside tool.";
 "progress_guide.plugin.scopes" = "Only option 3 lasts: option 1 asks again next time, and option 2 asks again in a new conversation.";
 "progress_guide.plugin.report" = "The ring now shows how much of each task is done.";

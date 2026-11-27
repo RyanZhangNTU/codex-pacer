@@ -306,37 +306,50 @@ struct ProgressGuidePicture: View {
     }
 }
 
-/// A drawing of the permission prompt. Only the lasting grant is highlighted.
+/// The docked approval card after selecting the lasting grant, ready to submit.
 struct AntigravityApprovalPicture: View {
     let card: AntigravityApprovalCard
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(card.permission, systemImage: "lock.shield")
-                .font(.system(size: 11)).foregroundStyle(.secondary)
-            Text(card.title).font(.system(size: 14, weight: .bold))
+            Label(card.title, systemImage: "lock.fill")
+                .font(.system(size: 14, weight: .bold))
             Text(card.resource).font(.system(size: 11, design: .monospaced))
                 .lineLimit(1).minimumScaleFactor(0.8)
                 .padding(.horizontal, 8).padding(.vertical, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.secondary.opacity(0.22)))
-            VStack(spacing: 0) {
+            // As Antigravity draws it above the input box: plain grey digits, no
+            // separators, the chosen row on a light grey fill, and Skip and
+            // Submit on the same line as the last row.
+            VStack(spacing: 2) {
                 ForEach(Array(card.choices.enumerated()), id: \.offset) { index, choice in
-                    if index > 0 { Divider() }
-                    HStack(spacing: 8) {
-                        Text(String(index + 1)).font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 20, height: 20)
-                            .background(Color.primary.opacity(0.09), in: RoundedRectangle(cornerRadius: 5))
-                        Text(choice).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+                    let selected = choice == card.always
+                    HStack(spacing: 10) {
+                        Text(String(index + 1)).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+                        Text(choice).foregroundStyle(selected ? Color.primary : Color.secondary)
+                        if choice == card.no {
+                            Text(card.noHint).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.tail)
+                            Spacer(minLength: 8)
+                            Image(systemName: "mic").foregroundStyle(.secondary)
+                            Text(card.skip).foregroundStyle(.secondary)
+                            Text(card.submit + " ↵")
+                                .fontWeight(.semibold).foregroundStyle(.white)
+                                .padding(.horizontal, 10).padding(.vertical, 4)
+                                .background(Color(red: 0.13, green: 0.36, blue: 0.76), in: Capsule())
+                                .padding(2)
+                                .overlay { PulsingRing(cornerRadius: 14, lineWidth: 2) }
+                                .fixedSize()
+                        }
                     }
+                    .font(.system(size: 12)).lineLimit(1)
                     .padding(.horizontal, 8).padding(.vertical, 5)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .overlay { if choice == card.always { PulsingRing(cornerRadius: 6, lineWidth: 2) } }
+                    .background { if selected { RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.10)) } }
+                    .overlay { if selected { PulsingRing(cornerRadius: 7, lineWidth: 2) } }
                 }
             }
-            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 9))
         }
         .padding(12)
         .frame(maxWidth: 420, alignment: .leading)
