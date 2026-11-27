@@ -337,6 +337,8 @@ internal sealed partial class SettingsWindow
             // Only the current step shows where to click, as one large picture.
             if (step.State == "current")
             {
+                if (guide.Example is string example)
+                    body.Children.Add(new ProgressGuideExample(example, ui) { Margin = new Thickness(0, 4, 0, 0) });
                 if (step.Detail is string detail)
                 {
                     var text = Label(detail, 12.5);

@@ -62,7 +62,11 @@ internal static class AntigravityPresentationChecks
                 && guide.Steps[2].State == "current" && guide.Picture == "antigravityApproval",
                 $"The guide must lead from restart and a new task to the permission card (stage {guide.Stage}, steps {guide.Steps.Count}, "
                 + $"first '{guide.Steps.FirstOrDefault()?.Title}', third {guide.Steps.ElementAtOrDefault(2)?.State}, picture {guide.Picture})");
-            CheckGuideStates(settings, ui, guide);
+            // The plain demo stays at the permission card; the engine tests cover the example in the guide demo.
+            var conversation = guide with { Stage = "newConversation", Example = ui.Text("progress_guide.plugin.example"), FloatPicture = null,
+                Steps = guide.Steps.Select((step, i) => i == 1 ? step with { Title = ui.Text("progress_guide.plugin.conversation"), State = "current" }
+                    : step with { State = i < 1 ? "done" : "pending" }).ToArray() };
+            await CheckGuideStates(settings, ui, guide, conversation);
             settings.CapturePreview(Path.Combine(output, $"antigravity-settings-{language}-{(dark ? "dark" : "light")}.png"));
 
             island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync();
@@ -182,14 +186,16 @@ internal static class AntigravityPresentationChecks
         Check(!Descendants(picture).OfType<System.Windows.Controls.Primitives.ButtonBase>().Any(), "The drawing must have no buttons or radio controls");
     }
 
-    private static void CheckGuideStates(SettingsWindow settings, UiText ui, HarnessProgressGuide guide)
+    private static async Task CheckGuideStates(SettingsWindow settings, UiText ui, HarnessProgressGuide guide, HarnessProgressGuide conversation)
     {
         var card = guide.ApprovalCard ?? throw new InvalidOperationException("Missing approval card");
         Check(card == EnglishCard, "Antigravity's permission prompt uses the same English labels in both languages");
         foreach (var (stage, index) in new[] { ("restartForPlugin", 0), ("newConversation", 1), ("allowTool", 2) })
         {
-            var steps = guide.Steps.Select((step, i) => step with { State = i < index ? "done" : i == index ? "current" : "pending" }).ToArray();
-            settings.RefreshHarnessProgressGuide(Provider, guide with { Stage = stage, Steps = steps }, true);
+            var state = stage == "newConversation" ? conversation : guide with { Stage = stage,
+                Steps = guide.Steps.Select((step, i) => step with { State = i < index ? "done" : i == index ? "current" : "pending" }).ToArray() };
+            var steps = state.Steps;
+            settings.RefreshHarnessProgressGuide(Provider, state, true);
             settings.UpdateLayout();
             var current = Get<Grid>(settings, Prefix + "progress_step" + index);
             Check(Name(current) == steps[index].Title && AutomationProperties.GetItemStatus(current) == ui.Text("progress_guide.state.current"),
@@ -199,6 +205,15 @@ internal static class AntigravityPresentationChecks
             var detail = Find<TextBlock>(current, Prefix + "progress_detail");
             Check(detail?.Text == steps[index].Detail && (detail == null || detail.TextWrapping == TextWrapping.Wrap),
                 "The current step must show its complete, wrapping detail");
+            if (stage == "newConversation")
+            {
+                var box = Descendants(settings).OfType<ProgressGuideExample>().Single();
+                Check(detail?.Parent is StackPanel body && body.Children[0] is TextBlock title
+                    && title.Text == ui.Text("progress_guide.plugin.conversation") && body.Children[1] == box && body.Children[2] == detail,
+                    "The example belongs between the current conversation instruction and its retry detail");
+                await CheckCopy(box, ui, conversation.Example!);
+            }
+            else CheckNoExample(settings, stage);
             Check(Descendants(settings).OfType<DecorativeBorder>().Count(x => AutomationProperties.GetAutomationId(x) == "progress_approval.picture") == 1,
                 "Only the current step may have a picture");
         }
@@ -212,6 +227,7 @@ internal static class AntigravityPresentationChecks
                 Action = stage == "removalPending" ? "retry" : null, ActionTitle = ui.Text("progress_guide.action.retry") }, true);
             settings.UpdateLayout();
             var body = Get<StackPanel>(settings, Prefix + "progress_guide");
+            CheckNoExample(body, stage);
             Check((Find<DecorativeBorder>(body, "progress_approval.picture") != null) == preview, "Settings must follow Core's picture for " + stage);
             if (preview) CheckPicture(body, card);
             if (line != null)
@@ -229,16 +245,48 @@ internal static class AntigravityPresentationChecks
         settings.RefreshHarnessProgressGuide(Provider, guide, true);
     }
 
+    private static void CheckNoExample(DependencyObject root, string stage) =>
+        Check(Find<TextBlock>(root, "progress_guide.example") == null && Find<Button>(root, "progress_guide.example.copy") == null,
+            "Unexpected example or Copy button during " + stage);
+
+    private static async Task CheckCopy(ProgressGuideExample box, UiText ui, string expected)
+    {
+        var text = Get<TextBlock>(box, "progress_guide.example");
+        var button = Get<Button>(box, "progress_guide.example.copy");
+        string copy = ui.Text("progress_guide.action.copy"), copied = ui.Text("support.share.copied");
+        bool LabelIs(string label) => Name(button) == label && UIElementAutomationPeer.CreatePeerForElement(button)?.GetName() == label
+            && Descendants(button).OfType<TextBlock>().Single(t => t.IsVisible).Text == label;
+        Check(text.IsVisible && text.Text == expected && text.TextWrapping == TextWrapping.Wrap && LabelIs(copy),
+            "The prompt and the accessible Copy button must match the guide language");
+        double width = text.ActualWidth;
+        box.WriteClipboard = _ => false;
+        Click(button);
+        Check(LabelIs(copy), "A failed copy must keep the Copy label");
+        string? written = null;
+        box.WriteClipboard = value => { written = value; return true; };
+        box.FeedbackDuration = TimeSpan.Zero;
+        Click(button);
+        box.UpdateLayout();
+        Check(written == expected && LabelIs(copied) && text.ActualWidth == width,
+            "Copy must write the entire prompt and announce Copied without rewrapping the text");
+        await PresentationWait.UntilAsync(() => LabelIs(copy), "Copy must return after its feedback expires");
+    }
+
     // Exercise both WPF surfaces with an in-memory module and no engine or provider process.
     internal static async Task RunGuideFixtures(string language, bool dark)
     {
         var ui = UiText.For(language == "zh-Hans");
-        var steps = new HarnessProgressStep[] { new("Restart", "done"), new("New conversation", "done", "Try again"),
+        var steps = new HarnessProgressStep[] { new("Restart", "done"),
+            new(ui.Text("progress_guide.plugin.conversation_hint"), "done", ui.Text("progress_guide.plugin.conversation_again")),
             new("Choose a grant", "current", "Why Antigravity asks.\nWhen it asks again."), new("Ready", "pending") };
         var guide = new HarnessProgressGuide("allowTool", "Setup", "attention", steps, null, null, null, true, null, true, "",
             Picture: "antigravityApproval", FloatTitle: "Choose the lasting grant", FloatNext: steps[2].Detail,
             FloatPicture: "antigravityApproval", ApprovalCard: EnglishCard);
         var module = new EngineModule(Provider, "enabled", true, true, ProgressConnector: true, ProgressGuide: guide);
+        var conversation = guide with { Stage = "newConversation", Example = ui.Text("progress_guide.plugin.example"),
+            Steps = [steps[0], steps[1] with { Title = ui.Text("progress_guide.plugin.conversation"), State = "current" },
+                steps[2] with { State = "pending" }, steps[3]], FloatTitle = ui.Text("progress_guide.plugin.conversation"),
+            FloatNext = steps[1].Detail, FloatPicture = null };
         var session = new PreferencesSession(new DesktopPreferences(), _ => Task.CompletedTask, _ => true);
         var settings = new SettingsWindow(ui, session, new DemoStartupRegistration(), true, dark) { ShowActivated = false };
         var area = new System.Drawing.Rectangle(0, 0, 1280, 900);
@@ -248,13 +296,19 @@ internal static class AntigravityPresentationChecks
         {
             settings.Content = settings.BuildHarnessProgressRow(Provider, "settings." + Provider, module);
             settings.Show();
-            CheckGuideStates(settings, ui, guide);
+            await CheckGuideStates(settings, ui, guide, conversation);
             await ProviderHomeSettingsChecks.CheckGuideFloat(settings, ui, !dark);
             settings.AllowClose = true; settings.Close();
-            floating.Update(module, true, DateTime.UtcNow);
+            var starting = module with { ProgressGuide = conversation };
+            floating.Update(starting, true, DateTime.UtcNow);
+            CheckNoExample(floating, "pending restart");
             Check(Get<TextBlock>(floating, "guide_float.title").Text == pending.Title && Get<TextBlock>(floating, "guide_float.next").Text == pending.Next
                 && Find<DecorativeBorder>(floating, "progress_approval.picture") == null, "The restart must keep its pending instruction until the app returns");
+            floating.Update(starting, false, DateTime.UtcNow);
+            floating.UpdateLayout();
+            await ProviderHomeSettingsChecks.CheckGuideFloatExample(floating, ui, conversation.Example!);
             floating.Present(guide with { FloatPicture = null });
+            CheckNoExample(floating, guide.Stage);
             Check(Find<DecorativeBorder>(floating, "progress_approval.picture") == null, "The float must ignore the Settings preview");
             floating.Present(guide with { Picture = null });
             floating.UpdateLayout();
@@ -271,6 +325,7 @@ internal static class AntigravityPresentationChecks
             var now = DateTime.UtcNow;
             floating.Update(ready, false, now);
             floating.UpdateLayout();
+            CheckNoExample(floating, "ready");
             Check(Find<DecorativeBorder>(floating, "progress_approval.picture") == null
                 && Get<TextBlock>(floating, "guide_float.title").Text == ready.ProgressGuide.FloatTitle,
                 "The ready message replaces the permission card even with a pending ID");

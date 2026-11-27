@@ -162,6 +162,7 @@ internal sealed class HarnessGuideFloat : GuideFloatWindow
             return;
         }
         doneSince = null;
+        SetExample(null);
         if (!reachedApp && pending is { } message && age <= TimeSpan.FromMinutes(2)
             && (restarting || module.PendingFloat != null || guide == null))
         {
@@ -178,6 +179,7 @@ internal sealed class HarnessGuideFloat : GuideFloatWindow
     private PendingGuideFloat? pending;
     private readonly bool light;
     private readonly TextBlock title, next;
+    private readonly Border example = new();
     private readonly Border art;
     private (string Chip, string? Title, string? Next, string? Picture, AntigravityApprovalCard? Card)? last;
     internal string Provider { get; }
@@ -198,12 +200,21 @@ internal sealed class HarnessGuideFloat : GuideFloatWindow
         next.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
         AutomationProperties.SetAutomationId(next, "guide_float.next");
 
-        Body.Children.Add(title); Body.Children.Add(art); Body.Children.Add(next);
+        Body.Children.Add(title); Body.Children.Add(example); Body.Children.Add(art); Body.Children.Add(next);
     }
 
     /// Shows the guide's step, or updates it in place.
-    internal void Present(HarnessProgressGuide guide) =>
+    internal void Present(HarnessProgressGuide guide)
+    {
+        SetExample(guide.Stage is "ready" or "firstTask" ? null : guide.Example);
         Draw(guide.Chip, guide.FloatTitle, guide.FloatNext, guide.FloatPicture, guide.ApprovalCard);
+    }
+
+    private void SetExample(string? text)
+    {
+        if ((example.Child as ProgressGuideExample)?.Text == text) return;
+        example.Child = text == null ? null : new ProgressGuideExample(text, ui, focusable: false) { Margin = new Thickness(0, 10, 0, 0) };
+    }
 
     private void Draw(string chip, string? heading, string? following, string? kind, AntigravityApprovalCard? card)
     {

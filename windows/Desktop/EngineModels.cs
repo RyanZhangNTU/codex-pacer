@@ -125,7 +125,7 @@ internal sealed record EngineStatusRow(string State, string Tone, string Text, s
 internal sealed record HarnessProgressGuide(string Stage, string Chip, string Tone, IReadOnlyList<HarnessProgressStep> Steps,
     string? Line, string? Action, string? ActionTitle, bool Attention, string? Summary, bool Waiting, string Info,
     string? WaitingText = null, string? Picture = null, string? FloatTitle = null, string? FloatNext = null,
-    string? FloatPicture = null, AntigravityApprovalCard? ApprovalCard = null);
+    string? FloatPicture = null, AntigravityApprovalCard? ApprovalCard = null, string? Example = null);
 internal sealed record PendingGuideFloat(string Title, string Next);
 internal sealed record AntigravityApprovalCard(string Permission, string Title, string Resource, string Once, string Conversation, string Always, string Deny);
 internal sealed record HarnessProgressStep(string Title, string State, string? Detail = null);

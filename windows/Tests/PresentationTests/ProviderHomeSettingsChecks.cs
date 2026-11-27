@@ -277,6 +277,26 @@ internal static class ProviderHomeSettingsChecks
         finally { if (!closed) shown.Close(); }
         Check(AppWindows.MainWindow([]) == null, "Without the app's processes there is no window to bring forward");
     }
+
+    internal static async Task CheckGuideFloatExample(HarnessGuideFloat shown, UiText ui, string expected)
+    {
+        var prompt = Find<TextBlock>(shown, "progress_guide.example");
+        var button = Find<Button>(shown, "progress_guide.example.copy");
+        var title = Find<TextBlock>(shown, "guide_float.title");
+        var next = Find<TextBlock>(shown, "guide_float.next");
+        Check(prompt.IsVisible && button.IsVisible && prompt.Text == expected
+            && prompt.TranslatePoint(new Point(), title).Y >= title.ActualHeight
+            && next.TranslatePoint(new Point(), prompt).Y >= prompt.ActualHeight,
+            "The floating guide must show the example between the instruction and the retry detail");
+        var box = Descendants(shown).OfType<ProgressGuideExample>().Single();
+        string? written = null;
+        box.WriteClipboard = value => { written = value; return true; };
+        Invoke(button);
+        await Pump();
+        Check(written == expected && AutomationProperties.GetName(button) == ui.Text("support.share.copied") && !shown.IsActive,
+            "Invoking Copy once must copy the floating guide's prompt without activating its window");
+    }
+
     /// The guide beside Codex while the user allows Pacer's hooks: three numbered
     /// clicks and a picture of Codex's Hooks page with the pending count, then
     /// a done line once the engine sees the hooks allowed.

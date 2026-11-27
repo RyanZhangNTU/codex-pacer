@@ -354,6 +354,8 @@ final class WindowsAntigravityTests: XCTestCase {
             XCTAssertEqual(guide.floatPicture, index == 2 ? .antigravityApproval : nil)
             XCTAssertEqual(guide.picture, index == 3 ? nil : .antigravityApproval)
             XCTAssertEqual(guide.approvalCard?.always, index == 3 ? nil : "Yes, and always allow")
+            // Only the new-conversation step offers the prompt to copy.
+            XCTAssertEqual(guide.example != nil, index == 1)
             if index == 1 || index == 2 { XCTAssertNotNil(guide.steps.first { $0.state == .current }?.detail) }
         }
         await runtime.stop()
