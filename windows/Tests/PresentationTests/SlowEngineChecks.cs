@@ -21,6 +21,7 @@ internal static class SlowEngineChecks
         void Reply(object data) { lock (Console.Out) { Console.WriteLine(JsonSerializer.Serialize(data)); Console.Out.Flush(); } }
         Reply(new { protocolVersion = 1, type = "hello", engine = "PacerEngine" });
         int requests = 0, replies = 0;
+        int sequence = 0;
         var releaseLateReplies = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var sentLateReply = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         void ReplyCounts(string id) => Reply(new { protocolVersion = 1, type = "result", id, ok = true,
@@ -29,7 +30,14 @@ internal static class SlowEngineChecks
         {
             using var json = JsonDocument.Parse(line); string id = json.RootElement.GetProperty("id").GetString()!;
             string method = json.RootElement.GetProperty("method").GetString()!;
-            if (method is "projectCompactBar" or "layoutQuotaChart" or "validatePreferences")
+            if (mode == "moduleLibrary" && method == "setModules")
+            {
+                Reply(new { protocolVersion = 1, type = "snapshot", sequence = ++sequence, demo = true,
+                    tasks = Array.Empty<object>(), requests = Array.Empty<object>(), sources = Array.Empty<object>(),
+                    quota = Array.Empty<object>(), notices = Array.Empty<object>(), modules = json.RootElement.GetProperty("params") });
+                ReplyCounts(id);
+            }
+            else if (method is "projectCompactBar" or "layoutQuotaChart" or "validatePreferences")
             {
                 requests++;
                 if (mode == "exit") return 0;

@@ -70,6 +70,21 @@ internal static class Program
             await using var projections = new EngineClient();
             try
             {
+                if (All("settings") || Has("moduleLibrary"))
+                {
+                    foreach (string language in new[] { "en", "zh-Hans" })
+                        foreach (bool dark in new[] { false, true })
+                        {
+                            scenario = language + "/dark=" + dark;
+                            await Attempt(nameof(ModuleLibraryChecks), () => ModuleLibraryChecks.Run(language, dark, output));
+                        }
+                    scenario = "common";
+                    if (groups is ["moduleLibrary"])
+                    {
+                        Check(Errors.Count == 0, "Module Library WPF errors: " + string.Join("\n", Errors));
+                        result = 0; return;
+                    }
+                }
                 if (Has("approvalGuide") && groups.Length == 1)
                 {
                     foreach (string language in new[] { "en", "zh-Hans" })

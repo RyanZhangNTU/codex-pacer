@@ -93,6 +93,8 @@ The tile body opens the module page. Its accessible name is the Settings name an
 - An undetected module with a website shows `modules.get` (“Get %@” / “获取 %@”) only while its ⓘ is open, on the line under the summary, in the summary’s secondary color with a small ↗ glyph (not an accent-colored link). The closed tile never shows it. Open the descriptor’s website on activation.
 - The final placeholder occupies a regular grid slot, 54 high, with the same corner radius. Draw a thin dashed outline (4 on, 4 off), a neutral sparkles glyph in the icon slot and the title in secondary text. Leave the interior unfilled. Expose the title as static text, with no interactive target, state or controls.
 
+Run `./scripts/windows/test-presentation.ps1 -Group moduleLibrary` to check the page in English and Simplified Chinese in both themes. The checks use synthetic engine snapshots and a fake website launcher. They also run in the `settings` group.
+
 ## Island
 
 - The island keeps one transparent HWND canvas across transitions, so its window can stay large after the panel closes. Its root UIA `ExpandCollapse` pattern reports the logical state; input tests should read that, not infer it from the window size. Hover exit keeps the Mac's 0.4-second grace period.
