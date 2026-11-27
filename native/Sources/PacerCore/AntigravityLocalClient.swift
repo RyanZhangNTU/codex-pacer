@@ -9,6 +9,9 @@ package enum AntigravityHubCandidateLimit {
 package protocol AntigravityLocalHost: Sendable {
     var maximumHubDirectoryEntries: Int { get }
     var hubCandidateLimit: AntigravityHubCandidateLimit { get }
+    /// Changes even for an owner/link change or a write with a restored mtime.
+    func hubChangeTime(_ hub: URL) -> UInt64?
+    func processIdentity(pid: Int32) -> String?
     func serverIdentity(hub: URL, pid: Int32, httpPort: UInt16) -> String?
     func post(_ request: AntigravityLocalRequest) async throws -> (Int, Data)
 }
@@ -37,6 +40,7 @@ package actor AntigravityLocalClient {
     private struct Binding: Equatable {
         let file: URL
         let stamp: PlatformFileMetadata
+        let changeTime: UInt64
         let pid: Int32
         let port: UInt16
         let process: String
@@ -44,6 +48,12 @@ package actor AntigravityLocalClient {
     }
 
     private let directory: URL
+    private let uptime: @Sendable () -> TimeInterval
+    private var directoryStamp: PlatformFileMetadata?
+    private var otherHubs: [(URL, PlatformFileMetadata?)] = []
+    private var hubFiles: [(URL, UInt16)] = []
+    // Stale hub files commonly outlive the server. Never cache their credentials.
+    private var inactive: [URL: (stamp: PlatformFileMetadata, pid: Int32)] = [:]
     private let io: LocalHarnessIO
     private var binding: Binding?
     private var catalog = AntigravityModelCatalog()
@@ -64,10 +74,11 @@ package actor AntigravityLocalClient {
         }
         return catalog
     }
-    private var refused: (file: URL, stamp: PlatformFileMetadata, retry: TimeInterval)?
+    private var refused: (file: URL, stamp: PlatformFileMetadata, process: String, retry: TimeInterval)?
     private var pending: [UUID: Task<(Int, Data), Error>] = [:]
     private(set) var generation: UInt64 = 0
-    init(home: URL, io: LocalHarnessIO) {
+    init(home: URL, io: LocalHarnessIO, uptime: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.uptime = uptime
         directory = home.appendingPathComponent("daemon", isDirectory: true); self.io = io
     }
 
@@ -80,21 +91,45 @@ package actor AntigravityLocalClient {
     }
 
     @discardableResult func discover() -> UInt64? {
-        var candidate = discoverBinding()
-        if let refused, refused.file == candidate?.file, refused.stamp == candidate?.stamp,
-           ProcessInfo.processInfo.systemUptime < refused.retry { candidate = nil }
+        let candidate = discoverBinding()
         if candidate != binding { revoke(); binding = candidate }
         return candidate == nil ? nil : generation
     }
 
+    /// Quota and in-flight activity reads can validate their session without
+    /// choosing a replacement or scanning the daemon directory again.
+    func isCurrent(_ expected: UInt64, checkDirectory: Bool = false) -> Bool {
+        guard generation == expected, let binding else { return false }
+        guard io.files.metadata(binding.file) == binding.stamp,
+              io.antigravity?.hubChangeTime(binding.file) == binding.changeTime,
+              io.antigravity?.processIdentity(pid: binding.pid) == binding.process else {
+            revoke()
+            return false
+        }
+        // A newly created hub or an in-place edit to a competitor can make
+        // the selection ambiguous during an HTTP read. Let activity rediscover.
+        if checkDirectory {
+            return io.files.metadata(directory) == directoryStamp && otherHubs.allSatisfy { io.files.metadata($0.0) == $0.1 }
+        }
+        return true
+    }
+
     private func discoverBinding() -> Binding? {
-        guard let host = io.antigravity, io.files.metadata(directory)?.isDirectory == true,
-              let entries = try? io.files.entries(in: directory, maximum: host.maximumHubDirectoryEntries) else { return nil }
-        let candidates = entries.compactMap { url -> (URL, UInt16, PlatformFileMetadata)? in
-            let name = url.lastPathComponent
-            guard name.hasPrefix("hub_"), name.hasSuffix(".json"),
-                  let port = UInt16(name.dropFirst(4).dropLast(5)), port > 0, name == "hub_\(port).json",
-                  let stamp = io.files.metadata(url), stamp.isRegularFile, (1...4096).contains(stamp.size) else { return nil }
+        guard let host = io.antigravity, let stamp = io.files.metadata(directory), stamp.isDirectory else { return nil }
+        if directoryStamp != stamp {
+            guard let entries = try? io.files.entries(in: directory, maximum: host.maximumHubDirectoryEntries) else { return nil }
+            hubFiles = entries.compactMap { url in
+                let name = url.lastPathComponent
+                guard name.hasPrefix("hub_"), name.hasSuffix(".json"),
+                      let port = UInt16(name.dropFirst(4).dropLast(5)), port > 0, name == "hub_\(port).json" else { return nil }
+                return (url, port)
+            }
+            directoryStamp = stamp
+            inactive.removeAll()
+        }
+        let stamped = hubFiles.map { ($0.0, $0.1, io.files.metadata($0.0)) }
+        let candidates = stamped.compactMap { (url, port, metadata) -> (URL, UInt16, PlatformFileMetadata)? in
+            guard let stamp = metadata, stamp.isRegularFile, (1...4096).contains(stamp.size) else { return nil }
             return (url, port, stamp)
         }
         let count: Int
@@ -111,31 +146,44 @@ package actor AntigravityLocalClient {
         }
         var result: Binding?
         for (file, port, stamp) in newest.prefix(count) {
-            guard let data = try? io.files.read(file, offset: 0, maximumBytes: 4097),
+            if let binding, binding.file == file, binding.stamp == stamp,
+               host.hubChangeTime(file) == binding.changeTime, host.processIdentity(pid: binding.pid) == binding.process {
+                guard result == nil else { return nil }
+                result = binding
+                continue
+            }
+            if let prior = inactive[file], prior.stamp == stamp, host.processIdentity(pid: prior.pid) == nil { continue }
+            guard let changeTime = host.hubChangeTime(file),
+                  let data = try? io.files.read(file, offset: 0, maximumBytes: 4097),
                   let fields = try? JSONFieldView.document(data, maximumBytes: 4096).fields(["httpPort", "pid", "csrfToken"]),
                   fields["httpPort"]?.integer() == Int(port),
-                  let pid = fields["pid"]?.integer().flatMap(Int32.init(exactly:)), pid > 1,
-                  let token = fields["csrfToken"]?.string(limit: 257), (1...256).contains(token.utf8.count),
+                  let pid = fields["pid"]?.integer().flatMap(Int32.init(exactly:)), pid > 1 else { continue }
+            guard let process = host.processIdentity(pid: pid) else {
+                inactive[file] = (stamp, pid)
+                continue
+            }
+            if let refused, refused.file == file, refused.stamp == stamp, refused.process == process, uptime() < refused.retry {
+                return nil
+            }
+            guard let token = fields["csrfToken"]?.string(limit: 257), (1...256).contains(token.utf8.count),
                   token.utf8.allSatisfy({ (33...126).contains($0) }),
-                  let identity = host.serverIdentity(hub: file, pid: pid, httpPort: port),
-                  io.files.metadata(file) == stamp else { continue }
+                  let identity = host.serverIdentity(hub: file, pid: pid, httpPort: port), identity == process,
+                  host.processIdentity(pid: pid) == identity, io.files.metadata(file) == stamp,
+                  host.hubChangeTime(file) == changeTime else { continue }
             guard result == nil else { return nil }
-            result = Binding(file: file, stamp: stamp, pid: pid, port: port, process: identity, token: token)
+            result = Binding(file: file, stamp: stamp, changeTime: changeTime, pid: pid, port: port, process: identity, token: token)
         }
+        otherHubs = stamped.compactMap { $0.0 == result?.file ? nil : ($0.0, $0.2) }
         return result
     }
 
     private func connectionLost(_ current: Binding) {
-        refused = (current.file, current.stamp, ProcessInfo.processInfo.systemUptime + 2)
+        refused = (current.file, current.stamp, current.process, uptime() + 2)
         revoke()
     }
 
     func call(_ method: Method, generation expected: UInt64) async throws -> Data {
-        guard generation == expected, let current = binding, let host = io.antigravity else { throw Failure.revoked }
-        guard io.files.metadata(current.file) == current.stamp,
-              host.serverIdentity(hub: current.file, pid: current.pid, httpPort: current.port) == current.process else {
-            revoke(); throw Failure.revoked
-        }
+        guard isCurrent(expected), let current = binding, let host = io.antigravity else { throw Failure.revoked }
         let service: String, name: String, body: [String: Any], cap: Int
         switch method {
         case .userStatus, .quota:
@@ -171,13 +219,15 @@ package actor AntigravityLocalClient {
         do { response = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() } }
         catch let error as Failure { throw error }
         catch let error as URLError where error.code == .timedOut {
+            // A slow reply can retain its scoped quota if the full proof
+            // still holds. No subsequent call inherits an unverified timeout.
+            if generation == expected, host.serverIdentity(hub: current.file, pid: current.pid, httpPort: current.port) != current.process {
+                connectionLost(current)
+            }
             throw Failure.timedOut
         }
         catch { if generation == expected { connectionLost(current) }; throw Failure.unavailable }
-        guard generation == expected, io.files.metadata(current.file) == current.stamp else {
-            if generation == expected { revoke() }
-            throw Failure.revoked
-        }
+        guard isCurrent(expected) else { throw Failure.revoked }
         if response.0 == 401 || response.0 == 403 { connectionLost(current); throw Failure.revoked }
         guard response.0 == 200 else { throw Failure.unsupported }
         guard response.1.count <= cap else { throw Failure.oversized }

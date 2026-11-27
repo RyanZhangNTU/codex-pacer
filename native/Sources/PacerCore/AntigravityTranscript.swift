@@ -11,7 +11,7 @@ struct AntigravityTranscript {
     }
 
     private(set) var records: [Int: Record] = [:]
-    private var stamp: PlatformFileMetadata?
+    private(set) var stamp: PlatformFileMetadata?
     static let maximumBytes = 512 * 1024
 
     mutating func read(_ url: URL, files: any PlatformFileSystem) {

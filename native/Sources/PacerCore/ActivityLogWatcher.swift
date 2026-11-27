@@ -24,6 +24,13 @@ public final class ActivityLogWatcher: @unchecked Sendable {
     private let events: any ActivityFileEvents
     private var sources: [URL: Watch] = [:]
     private var pending: DispatchWorkItem?
+    private var poll: DispatchWorkItem?
+    private var pollRevision: UInt64 = 0
+    typealias Schedule = (DispatchQueue, TimeInterval, DispatchWorkItem) -> Void
+    static let dispatchAfter: Schedule = { queue, delay, item in
+        queue.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+    private let schedule: Schedule
     private var pendingSince: TimeInterval?
     private var pendingEvents: [URL: Bool] = [:]
     private var revision: UInt64 = 0
@@ -32,9 +39,17 @@ public final class ActivityLogWatcher: @unchecked Sendable {
     private let fileExtensions: Set<String>?
     private let changed: @Sendable (Bool) -> Void
 
-    public init(files: any PlatformFileSystem, events: any ActivityFileEvents,
+    public convenience init(files: any PlatformFileSystem, events: any ActivityFileEvents,
                 interval: TimeInterval = 5, maximumDirectoryWatches: Int = 4, fileExtensions: Set<String>? = ["jsonl", "zstd"],
                 changed: @escaping @Sendable (Bool) -> Void) {
+        self.init(files: files, events: events, interval: interval, maximumDirectoryWatches: maximumDirectoryWatches,
+                  fileExtensions: fileExtensions, schedule: Self.dispatchAfter, changed: changed)
+    }
+
+    init(files: any PlatformFileSystem, events: any ActivityFileEvents, interval: TimeInterval,
+         maximumDirectoryWatches: Int = 4, fileExtensions: Set<String>?, schedule: @escaping Schedule,
+         changed: @escaping @Sendable (Bool) -> Void) {
+        self.schedule = schedule
         self.files = files; self.events = events
         self.interval = min(5, max(0.1, interval))
         self.maximumDirectoryWatches = min(99, max(1, maximumDirectoryWatches)); self.changed = changed
@@ -87,18 +102,40 @@ public final class ActivityLogWatcher: @unchecked Sendable {
         let token = revision
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.revision == token else { return }
-            let discover = self.pendingEvents.values.contains(true)
-            self.pendingEvents.removeAll(); self.pending = nil; self.pendingSince = nil
-            self.changed(discover)
+            self.deliver()
         }
-        pending = work; queue.asyncAfter(deadline: .now() + delay, execute: work)
+        pending = work; schedule(queue, delay, work)
+    }
+
+    /// A fallback poll and a batch of writes cover the same files. Whichever
+    /// fires first consumes both, including events already queued for discovery.
+    func poll(after delay: TimeInterval) {
+        queue.async { [self] in
+            cancelPoll()
+            let token = pollRevision
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.pollRevision == token else { return }
+                self.deliver()
+            }
+            poll = work; schedule(queue, delay, work)
+        }
+    }
+    private func deliver() {
+        let discover = pendingEvents.values.contains(true)
+        pendingEvents.removeAll()
+        cancelPending()
+        cancelPoll()
+        changed(discover)
+    }
+    private func cancelPoll() {
+        pollRevision &+= 1; poll?.cancel(); poll = nil
     }
     private func cancelPending() {
         revision &+= 1; pending?.cancel(); pending = nil; pendingSince = nil
     }
     public func stop() {
         queue.async { [self] in
-            cancelPending(); pendingEvents.removeAll()
+            cancelPoll(); cancelPending(); pendingEvents.removeAll()
             for source in sources.values { source.source.stop() }; sources.removeAll()
         }
     }
@@ -108,5 +145,5 @@ public final class ActivityLogWatcher: @unchecked Sendable {
             queue.async { [self] in continuation.resume(returning: sources.count) }
         }
     }
-    deinit { pending?.cancel(); for source in sources.values { source.source.stop() } }
+    deinit { poll?.cancel(); pending?.cancel(); for source in sources.values { source.source.stop() } }
 }

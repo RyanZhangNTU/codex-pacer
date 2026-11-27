@@ -26,6 +26,10 @@ package actor AntigravityQuotaCoordinator: LocalHarnessQuotaCoordinator {
     private let revision: UInt64
     private var state = LocalHarnessQuotaState()
     private var scope: String?
+    // Covers a normal collapsed poll (120s) with scheduling slack. Each read
+    // still ends with a fresh identity check, even on the same live server.
+    private var scopeCheckedAt: Date?
+    private static let scopeLifetime: TimeInterval = 150
     private var policies: [String: AttentionPolicy] = [:]
 
     package init(client: AntigravityLocalClient, session: UInt64, home: URL, credential: DeepSeekHistoryCredential,
@@ -97,18 +101,27 @@ package actor AntigravityQuotaCoordinator: LocalHarnessQuotaCoordinator {
         defer { state.refreshing = false }
         await output(state, [])
         guard current else { return }
-        let before = await accountScope()
-        guard current else { return }
+        let age = scopeCheckedAt.map { now().timeIntervalSince($0) }
+        let cached = scope != nil && age.map { (0...Self.scopeLifetime).contains($0) } == true
+        let before = cached ? scope : await accountScope()
+        let delivery = await read(scopeBefore: before, cached: cached)
+        var completed = state
+        completed.refreshing = false
+        if current { await output(completed, delivery) }
+    }
+
+    private func read(scopeBefore before: String?, cached: Bool) async -> [IslandNotice] {
+        guard current else { return [] }
         if before != scope || before == nil {
             clearReading(); scope = before
             await output(state, [])
             if let before, let cached = await store.restore(home: home, accountScope: before, now: now()) {
-                guard current else { return }
+                guard current else { return [] }
                 state.history = cached.1
                 state.snapshot = cached.0
             }
         }
-        guard current else { return }
+        guard current else { return [] }
         let reading: QuotaSnapshot?
         var timedOut = false
         do {
@@ -116,32 +129,42 @@ package actor AntigravityQuotaCoordinator: LocalHarnessQuotaCoordinator {
             reading = try Self.decode(data, scope: before, at: now())
         } catch AntigravityLocalClient.Failure.timedOut { reading = nil; timedOut = true }
         catch { reading = nil }
-        guard current else { return }
+        guard current else { return [] }
         let after = await accountScope()
-        guard current else { return }
-        let bound = await client.discover() == session
-        guard current else { return }
-        var delivery: [IslandNotice] = []
+        guard current else { return [] }
+        let bound = await client.isCurrent(session, checkDirectory: true)
+        guard current else { return [] }
+        scopeCheckedAt = bound && before == after && after != nil ? now() : nil
         if !bound || before != after {
             clearReading()
             state.failures = 0; state.lastAttempt = bound ? nil : now()
+            // The scope may already have disappeared before this poll. Discard
+            // the raced reading and get a fresh, anonymous sample for display.
+            if cached && bound && after == nil {
+                state.lastAttempt = now()
+                return await read(scopeBefore: nil, cached: false)
+            }
         } else if let reading {
+            // The cached account might have returned during the quota request.
+            // Only reuse already attributed values. Bracket new bucket values
+            // with fresh scope checks before they can enter this account's history.
+            if cached && reading.buckets != state.snapshot?.buckets {
+                return await read(scopeBefore: after, cached: false)
+            }
             state.snapshot = reading; state.error = nil; state.failures = 0
             if after != nil {
                 state.history.record(reading, preservingMissingSeries: true)
                 let saved = await store.save(home: home, snapshot: reading, history: state.history, now: now())
-                guard current else { return }
+                guard current else { return [] }
                 state.warning = saved ? nil : L10n.text("quota.history_unsaved")
-                delivery = notices(reading)
+                return notices(reading)
             } else { state.warning = L10n.text("quota.no_identity") }
         } else {
             if after == nil { clearReading() }
             state.failures = min(4, state.failures + 1)
             if !timedOut || state.snapshot == nil { state.error = L10n.text("antigravity.quota.unavailable") }
         }
-        var completed = state
-        completed.refreshing = false
-        await output(completed, delivery)
+        return []
     }
 
     package func flush() async { await store.flush() }

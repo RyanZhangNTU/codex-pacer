@@ -67,7 +67,18 @@ private final class FakeHost: AntigravityLocalHost, @unchecked Sendable {
     private var overrides: [String: Data] = [:]
     func respond(_ method: String, with data: Data) { lock.withLock { overrides[method] = data } }
     var intercept: (@Sendable (AntigravityLocalRequest) async -> Void)?
-    func serverIdentity(hub: URL, pid: Int32, httpPort: UInt16) -> String? { pid == 42 ? "synthetic-server-start" : nil }
+    private var started = 1
+    private var verifications = 0
+    private var status: Int?
+    var verificationCount: Int { lock.withLock { verifications } }
+    func restart() { lock.withLock { started += 1 } }
+    func reject(_ code: Int?) { lock.withLock { status = code; refused = false } }
+    func hubChangeTime(_ hub: URL) -> UInt64? { 1 }
+    func processIdentity(pid: Int32) -> String? { lock.withLock { pid == 42 ? String(started) : nil } }
+    func serverIdentity(hub: URL, pid: Int32, httpPort: UInt16) -> String? {
+        lock.withLock { verifications += 1 }
+        return processIdentity(pid: pid)
+    }
     func install(_ state: String, steps: [Step], id: String, parent: String?, updated: Int? = nil) {
         lock.withLock {
             var metadata: [String: Any] = ["rootConversationId": parent ?? id]
@@ -93,6 +104,7 @@ private final class FakeHost: AntigravityLocalHost, @unchecked Sendable {
         if let intercept { await intercept(request) }
         return try lock.withLock {
             seen.append(request)
+            if let status { return (status, Data()) }
             if refused { throw URLError(.cannotConnectToHost) }
             let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.body) as? [String: Any])
             let method = String(request.path.split(separator: "/").last!)
@@ -215,9 +227,92 @@ private final class Fixture {
     }
 }
 
+// The real watcher still batches and delivers events on its serial queue.
+// Only delayed dispatch and the clock advance under test control.
+private final class WatchClock: ActivityFileEvents, @unchecked Sendable {
+    private let lock = NSLock()
+    private var seconds: TimeInterval = 0
+    private var queue: DispatchQueue?
+    private var timers: [(at: TimeInterval, work: DispatchWorkItem)] = []
+    private var scheduled = 0
+    private var handlers: [URL: @Sendable (ActivityFileEvent) -> Void] = [:]
+    var time: TimeInterval { lock.withLock { seconds } }
+    var now: Date { epoch.addingTimeInterval(time) }
+    func setTime(_ time: TimeInterval) { lock.withLock { seconds = time } }
+
+    final class Watch: ActivityFileWatch, @unchecked Sendable { func stop() {} }
+    func watch(_ url: URL, isDirectory: Bool, changed: @escaping @Sendable (ActivityFileEvent) -> Void) -> (any ActivityFileWatch)? {
+        lock.withLock { handlers[url] = changed }
+        return Watch()
+    }
+    func write(_ url: URL) throws {
+        let handler = try XCTUnwrap(lock.withLock { handlers[url] })
+        handler(ActivityFileEvent())
+    }
+    func schedule(_ queue: DispatchQueue, _ delay: TimeInterval, _ work: DispatchWorkItem) {
+        lock.withLock {
+            self.queue = queue
+            timers.append((seconds + delay, work))
+            scheduled += 1
+        }
+    }
+    private func waitForTimer(after count: Int) async throws {
+        let deadline = ProcessInfo.processInfo.systemUptime + 5
+        while lock.withLock({ scheduled == count }) {
+            guard ProcessInfo.processInfo.systemUptime < deadline else { throw URLError(.timedOut) }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+    }
+    @discardableResult func advance(to end: TimeInterval) async throws -> Int {
+        try await waitForTimer(after: 0)
+        let queue = try XCTUnwrap(lock.withLock { self.queue })
+        var delivered = 0
+        while true {
+            queue.sync {} // enqueue any writes made at the current virtual time
+            let timer: DispatchWorkItem? = lock.withLock {
+                timers.removeAll { $0.work.isCancelled }
+                guard let i = timers.indices.min(by: { timers[$0].at < timers[$1].at }), timers[i].at <= end else {
+                    seconds = end
+                    return nil
+                }
+                let timer = timers.remove(at: i)
+                seconds = timer.at
+                return timer.work
+            }
+            guard let timer else { return delivered }
+            let count = lock.withLock { scheduled }
+            queue.sync { timer.perform() }
+            // The monitor installs its next fallback after the whole pass.
+            try await waitForTimer(after: count)
+            delivered += 1
+        }
+    }
+}
+
+private final class CountingFiles: PlatformFileSystem, @unchecked Sendable {
+    private let files = TestFileSystem()
+    private let lock = NSLock()
+    private var stats: [String: Int] = [:], reads: [String: Int] = [:]
+    private func key(_ url: URL) -> String { url.standardizedFileURL.path }
+    func counts(_ urls: [URL]) -> [Int] { lock.withLock { urls.map { stats[key($0), default: 0] } } }
+    func readCount(_ url: URL) -> Int { lock.withLock { reads[key(url), default: 0] } }
+    func metadata(_ url: URL, followingSymbolicLinks: Bool) -> PlatformFileMetadata? {
+        lock.withLock { stats[key(url), default: 0] += 1 }
+        return files.metadata(url, followingSymbolicLinks: followingSymbolicLinks)
+    }
+    func resolvedDirectory(_ url: URL) -> URL { files.resolvedDirectory(url) }
+    func entries(in directory: URL) throws -> [URL] { try files.entries(in: directory) }
+    func read(_ url: URL, offset: UInt64, maximumBytes: Int) throws -> Data {
+        lock.withLock { reads[key(url), default: 0] += 1 }
+        return try files.read(url, offset: offset, maximumBytes: maximumBytes)
+    }
+    func replace(_ url: URL, with data: Data) -> Bool { XCTFail("Unexpected write"); return false }
+}
+
 private actor Updates {
+    private(set) var count = 0
     private(set) var last = HarnessActivity()
-    func receive(_ value: HarnessActivity) { last = value }
+    func receive(_ value: HarnessActivity) { count += 1; last = value }
 }
 
 /// Simulate a writer changing files immediately after the initial sidecar lookup.
@@ -1060,5 +1155,184 @@ extension AntigravityTests {
         let state = await output.state
         XCTAssertNil(state.snapshot)
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
+    }
+}
+
+extension AntigravityTests {
+    func testOneVerificationPerBindingIncludingRecovery() async throws {
+        let f = try Fixture(), clock = WatchClock()
+        let client = AntigravityLocalClient(home: f.home, io: f.io, uptime: { clock.time })
+        var discovered = await client.discover()
+        var session = try XCTUnwrap(discovered)
+        for _ in 0..<30 {
+            discovered = await client.discover()
+            XCTAssertEqual(session, discovered)
+            _ = try await client.call(.list, generation: session)
+        }
+        XCTAssertEqual(f.host.verificationCount, 1)
+
+        f.host.restart()
+        do { _ = try await client.call(.list, generation: session); XCTFail("Sent to recycled PID") }
+        catch AntigravityLocalClient.Failure.revoked {}
+        XCTAssertEqual(f.host.requests.count, 30)
+        discovered = await client.discover()
+        XCTAssertNotEqual(discovered, session)
+        session = try XCTUnwrap(discovered)
+        try f.hub(token: "replacement-token")
+        discovered = await client.discover()
+        XCTAssertNotEqual(discovered, session)
+        session = try XCTUnwrap(discovered)
+        XCTAssertEqual(f.host.verificationCount, 3)
+        for code in [401, 403, 0] {
+            let before = f.host.verificationCount
+            if code == 0 { f.host.disconnect() } else { f.host.reject(code) }
+            do { _ = try await client.call(.list, generation: session); XCTFail("Accepted failed request") }
+            catch AntigravityLocalClient.Failure.revoked { XCTAssertNotEqual(code, 0) }
+            catch AntigravityLocalClient.Failure.unavailable { XCTAssertEqual(code, 0) }
+            f.host.reject(nil)
+            let refused = await client.discover()
+            XCTAssertNil(refused)
+            clock.setTime(clock.time + 3)
+            discovered = await client.discover()
+            XCTAssertNotEqual(discovered, session)
+            session = try XCTUnwrap(discovered)
+            _ = try await client.call(.list, generation: session)
+            XCTAssertEqual(f.host.verificationCount, before + 1)
+        }
+    }
+
+    func testMinuteOfRunningWALWrites() async throws {
+        let f = try Fixture(), clock = WatchClock(), updates = Updates()
+        let io = LocalHarnessIO(files: f.files, events: clock, antigravity: f.host, now: { clock.now })
+        let m = AntigravityMonitor(io: io, schedule: clock.schedule)
+        let steps = [input, Step("PLANNER_RESPONSE", "GENERATING", 2)]
+        try f.write(steps, state: "RUNNING", at: 2)
+        await m.start(home: f.home, policy: .collapsed) { await updates.receive($0) }
+        let wal = URL(fileURLWithPath: f.store.conversationURL(rootID).path + "-wal", isDirectory: false)
+        _ = try await clock.advance(to: 0)
+        var refreshes = 1
+        // Four WAL writes per second; only an unprojected blob changes.
+        for tick in 0..<240 {
+            let byte = tick.isMultiple(of: 2) ? "00" : "01"
+            try f.sql("UPDATE steps SET step_payload=x'\(byte)' WHERE idx=1", db: "conversations/\(rootID).db")
+            try clock.write(wal)
+            refreshes += try await clock.advance(to: Double(tick + 1) / 4)
+        }
+        let calls = f.host.requests.count, verified = f.host.verificationCount, publications = await updates.count
+        await m.stop()
+        XCTAssertEqual(refreshes, 13)
+        XCTAssertEqual(calls, 26)
+        XCTAssertEqual(verified, 1)
+        // The initial history baseline becomes witnessed on its next observation.
+        XCTAssertEqual(publications, 2)
+    }
+
+    func testNewConversationAndAPIOnlyWaitArriveOnFirstDebouncedPass() async throws {
+        for policy in [ActivityRefreshPolicy.expanded, .collapsed] {
+            let f = try Fixture(), clock = WatchClock(), updates = Updates()
+            let io = LocalHarnessIO(files: f.files, events: clock, antigravity: f.host, now: { clock.now })
+            let m = AntigravityMonitor(io: io, schedule: clock.schedule)
+            await m.start(home: f.home, policy: policy) { await updates.receive($0) }
+            let initial = await updates.last
+            XCTAssertTrue(initial.activities.isEmpty)
+            let steps = [input, Step("ASK_QUESTION", "RUNNING", 3)]
+            try f.write(steps, state: "RUNNING", at: 3)
+            try clock.write(f.store.summariesURL)
+            let early = try await clock.advance(to: policy.interval - 0.001)
+            XCTAssertEqual(early, 0)
+            let first = try await clock.advance(to: policy.interval)
+            let running = await updates.last
+            XCTAssertEqual(first, 1)
+            XCTAssertEqual(running.activities.first?.phase, .running)
+            f.host.install("RUNNING", steps: [input, Step("ASK_QUESTION", "WAITING", 3, "askQuestion")], id: rootID, parent: nil)
+            let fallback = try await clock.advance(to: 2 * policy.interval)
+            let waiting = await updates.last
+            XCTAssertEqual(fallback, 1)
+            XCTAssertEqual(waiting.requests.first?.kind, .input)
+            await m.stop()
+        }
+    }
+
+    func testColdConversationReadsOnlyChangedFiles() async throws {
+        let f = try Fixture(), files = CountingFiles(), clock = WatchClock(), updates = Updates()
+        let m = AntigravityMonitor(io: .init(files: files, events: clock, antigravity: f.host, now: { clock.now }),
+                                   schedule: clock.schedule)
+        let cold = [Step("USER_INPUT", "DONE", -12), Step("PLANNER_RESPONSE", "DONE", -10)]
+        try f.write(cold, state: "IDLE", at: -7, id: childID)
+        try f.setModified(f.store.conversationURL(childID), epoch.addingTimeInterval(-7))
+        try f.write([input, Step("PLANNER_RESPONSE", "GENERATING", 2)], state: "RUNNING", at: 2)
+        let log = f.store.transcriptURL(childID)
+        let dbFolder = f.store.conversationURL(childID).deletingLastPathComponent()
+        let folders = [log.deletingLastPathComponent(), dbFolder]
+        await m.start(home: f.home, policy: .collapsed) { await updates.receive($0) }
+        let initial = files.counts(folders)
+        XCTAssertEqual(files.readCount(log), 1)
+        let calls = f.host.requests.count
+        for _ in 0..<3 { await m.refresh() }
+        XCTAssertEqual(files.counts(folders), initial, "Unchanged transcripts skip parent checks; neither step DB was opened")
+        XCTAssertEqual(f.host.requests.count - calls, 6)
+        XCTAssertEqual(files.readCount(log), 1)
+
+        // A changed transcript alone brings the historical row back for one inspection.
+        try f.setModified(log, epoch)
+        let beforeLog = f.host.requests.count
+        await m.refresh()
+        XCTAssertEqual(files.readCount(log), 2)
+        XCTAssertTrue(f.host.requests.dropFirst(beforeLog).contains { String(decoding: $0.body, as: UTF8.self).contains(childID) })
+        XCTAssertEqual(files.counts([dbFolder]), [initial[1]])
+
+        // A DB/WAL-only transition is visible even with an unchanged summary.
+        try f.sql("UPDATE steps SET status=8 WHERE idx=1", db: "conversations/\(childID).db")
+        f.host.install("RUNNING", steps: [cold[0], Step("PLANNER_RESPONSE", "GENERATING", -10)], id: childID, parent: nil)
+        await m.refresh()
+        let active = await updates.last.activities.first { $0.threadID == childID }
+        XCTAssertEqual(active?.phase, .running)
+        XCTAssertEqual(files.counts([dbFolder]), [initial[1] + 1])
+        XCTAssertEqual(files.readCount(log), 2)
+        await m.stop()
+    }
+
+    func testQuotaReusesOnlyRecentScopeAndAlwaysChecksAfterReading() async throws {
+        let f = try Fixture(), clock = WatchClock(), output = QuotaUpdates()
+        let client = AntigravityLocalClient(home: f.home, io: f.io)
+        let session = await client.discover()
+        let coordinator = AntigravityQuotaCoordinator(client: client, session: try XCTUnwrap(session), home: f.home,
+            credential: DeepSeekHistoryCredential(loadSalt: { Data(repeating: 1, count: 32) }, saveSalt: { _ in }),
+            history: QuotaHistoryStore(directory: f.home.appendingPathComponent("history")), now: { clock.now }) { await output.receive($0, $1) }
+        f.host.respond("GetUserStatus", with: syntheticAccount("a"))
+        f.host.respond("RetrieveUserQuotaSummary", with: try quotaData(gemini: 0.75, third: 0.5))
+        for (time, expected) in [(0.0, 3), (120.0, 2), (271.0, 3)] {
+            clock.setTime(time)
+            let start = f.host.requests.count
+            await coordinator.refresh(expanded: false)
+            let calls = f.host.requests.dropFirst(start)
+            XCTAssertEqual(calls.count, expected)
+            XCTAssertTrue(calls.last?.path.hasSuffix("/GetUserStatus") == true)
+            XCTAssertEqual(f.host.verificationCount, 1)
+        }
+        // B was active before the request and switches back to the cached A
+        // before the closing check. B's changed percentages must never enter A.
+        let original = try quotaData(gemini: 0.75, third: 0.5)
+        f.host.respond("GetUserStatus", with: syntheticAccount("b"))
+        f.host.respond("RetrieveUserQuotaSummary", with: try quotaData(gemini: 0.1, third: 0.05))
+        f.host.intercept = { [host = f.host] request in
+            if request.path.hasSuffix("/GetUserStatus") {
+                host.respond("GetUserStatus", with: syntheticAccount("a"))
+                host.respond("RetrieveUserQuotaSummary", with: original)
+            }
+        }
+        await coordinator.refresh(expanded: false, force: true)
+        let returned = await output.state
+        XCTAssertEqual(returned.snapshot?.buckets.first?.windows.first?.remainingPercent, 75)
+        let alerts = await output.notices
+        XCTAssertTrue(alerts.isEmpty)
+        f.host.intercept = { [host = f.host] request in
+            if request.path.hasSuffix("/RetrieveUserQuotaSummary") { host.restart() }
+        }
+        await coordinator.refresh(expanded: false, force: true)
+        let lost = await output.state
+        XCTAssertNil(lost.snapshot)
+        XCTAssertTrue(lost.history.cycles.isEmpty)
+        XCTAssertEqual(f.host.verificationCount, 1, "Quota cannot bind a replacement server")
     }
 }

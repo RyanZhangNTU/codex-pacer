@@ -30,6 +30,26 @@ struct WindowsAntigravityLocalHost: AntigravityLocalHost {
         return (try? WindowsLocalProfileOwner.validate(owner)) != nil
     }
 
+    func hubChangeTime(_ hub: URL) -> UInt64? {
+        let file = CreateFileW(WindowsFiles.wide(hub), DWORD(FILE_READ_ATTRIBUTES),
+            DWORD(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE), nil, DWORD(OPEN_EXISTING),
+            DWORD(FILE_FLAG_OPEN_REPARSE_POINT), nil)
+        guard file != INVALID_HANDLE_VALUE else { return nil }
+        defer { CloseHandle(file) }
+        var info = FILE_BASIC_INFO()
+        guard GetFileInformationByHandleEx(file, FileBasicInfo, &info, DWORD(MemoryLayout<FILE_BASIC_INFO>.size)) else { return nil }
+        return UInt64(bitPattern: info.ChangeTime.QuadPart)
+    }
+
+    func processIdentity(pid: Int32) -> String? {
+        guard pid > 1, let process = OpenProcess(DWORD(PROCESS_QUERY_LIMITED_INFORMATION), false, DWORD(pid)) else { return nil }
+        defer { CloseHandle(process) }
+        var creation = FILETIME(), exit = FILETIME(), kernel = FILETIME(), user = FILETIME()
+        guard GetProcessTimes(process, &creation, &exit, &kernel, &user) else { return nil }
+        let started = UInt64(creation.dwHighDateTime) << 32 | UInt64(creation.dwLowDateTime)
+        return "\(pid):\(started)"
+    }
+
     func serverIdentity(hub: URL, pid: Int32, httpPort: UInt16) -> String? {
         guard pid > 1, httpPort != 0, Self.ownedHub(hub) else { return nil }
         var process = pacer_process_identity()

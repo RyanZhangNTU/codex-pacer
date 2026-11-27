@@ -19,6 +19,38 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
     }
 
     private struct Cached {
+        let db: URL
+        let wal: URL
+        let shm: URL
+        let log: URL
+        var blockedLogDirectory: URL?
+        var retryTrajectory = false
+        var needsInspection = false
+        init(_ store: AntigravityStore, id: String) {
+            db = store.conversationURL(id)
+            wal = URL(fileURLWithPath: db.path + "-wal", isDirectory: false)
+            shm = URL(fileURLWithPath: db.path + "-shm", isDirectory: false)
+            log = store.transcriptURL(id)
+        }
+        func databaseStamps(_ files: any PlatformFileSystem) -> [PlatformFileMetadata?] {
+            [files.metadata(db), files.metadata(wal), files.metadata(shm)]
+        }
+        mutating func updateTranscript(files: any PlatformFileSystem) -> Bool {
+            let before = transcript.stamp
+            guard let stamp = files.metadata(log), stamp.isRegularFile else {
+                transcript = .init()
+                return before != nil
+            }
+            guard stamp != before else { return false }
+            if let blockedLogDirectory, files.metadata(blockedLogDirectory)?.isDirectory != true { return false }
+            // A cached tail never authorizes a new read through a replaced ancestor.
+            let logs = log.deletingLastPathComponent(), system = logs.deletingLastPathComponent()
+            let conversation = system.deletingLastPathComponent(), brain = conversation.deletingLastPathComponent()
+            blockedLogDirectory = [brain, conversation, system, logs].first { files.metadata($0)?.isDirectory != true }
+            if blockedLogDirectory == nil { transcript.read(log, files: files) }
+            else { transcript = .init() }
+            return before != transcript.stamp
+        }
         var trajectory: AntigravityStore.Trajectory?
         var transcript = AntigravityTranscript()
         var metadata = AntigravityProjection.Enrichment()
@@ -35,11 +67,13 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
     private var client: AntigravityLocalClient?
     private var watcher: ActivityLogWatcher?
     private var urls: [URL] = []
-    private var retry: Task<Void, Never>?
+    private let schedule: ActivityLogWatcher.Schedule
+    private var summaryCache: (stamps: [PlatformFileMetadata?], rows: [AntigravityStore.Summary])?
+    private var retryFiles = false
     private var publish: (@Sendable (HarnessActivity) async -> Void)?
     private var generation: UInt64 = 0
     private var reading = false, dirty = false
-    private var needsRecheck = false
+    private var disagreements = Set<String>()
     private var policy = ActivityRefreshPolicy.collapsed
     private var cache: [String: Cached] = [:]
     private var watermark: Date?
@@ -47,7 +81,9 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
     private var pass: UInt64 = 0
     private var previous: HarnessActivity?
 
-    init(io: LocalHarnessIO) { self.io = io }
+    init(io: LocalHarnessIO, schedule: @escaping ActivityLogWatcher.Schedule = ActivityLogWatcher.dispatchAfter) {
+        self.io = io; self.schedule = schedule
+    }
 
     func start(home: URL, policy: ActivityRefreshPolicy, publish: @escaping @Sendable (HarnessActivity) async -> Void) async {
         let old = reset()
@@ -57,12 +93,12 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
         let store = AntigravityStore(home: home, files: io.files)
         self.store = store; self.policy = policy; self.publish = publish
         client = AntigravityLocalClient(home: home, io: io)
-        let watcher = ActivityLogWatcher(files: io.files, events: io.events, interval: 0.15, fileExtensions: nil) { [weak self] _ in
+        let watcher = ActivityLogWatcher(files: io.files, events: io.events, interval: policy.interval, fileExtensions: nil, schedule: schedule) { [weak self] _ in
             Task { await self?.refresh(ifCurrent: current) }
         }
         self.watcher = watcher
         urls = baseURLs(store)
-        watcher.update(urls, interval: 0.15)
+        watcher.update(urls, interval: policy.interval)
         _ = await watcher.activeWatchCount()
         await refresh(ifCurrent: current)
     }
@@ -74,14 +110,14 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
             if parent.path == directory.path || parent.path.isEmpty { break }
             directory = parent
         }
-        return [directory, store.home.appendingPathComponent("daemon"), store.summariesURL, sidecar(store.summariesURL)]
+        return [directory, store.home.appendingPathComponent("daemon", isDirectory: true), store.summariesURL, sidecar(store.summariesURL)]
     }
 
-    private func sidecar(_ url: URL) -> URL { URL(fileURLWithPath: url.path + "-wal") }
+    private func sidecar(_ url: URL) -> URL { URL(fileURLWithPath: url.path + "-wal", isDirectory: false) }
 
     private func reset() -> AntigravityLocalClient? {
         generation &+= 1; reading = false; dirty = false
-        watcher?.stop(); watcher = nil; retry?.cancel(); retry = nil
+        watcher?.stop(); watcher = nil; summaryCache = nil
         store = nil; publish = nil; cache = [:]; previous = nil; watermark = nil; hubGeneration = nil
         defer { client = nil }
         return client
@@ -99,20 +135,21 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
         guard let store, let client, let publish else { return }
         if reading {
             dirty = true
-            // A daemon event may rotate the credentials while an earlier HTTP call is suspended.
-            _ = await client.discover()
+            if let hubGeneration { _ = await client.isCurrent(hubGeneration) }
             return
         }
         reading = true
         let current = generation
+        disagreements.removeAll()
         var attempts = 0, rechecked = false
         repeat {
             attempts += 1
             dirty = false
-            needsRecheck = false
-            let observation = await reconcile(store, client: client, generation: current, rechecking: rechecked)
+            let retryIDs = disagreements
+            disagreements.removeAll(); retryFiles = false
+            let observation = await reconcile(store, client: client, generation: current, rechecking: retryIDs)
             guard current == generation else { return }
-            if needsRecheck && !rechecked {
+            if !disagreements.isEmpty && !rechecked {
                 rechecked = true
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 guard current == generation else { return }
@@ -123,17 +160,12 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
             if !dirty || attempts >= 3 { break }
         } while true
         reading = false
-        retry?.cancel()
         let active = previous?.activities.contains { [.running, .waitingForInput].contains($0.phase) } == true ||
             cache.values.contains { $0.summary?.running == true || $0.summary?.background == true }
-        let seconds = dirty ? 0.15 : needsRecheck ? 0.5 : active ? policy.interval : 60
-        retry = Task { [weak self] in
-            do { try await Task.sleep(nanoseconds: UInt64(seconds * 1e9)) } catch { return }
-            await self?.refresh(ifCurrent: current)
-        }
+        watcher?.poll(after: dirty || !disagreements.isEmpty || retryFiles || active ? policy.interval : 60)
     }
 
-    private func reconcile(_ store: AntigravityStore, client: AntigravityLocalClient, generation current: UInt64, rechecking: Bool) async -> HarnessActivity? {
+    private func reconcile(_ store: AntigravityStore, client: AntigravityLocalClient, generation current: UInt64, rechecking: Set<String>) async -> HarnessActivity? {
         let session = await client.discover()
         guard current == generation else { return nil }
         if session != hubGeneration {
@@ -148,16 +180,17 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
             } else { await quotaObserver?(nil) }
             guard current == generation else { return nil }
         }
-        let summaryFiles = [store.summariesURL, sidecar(store.summariesURL)]
+        let summaryFiles = [store.summariesURL, sidecar(store.summariesURL),
+                            URL(fileURLWithPath: store.summariesURL.path + "-shm", isDirectory: false),
+                            URL(fileURLWithPath: store.summariesURL.path + "-journal", isDirectory: false)]
         let summaryStamps = summaryFiles.map { io.files.metadata($0) }
         let rows: [AntigravityStore.Summary]
-        do { rows = try store.summaries() }
-        catch {
-            if error as? AntigravityStore.Failure == .retrySoon {
-                needsRecheck = true
-                if !rechecking { return nil }
-            }
-            watermark = nil; cache = [:]
+        do {
+            if let summaryCache, summaryCache.stamps == summaryStamps { rows = summaryCache.rows }
+            else { rows = try store.summaries(includeDatabaseDates: false) }
+        } catch {
+            retryFiles = error as? AntigravityStore.Failure == .retrySoon
+            watermark = nil; cache = [:]; summaryCache = nil
             var value = HarnessActivity(status: .unavailable)
             if let failure = error as? AntigravityStore.Failure {
                 switch failure { case .missing: value.status = .missing; case .incompatible: value.status = .incompatible; default: break }
@@ -167,7 +200,7 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
                 if [.running, .waitingForInput].contains(row.phase) { row.markSourceUnavailable() }
                 return row
             } ?? []
-            urls = baseURLs(store); watcher?.update(urls, interval: 0.15)
+            urls = baseURLs(store); watcher?.update(urls, interval: policy.interval)
             return value
         }
         let byID = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -187,18 +220,22 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
         var next: [String: Cached] = [:], activeParents = Set<String>(), watched = baseURLs(store)
         pass &+= 1
         var hot = [AntigravityStore.Summary]()
-        for (row, _) in family {
-            var item = cache[row.id] ?? Cached()
-            let db = store.conversationURL(row.id)
-            let stamps = [db, sidecar(db), URL(fileURLWithPath: db.path + "-shm")].map { io.files.metadata($0) }
+        for index in family.indices {
+            var row = family[index].0
+            var item = cache[row.id] ?? Cached(store, id: row.id)
+            let stamps = item.databaseStamps(io.files)
+            if let db = stamps[0], db.isRegularFile { row.updated = max(row.updated, db.modified) }
+            family[index].0 = row
             let filesChanged = item.stamps != stamps
             let changed = row != item.summary || filesChanged
-            if changed || item.trajectory == nil || rechecking {
+            if changed || item.retryTrajectory || rechecking.contains(row.id) {
+                item.retryTrajectory = false
                 let trajectory: AntigravityStore.Trajectory?
                 do { trajectory = try store.trajectory(row) }
                 catch {
                     trajectory = nil
-                    if error as? AntigravityStore.Failure == .retrySoon { needsRecheck = true }
+                    item.retryTrajectory = error as? AntigravityStore.Failure == .unavailable || error as? AntigravityStore.Failure == .retrySoon
+                    if item.retryTrajectory { retryFiles = true }
                 }
                 if item.trajectory?.id != trajectory?.id || item.trajectory?.anchor?.index != trajectory?.anchor?.index ||
                     item.trajectory?.anchor?.type != trajectory?.anchor?.type ||
@@ -208,6 +245,8 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
                 }
                 item.trajectory = trajectory
             }
+            let transcriptChanged = item.updateTranscript(files: io.files)
+            if item.summary != nil && (changed || transcriptChanged) { item.needsInspection = true }
             let open = item.trajectory?.unresolved.isEmpty == false
             // An idle summary can lag an input or a completed tool before the next
             // planner is written. Historical completed planners need no API poll.
@@ -216,8 +255,7 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
             let needsFinalCall = watermark.map { row.updated > $0 } == true &&
                 settled.map { $0.index != item.metadata.fetchedPlanner } == true
             if needsFinalCall || row.running || row.background || open || lacksEnding || item.metadata.runState == .running ||
-                (filesChanged && item.summary != nil) ||
-                item.metadata.conflictingState || (changed && (item.summary?.running == true || item.summary?.background == true)) {
+                item.needsInspection || item.metadata.conflictingState {
                 hot.append(row)
             }
             if changed || session == nil { item.metadata.fresh = false; item.metadata.runState = nil }
@@ -236,32 +274,26 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
         value.scope = scope
         for (row, parents) in family {
             guard var item = next[row.id] else { continue }
-            let db = store.conversationURL(row.id), wal = sidecar(db), log = store.transcriptURL(row.id)
-            if [store.home.appendingPathComponent("brain"), store.home.appendingPathComponent("brain/\(row.id)"),
-                log.deletingLastPathComponent().deletingLastPathComponent(), log.deletingLastPathComponent()]
-                .allSatisfy({ io.files.metadata($0)?.isDirectory == true }) {
-                item.transcript.read(log, files: io.files)
-            } else { item.transcript = .init() }
-            if selected.contains(row.id) { watched += [db, wal, log] }
+            if selected.contains(row.id) { watched += [item.db, item.wal, item.log] }
             if let session, selected.contains(row.id), let trajectory = item.trajectory, let id = UUID(uuidString: row.id) {
-                item.lastInspection = pass
+                item.lastInspection = pass; item.needsInspection = false
                 await enrich(&item.metadata, row: row, trajectory: trajectory, id: id,
                              root: parents.last ?? row.id, client: client, session: session)
                 guard current == generation else { return nil }
-                if [db, wal, URL(fileURLWithPath: db.path + "-shm")].map({ io.files.metadata($0) }) != item.stamps { dirty = true; return nil }
+                if item.databaseStamps(io.files) != item.stamps { dirty = true; return nil }
             }
             let latestPlanner = item.trajectory?.tail.last { $0.type == 15 && $0.status == 3 }?.index ?? item.metadata.planner?.index
             if let session, let id = latestPlanner.flatMap({ item.transcript.records[$0]?.model }) ?? item.metadata.call?.modelID {
                 item.metadata.catalog = await client.modelCatalog(for: id, session: session)
                 guard current == generation else { return nil }
             }
-            if item.metadata.conflictingState { needsRecheck = true }
+            if item.metadata.conflictingState { disagreements.insert(row.id) }
             if item.metadata.conflictingFamily { next[row.id] = item; continue }
             let result = AntigravityProjection.project(row, trajectory: item.trajectory, transcript: item.transcript, live: item.metadata,
                 dependent: activeParents.contains(row.id), unconfirmedDependent: unconfirmedParents.contains(row.id),
                 watermark: item.gap ?? watermark, turnCache: &item.turn, witnessed: item.witnessed, previous: prior[row.id],
                 dependentEnded: childEnd[row.id], scope: scope)
-            if result.needsRecheck { needsRecheck = true }
+            if result.needsRecheck { disagreements.insert(row.id) }
             if [.running, .waitingForInput].contains(result.activity.phase) {
                 activeParents.formUnion(parents); item.witnessed = result.activity.turnID
             } else if result.activity.phase == .unknown {
@@ -275,20 +307,21 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
             if let request = result.request { value.requests.append(request) }
         }
         if let session {
-            guard await client.discover() == session else { if current == generation { dirty = true }; return nil }
+            guard await client.isCurrent(session, checkDirectory: true) else { if current == generation { dirty = true }; return nil }
             guard current == generation else { return nil }
         }
         // SQL and Connect are independent snapshots. Reconcile a changed request
         // before publishing, including when no server was available for the pass.
-        if summaryFiles.map({ io.files.metadata($0) }) != summaryStamps, (try? store.summaries()) != rows {
+        if summaryFiles.map({ io.files.metadata($0) }) != summaryStamps, (try? store.summaries(includeDatabaseDates: false)) != rows {
             dirty = true; return nil
         }
-        guard !dirty, !needsRecheck || rechecking else { return nil }
+        guard !dirty, disagreements.isEmpty || !rechecking.isEmpty else { return nil }
         let visible = Set(value.activities.compactMap(\.threadID))
         let orphans = Set(family.compactMap { row, parents in parents.contains(where: { !visible.contains($0) }) ? row.id : nil })
         value.activities.removeAll { $0.threadID.map(orphans.contains) == true }
         value.requests.removeAll { orphans.contains($0.threadID) }
-        cache = next; urls = watched; watcher?.update(urls, interval: 0.15)
+        summaryCache = (summaryStamps, rows)
+        cache = next; urls = watched; watcher?.update(urls, interval: policy.interval)
         if watermark == nil { watermark = io.now() }
         return value
     }

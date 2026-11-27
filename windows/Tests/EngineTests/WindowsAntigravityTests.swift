@@ -215,6 +215,10 @@ final class WindowsAntigravityTests: XCTestCase {
         func lowerBothGroups() { lock.withLock { low = true } }
         func replace(_ value: Int?) { lock.withLock { started = value } }
         func serverIdentity(hub: URL, pid: Int32, httpPort: UInt16) -> String? {
+            processIdentity(pid: pid)
+        }
+        func hubChangeTime(_ hub: URL) -> UInt64? { 1 }
+        func processIdentity(pid: Int32) -> String? {
             lock.withLock { started.map { "\(pid):\($0)" } }
         }
         func post(_ request: AntigravityLocalRequest) async throws -> (Int, Data) {

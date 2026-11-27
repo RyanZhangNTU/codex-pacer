@@ -19,7 +19,7 @@ struct AntigravityStore {
         let id: String
         let title: String?
         let count: Int
-        let updated: Date
+        var updated: Date
         let status: String
         let parent: String?
         let depth: Int
@@ -56,9 +56,9 @@ struct AntigravityStore {
         self.files = files
     }
 
-    var summariesURL: URL { home.appendingPathComponent("conversation_summaries.db") }
-    func conversationURL(_ id: String) -> URL { home.appendingPathComponent("conversations/\(id).db") }
-    func transcriptURL(_ id: String) -> URL { home.appendingPathComponent("brain/\(id)/.system_generated/logs/transcript_full.jsonl") }
+    var summariesURL: URL { home.appendingPathComponent("conversation_summaries.db", isDirectory: false) }
+    func conversationURL(_ id: String) -> URL { home.appendingPathComponent("conversations/\(id).db", isDirectory: false) }
+    func transcriptURL(_ id: String) -> URL { home.appendingPathComponent("brain/\(id)/.system_generated/logs/transcript_full.jsonl", isDirectory: false) }
 
     static func uuid(_ value: String?) -> String? { value.flatMap(UUID.init(uuidString:))?.uuidString.lowercased() }
     static func date(_ value: String?) -> Date? {
@@ -68,7 +68,7 @@ struct AntigravityStore {
         return date
     }
 
-    func summaries() throws -> [Summary] {
+    func summaries(includeDatabaseDates: Bool = true) throws -> [Summary] {
         try snapshot(summariesURL) { db in
             try requireTables(["conversation_summaries"], db: db)
             let columns = try query(db, "SELECT name FROM pragma_table_info('conversation_summaries')") { text($0, 0) }
@@ -86,7 +86,7 @@ struct AntigravityStore {
                 let parent = text(s, 5)
                 guard parent?.isEmpty != false || Self.uuid(parent) != nil else { return nil }
                 let input = Self.date(text(s, 7))
-                let modified = files.metadata(conversationURL(id)).flatMap { $0.isRegularFile ? $0.modified : nil }
+                let modified = includeDatabaseDates ? files.metadata(conversationURL(id)).flatMap { $0.isRegularFile ? $0.modified : nil } : nil
                 let updated = [Self.date(text(s, 3)), input, modified].compactMap { $0 }.max() ?? .distantPast
                 return Summary(id: id, title: text(s, 1, limit: 960), count: count, updated: updated, status: status,
                     parent: Self.uuid(parent), depth: Int(sqlite3_column_int64(s, 6)), background: sqlite3_column_int(s, 8) != 0,
