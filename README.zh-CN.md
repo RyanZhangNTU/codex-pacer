@@ -116,7 +116,7 @@ Codex、Claude Code、DeepSeek Harness、WorkBuddy 和 Antigravity 会报告你�
 
 Codex 和 Claude 一个圆环同时看 5 小时和每周额度，刻度告诉你比匀速快还是慢，还会预计重置时剩多少。DeepSeek 显示余额和今天每小时的花费，也能设预算。WorkBuddy 显示本月积分，以及额外积分什么时候到期。Antigravity 按模型组显示短期和每周额度。
 
-<img src="docs/assets/readme-quota.zh-CN.png" width="100%" alt="Codex、Claude 和 Antigravity 的额度：各自的 5 小时和每周额度、配速和重置时的预测">
+<img src="docs/assets/readme-quota.zh-CN.png" width="100%" alt="Codex、Claude 和 Antigravity 的额度并排显示：每个圆环同时显示 5 小时和每周额度及配速刻度，Codex 下方显示重置券">
 
 <a id="collab"></a>
 

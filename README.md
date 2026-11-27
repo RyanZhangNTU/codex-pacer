@@ -116,7 +116,7 @@ The welcome guide walks you through these when you first open Pacer.
 
 Codex and Claude show their 5-hour and weekly quota on one ring, with a tick for an even pace and a forecast for the reset. DeepSeek shows your balance and today's spend hour by hour, with budgets if you want them. WorkBuddy shows this month's credits and when extra credits expire. Antigravity shows short-term and weekly quota for each model group.
 
-<img src="docs/assets/readme-quota.png" width="100%" alt="Codex, Claude and Antigravity quota, each with its 5-hour and weekly windows, pace and a forecast for the reset">
+<img src="docs/assets/readme-quota.png" width="100%" alt="Codex, Claude and Antigravity quota side by side: each ring shows the 5-hour and weekly windows with a pace mark, and Codex shows its banked resets under its ring">
 
 <a id="collab"></a>
 
