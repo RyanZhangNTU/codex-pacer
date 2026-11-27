@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "0828495cfd1b6c34efca2b0b65c4d44b8f99547d6ab731e9a7d146caddd08125",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "83e76b3444d695b056daa59a8c73dcffdd3daf1eb32c128d6808945bee73aff6",
     "windows/EngineSupport/Resources/Localization/en.json": "9c5c3afa9978273c9160fabc0506c301ea0cb77b9090d382d0ec78e963927bff"
   },
   "strings": {
@@ -1766,7 +1766,7 @@
     "welcome.subtitle": "Tasks, quota, balance and credits for Codex, Claude Code, DeepSeek and WorkBuddy.",
     "welcome.title": "Welcome to Codex Pacer 4.0",
     "welcome.window_title": "Welcome to Codex Pacer",
-    "whats_new.antigravity": "Pacer follows Antigravity",
+    "whats_new.antigravity": "Pacer supports Antigravity",
     "whats_new.antigravity_detail": "See what each Antigravity task is doing, when it needs you, its subagents, its speed and both quota pools. A short guide helps you turn on its progress ring.",
     "whats_new.app_buttons": "Open Codex or Claude from the island",
     "whats_new.app_buttons_detail": "Buttons beside Mark All as Read in the expanded island bring each service\u2019s desktop app forward, even with no task running. Turn them off here or in Settings > General.",
@@ -1854,7 +1854,7 @@
     "whats_new.subagent_endings": "Background subagents end on time",
     "whats_new.subagent_endings_detail": "A Claude Code subagent that finishes while its chat is busy no longer stays running, and the speed keeps updating while only subagents work.",
     "whats_new.subagent_lines": "See every subagent",
-    "whats_new.subagent_lines_detail": "Each subagent shows under its task with its state, model and speed, and a finished one no longer counts as running.",
+    "whats_new.subagent_lines_detail": "Each subagent shows under its task with its state, model and speed.",
     "whats_new.task_models": "Model and reasoning effort on every task",
     "whats_new.task_models_detail": "Each task row shows its model and reasoning effort below the speed.",
     "whats_new.task_rows": "Tidier task rows",
