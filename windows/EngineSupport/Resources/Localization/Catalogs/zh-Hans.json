@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "0543ca287a18bb43561c7c88e0354d78b1d2e9d5a719530d607ac3e216430e7b",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "df9cc17a6a41bf687e208fb5de953fa50335d44c4088b7575cc74b6da74fa12e",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "3be42c2706a73f341c7e8c9070eaa88a32b6bccef9c648f36f6fca8c0b2f6111"
   },
   "strings": {
@@ -1854,7 +1854,7 @@
     "whats_new.subagent_endings": "\u540e\u53f0\u5b50\u4ee3\u7406\u6309\u65f6\u7ed3\u675f",
     "whats_new.subagent_endings_detail": "\u5bf9\u8bdd\u6b63\u5fd9\u65f6\u7ed3\u675f\u7684 Claude Code \u540e\u53f0\u5b50\u4ee3\u7406\u4e0d\u518d\u4e00\u76f4\u663e\u793a\u4e3a\u8fd0\u884c\u4e2d\uff1b\u53ea\u6709\u5b50\u4ee3\u7406\u5728\u5de5\u4f5c\u65f6\uff0c\u901f\u5ea6\u4e5f\u4f1a\u7ee7\u7eed\u66f4\u65b0\u3002",
     "whats_new.subagent_lines": "\u770b\u6e05\u6bcf\u4e2a\u5b50\u4ee3\u7406",
-    "whats_new.subagent_lines_detail": "\u6bcf\u4e2a\u5b50\u4ee3\u7406\u663e\u793a\u5728\u6240\u5c5e\u4efb\u52a1\u4e0b\u65b9\uff0c\u5e26\u72b6\u6001\u3001\u6a21\u578b\u548c\u901f\u5ea6\uff1b\u7ed3\u675f\u7684\u4e0d\u518d\u7b97\u4f5c\u8fd0\u884c\u4e2d\u3002",
+    "whats_new.subagent_lines_detail": "\u6bcf\u4e2a\u5b50\u4ee3\u7406\u663e\u793a\u5728\u6240\u5c5e\u4efb\u52a1\u4e0b\u65b9\uff0c\u5e26\u72b6\u6001\u3001\u6a21\u578b\u548c\u901f\u5ea6\u3002",
     "whats_new.task_models": "\u6bcf\u4e2a\u4efb\u52a1\u90fd\u663e\u793a\u6a21\u578b\u548c\u63a8\u7406\u5f3a\u5ea6",
     "whats_new.task_models_detail": "\u4efb\u52a1\u884c\u5728\u901f\u5ea6\u4e0b\u65b9\u663e\u793a\u6a21\u578b\u548c\u63a8\u7406\u5f3a\u5ea6\u3002",
     "whats_new.task_rows": "\u66f4\u6e05\u723d\u7684\u4efb\u52a1\u884c",

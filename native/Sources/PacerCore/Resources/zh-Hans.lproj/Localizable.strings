@@ -1894,6 +1894,6 @@
 "whats_new.antigravity" = "支持 Antigravity";
 "whats_new.antigravity_detail" = "查看每个 Antigravity 任务在做什么、何时需要你、它的子代理、速度和两组额度。开启进度圆环时有简短引导。";
 "whats_new.subagent_lines" = "看清每个子代理";
-"whats_new.subagent_lines_detail" = "每个子代理显示在所属任务下方，带状态、模型和速度；结束的不再算作运行中。";
+"whats_new.subagent_lines_detail" = "每个子代理显示在所属任务下方，带状态、模型和速度。";
 "whats_new.click_to_open" = "点击展开灵动岛";
 "whats_new.click_to_open_detail" = "不想悬停就展开？在“展开面板”里把“展开方式”改为“点击后展开”。";

@@ -1850,7 +1850,7 @@
     "whats_new.subagent_endings": "后台子代理按时结束",
     "whats_new.subagent_endings_detail": "对话正忙时结束的 Claude Code 后台子代理不再一直显示为运行中；只有子代理在工作时，速度也会继续更新。",
     "whats_new.subagent_lines": "看清每个子代理",
-    "whats_new.subagent_lines_detail": "每个子代理显示在所属任务下方，带状态、模型和速度；结束的不再算作运行中。",
+    "whats_new.subagent_lines_detail": "每个子代理显示在所属任务下方，带状态、模型和速度。",
     "whats_new.task_models": "每个任务都显示模型和推理强度",
     "whats_new.task_models_detail": "任务行在速度下方显示模型和推理强度。",
     "whats_new.task_rows": "更清爽的任务行",
