@@ -1891,3 +1891,9 @@
 "antigravity.quota.low" = "Short-term quota for %@ is running low.";
 "antigravity.quota.week_low" = "Weekly quota for %@ is running low.";
 "antigravity.quota.empty" = "Short-term quota for %@ has run out.";
+"whats_new.antigravity" = "Pacer follows Antigravity";
+"whats_new.antigravity_detail" = "See what each Antigravity task is doing, when it needs you, its subagents, its speed and both quota pools. A short guide helps you turn on its progress ring.";
+"whats_new.subagent_lines" = "See every subagent";
+"whats_new.subagent_lines_detail" = "Each subagent shows under its task with its state, model and speed, and a finished one no longer counts as running.";
+"whats_new.click_to_open" = "Open the island with a click";
+"whats_new.click_to_open_detail" = "Prefer clicking to hovering? Choose On click for Expand in Expanded Panel.";

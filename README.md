@@ -38,7 +38,7 @@ Pacer keeps an eye on every task for you, so you stay focused and get more done.
 </div>
 
 > [!TIP]
-> **New in 4.7: Claude calls Codex (Beta).** Ask Claude Code to have Codex review a change or take on a task, and follow Codex's progress right under Claude's task. [See how it works](#collab).
+> **New in 4.8: Google Antigravity.** Follow each Antigravity task, its subagents, its speed and both quota pools, with the same progress ring as Codex and Claude. [See what each agent shows](#supported-agents).
 
 ## Why Pacer
 

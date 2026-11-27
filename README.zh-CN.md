@@ -38,7 +38,7 @@ Pacer 替你盯着每个任务的进度，你不再分心，效率自然更高�
 </div>
 
 > [!TIP]
-> **4.7 新功能：Claude 调用 Codex（Beta）。** 让 Claude Code 请 Codex 审一下改动或接手一个任务，Codex 的进度就显示在 Claude 任务下面。[看看怎么用](#collab)
+> **4.8 新功能：支持 Google Antigravity。** 跟踪每个 Antigravity 任务、它的子代理、速度和两组额度，进度圆环也和 Codex、Claude 一样。[看看各工具显示什么](#supported-agents)
 
 ## 为什么用 Pacer
 

@@ -1844,13 +1844,13 @@
 "collab.intro.demo.claude_model" = "Opus 5.5 高";
 "collab.intro.demo.codex_model" = "Sol 6.2 高";
 
-"module.antigravity.summary" = "查看 Antigravity 的任务、子智能体和剩余额度。";
+"module.antigravity.summary" = "查看 Antigravity 的任务、子代理和剩余额度。";
 "welcome.module.antigravity_missing" = "未找到 Antigravity";
-"main.search.antigravity" = "谷歌 Google Antigravity 任务 子智能体 批准 问题 进度环 模型 额度 速度 文件夹";
+"main.search.antigravity" = "谷歌 Google Antigravity 任务 子代理 子智能体 批准 问题 进度环 模型 额度 速度 文件夹";
 "panel.block.antigravity" = "Antigravity 额度";
 "panel.block_detail.antigravity" = "查看所选模型还剩多少额度。";
-"help.antigravity.tasks.title" = "任务和子智能体";
-"help.antigravity.tasks.detail" = "每项任务都会列出它的子智能体，并在需要你回答或批准时提醒你。";
+"help.antigravity.tasks.title" = "任务和子代理";
+"help.antigravity.tasks.detail" = "每项任务都会列出它的子代理，并在需要你回答或批准时提醒你。";
 "help.antigravity.speed.title" = "回复速度";
 "help.antigravity.speed.detail" = "任务结束后仍会显示最近一次测得的回复速度。";
 "help.antigravity.progress.title" = "任务进度环";
@@ -1891,3 +1891,9 @@
 "antigravity.quota.low" = "%@ 的短期额度快用完了。";
 "antigravity.quota.week_low" = "%@ 的本周额度快用完了。";
 "antigravity.quota.empty" = "%@ 的短期额度已用完。";
+"whats_new.antigravity" = "支持 Antigravity";
+"whats_new.antigravity_detail" = "查看每个 Antigravity 任务在做什么、何时需要你、它的子代理、速度和两组额度。开启进度圆环时有简短引导。";
+"whats_new.subagent_lines" = "看清每个子代理";
+"whats_new.subagent_lines_detail" = "每个子代理显示在所属任务下方，带状态、模型和速度；结束的不再算作运行中。";
+"whats_new.click_to_open" = "点击展开灵动岛";
+"whats_new.click_to_open_detail" = "不想悬停就展开？在“展开面板”里把“展开方式”改为“点击后展开”。";
