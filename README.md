@@ -25,11 +25,11 @@ Pacer keeps an eye on every task for you, so you stay focused and get more done.
 &nbsp;
 <a href="https://github.com/RyanZhangNTU/codex-pacer/releases/latest"><img src="docs/assets/download-windows.png" height="56" alt="Download for Windows"></a>
 
-[![Latest release](https://img.shields.io/github/v/release/RyanZhangNTU/codex-pacer?style=flat-square&label=release&color=2f9e8f)](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)
-[![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FRyanZhangNTU%2Fcodex-pacer%2Fbadges%2Fdownloads.json&style=flat-square)](https://github.com/RyanZhangNTU/codex-pacer/releases)
-![macOS 14 or later](https://img.shields.io/badge/macOS-14%2B-111111?style=flat-square&logo=apple&logoColor=white)
-![Windows 10 or later](https://img.shields.io/badge/Windows-10%2B-0078D4?style=flat-square&logo=windows&logoColor=white)
-[![MIT License](https://img.shields.io/github/license/RyanZhangNTU/codex-pacer?style=flat-square&color=555555)](LICENSE)
+[![Latest release](https://raw.githubusercontent.com/RyanZhangNTU/codex-pacer/badges/release.svg)](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)
+[![Downloads](https://raw.githubusercontent.com/RyanZhangNTU/codex-pacer/badges/downloads.svg)](https://github.com/RyanZhangNTU/codex-pacer/releases)
+![macOS 14 or later](docs/assets/badge-macos.svg)
+![Windows 10 or later](docs/assets/badge-windows.svg)
+[![MIT License](docs/assets/badge-license.svg)](LICENSE)
 
 [Features](#features) · [Supported agents](#supported-agents) · [Install](#install) · [User Guide](docs/guide.md) · [Community](#community) · [简体中文](README.zh-CN.md)
 
