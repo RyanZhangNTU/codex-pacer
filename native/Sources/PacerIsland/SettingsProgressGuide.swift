@@ -36,7 +36,7 @@ struct ProgressGuideRows: View {
                 .frame(minHeight: 28)
             if let guide, Self.opens(guide) {
                 Rectangle().fill(MainPalette.separator).frame(height: 1).padding(.top, 8)
-                ProgressGuideBody(guide: guide, provider: provider, restart: model.harnessRestarts[provider], perform: perform)
+                ProgressGuideBody(guide: guide, provider: provider, restart: model.harnessRestarts[provider], language: language, perform: perform)
                     .padding(.top, 4)
                 if openFailed, [.openConnectors, .openApp].contains(guide.action) {
                     Text(Self.openFailed(provider)).font(.system(size: 12)).foregroundStyle(MainPalette.attention)
@@ -145,6 +145,7 @@ struct ProgressGuideBody: View {
     let guide: HarnessProgressGuide
     let provider: AgentProvider
     var restart: IslandModel.HarnessRestart?
+    let language: AppLanguage
     let perform: (HarnessProgressGuide.Action) -> Void
 
     static func shows(_ guide: HarnessProgressGuide) -> Bool { !guide.steps.isEmpty || guide.line != nil || guide.action != nil || guide.picture != nil }
@@ -180,6 +181,9 @@ struct ProgressGuideBody: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(minHeight: 20)
                 if current {
+                    if let example = guide.example {
+                        ProgressGuideExample(text: example, language: language)
+                    }
                     if let detail = step.detail {
                         Text(detail).font(.system(size: 12.5)).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -226,6 +230,37 @@ struct ProgressGuideBody: View {
     @ViewBuilder private var waitingLabel: some View {
         if let waiting = guide.waitingText {
             Label(waiting, systemImage: "clock").font(.system(size: 12)).foregroundStyle(.secondary).fixedSize()
+        }
+    }
+}
+
+struct ProgressGuideExample: View {
+    let text: String
+    let language: AppLanguage
+    @State private var lastCopy: Date?
+
+    var body: some View {
+        let copy = L10n.text("progress_guide.action.copy", language: language)
+        let copied = L10n.text("support.share.copied", language: language)
+        HStack(alignment: .top, spacing: 10) {
+            Text(text).font(.system(size: 13))
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                if TextClipboard.write(text) { lastCopy = Date() }
+            } label: {
+                // Reserve the feedback's width so copying doesn't rewrap the prompt.
+                Text(copied).hidden().overlay { Text(lastCopy == nil ? copy : copied) }
+            }
+            .buttonStyle(.main).fixedSize()
+            .accessibilityLabel(lastCopy == nil ? copy : copied)
+        }
+        .padding(10)
+        .background(MainPalette.infoFill, in: RoundedRectangle(cornerRadius: 8))
+        .task(id: lastCopy) {
+            guard lastCopy != nil else { return }
+            try? await Task.sleep(for: .seconds(1.5))
+            if !Task.isCancelled { lastCopy = nil }
         }
     }
 }

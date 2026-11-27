@@ -437,9 +437,10 @@ final class AntigravityTests: XCTestCase {
 
     func testProgressGuidePicturesAndReadinessOnBothPlatforms() throws {
         func guide(_ setup: LocalHarnessProgressStatus, _ platform: HarnessPlatform, app: HarnessProgressGuide.AppPresence? = nil,
-                   reported: Bool = false, connection: LocalHarnessProgressConnection? = nil, on: Bool = true, approval: Bool = false) -> HarnessProgressGuide? {
+                   reported: Bool = false, connection: LocalHarnessProgressConnection? = nil, on: Bool = true, approval: Bool = false,
+                   language: AppLanguage = .english) -> HarnessProgressGuide? {
             HarnessProgressGuide(setup: setup, connection: connection, reported: reported, ringOn: on, name: "Antigravity",
-                                 addedAt: epoch, app: app, pluginPlatform: platform, requestsApproval: approval)
+                                 addedAt: epoch, app: app, pluginPlatform: platform, requestsApproval: approval, language: language)
         }
         for platform in [HarnessPlatform.macOS, .windows] {
             for candidate in [guide(.settingUp, platform), guide(.configured, platform), guide(.configured, platform, app: .running(since: epoch)),
@@ -447,6 +448,7 @@ final class AntigravityTests: XCTestCase {
                               guide(.conflict, platform), guide(.failed, platform), guide(.missingHome, platform)] {
                 let setup = try XCTUnwrap(candidate)
                 XCTAssertEqual(setup.picture, .antigravityApproval)
+                XCTAssertEqual(setup.example != nil, setup.stage == .newConversation)
                 let card = try XCTUnwrap(setup.approvalCard)
                 XCTAssertEqual(card.permission, "Permission")
                 XCTAssertEqual(card.title, "Allow using this MCP tool?")
@@ -457,9 +459,20 @@ final class AntigravityTests: XCTestCase {
             XCTAssertEqual(ready.stage, .ready)
             XCTAssertNil(ready.picture)
             XCTAssertNil(ready.approvalCard)
+            XCTAssertNil(ready.example)
             XCTAssertNotEqual(guide(.configured, platform, reported: true, connection: .needsTrust)?.stage, .ready)
             XCTAssertNil(guide(.removalPending, platform, on: false)?.picture)
             XCTAssertNil(guide(.conflict, platform, on: false)?.picture)
+            XCTAssertNil(guide(.removalPending, platform, on: false)?.example)
+            XCTAssertNil(guide(.conflict, platform, on: false)?.example)
+            for (language, expected) in [
+                (AppLanguage.english, "Use terminal commands to check today's date and this computer's name, then tell me both in one sentence."),
+                (.simplifiedChinese, "用终端命令查一下今天的日期和这台电脑的名字，然后用一句话告诉我。")
+            ] {
+                let conversation = try XCTUnwrap(guide(.configured, platform, app: .running(since: epoch), language: language))
+                XCTAssertEqual(conversation.steps.firstIndex { $0.state == .current }, platform == .windows ? 1 : 0)
+                XCTAssertEqual(conversation.example, expected)
+            }
         }
         XCTAssertEqual(guide(.settingUp, .macOS)?.steps, [])
         XCTAssertEqual(guide(.configured, .macOS, app: .running(since: .distantPast))?.stage, .newConversation)

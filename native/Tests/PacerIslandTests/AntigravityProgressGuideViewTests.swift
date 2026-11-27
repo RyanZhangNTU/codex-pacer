@@ -77,8 +77,10 @@ final class AntigravityProgressGuideViewTests: XCTestCase {
         }
     }
 
-    func testAntigravitySettingsStagesAndApprovalFloatRenderOffscreen() async throws {
+    func testAntigravitySettingsAndFloatRenderOffscreenAndCopyTheExample() async throws {
         let model = try demo()
+        let guideDemo = try demo(autoOpen: true)
+        guideDemo.setDemoStage(.tool)
         // XCTest has a generic icon. Give the float the icon from the app bundle.
         let icon = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Resources/Pacer.icns")
@@ -93,15 +95,18 @@ final class AntigravityProgressGuideViewTests: XCTestCase {
             XCTAssertEqual(guide.stage, stage)
             XCTAssertTrue(ProgressGuideRows.opens(guide))
             XCTAssertEqual(guide.picture, stage == .ready ? nil : .antigravityApproval)
+            let renderModel = stage == .newConversation ? guideDemo : model
             for language in AppLanguage.allCases {
+                let example = stage == .newConversation ? try XCTUnwrap(guideDemo.progressGuide(.antigravity, language: language)?.example) : nil
                 for dark in [false, true] {
                     let suffix = language.rawValue + (dark ? "-dark" : "-light")
-                    let settings = ProgressGuideRows(model: model, provider: .antigravity, isOn: .constant(true), language: language)
+                    let settings = ProgressGuideRows(model: renderModel, provider: .antigravity, isOn: .constant(true), language: language)
                         .padding(14).frame(width: 390).background(MainPalette.card)
-                    try await render(settings, dark: dark, name: "settings-" + stage.rawValue + "-" + suffix, width: 390)
-                    if stage == .allowTool {
-                        let float = GuideFloatContent(model: model, float: model.harnessGuideFloat, provider: .antigravity, language: language)
-                        try await render(float, dark: dark, name: "float-allowTool-" + suffix, width: GuideFloatContent.width)
+                    try await render(settings, dark: dark, name: "settings-" + stage.rawValue + "-" + suffix, width: 390, language: language, example: example)
+                    if stage == .newConversation || stage == .allowTool {
+                        let float = GuideFloatContent(model: renderModel, float: renderModel.harnessGuideFloat, provider: .antigravity, language: language)
+                        try await render(float, dark: dark, name: "float-" + stage.rawValue + "-" + suffix, width: GuideFloatContent.width,
+                                         language: language, example: example)
                     }
                 }
             }
@@ -109,9 +114,10 @@ final class AntigravityProgressGuideViewTests: XCTestCase {
         XCTAssertFalse(model.harnessGuideFloat.isShowing)
     }
 
-    private func render(_ view: some View, dark: Bool, name: String, width: CGFloat) async throws {
+    private func render(_ view: some View, dark: Bool, name: String, width: CGFloat, language: AppLanguage, example: String?) async throws {
         let host = NSHostingView(rootView: view.pacerAccent(PacerAccent.current)
-            .environment(\.controlActiveState, .key).environment(\.colorScheme, dark ? .dark : .light).fixedSize(horizontal: false, vertical: true))
+            .environment(\.accessibilityEnabled, true).environment(\.controlActiveState, .key)
+            .environment(\.colorScheme, dark ? .dark : .light).fixedSize(horizontal: false, vertical: true))
         let size = host.fittingSize
         XCTAssertEqual(size.width, width, accuracy: 1)
         XCTAssertGreaterThan(size.height, 30)
@@ -133,5 +139,26 @@ final class AntigravityProgressGuideViewTests: XCTestCase {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try png.write(to: directory.appendingPathComponent(name + ".png"))
         }
+        let copyButton = button(named: L10n.text("progress_guide.action.copy", language: language), in: host)
+        guard let example else {
+            XCTAssertNil(copyButton, name)
+            return
+        }
+        let item = NSPasteboardItem()
+        let original = TextClipboard.write
+        defer { TextClipboard.write = original }
+        TextClipboard.write = { item.setString($0, forType: .string) }
+        XCTAssertEqual(try XCTUnwrap(copyButton, name).accessibilityPerformPress?(), true)
+        XCTAssertEqual(item.string(forType: .string), example, name)
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertNotNil(button(named: L10n.text("support.share.copied", language: language), in: host), name)
+    }
+
+    private func button(named label: String, in element: AnyObject) -> AnyObject? {
+        if element.accessibilityRole?() == .button, element.accessibilityLabel?() == label { return element }
+        for child in element.accessibilityChildren?() ?? [] {
+            if let found = button(named: label, in: child as AnyObject) { return found }
+        }
+        return nil
     }
 }

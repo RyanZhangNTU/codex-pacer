@@ -1864,8 +1864,10 @@
 "antigravity.quota.group" = "岛上显示的额度";
 "antigravity.quota.unavailable" = "Pacer 暂时无法读取你的 Antigravity 额度。";
 
-"progress_guide.plugin.conversation" = "在 Antigravity 中新建对话，让它修改文件或运行命令。";
-"progress_guide.plugin.conversation_again" = "如果刚设置好时没有出现提示，就再新建一个对话，让它重试。";
+"progress_guide.plugin.conversation" = "打开 Antigravity，新建对话，粘贴下面这句话。";
+"progress_guide.plugin.example" = "用终端命令查一下今天的日期和这台电脑的名字，然后用一句话告诉我。";
+"progress_guide.action.copy" = "复制";
+"progress_guide.plugin.conversation_again" = "如果没有出现使用 Pacer 工具的提示，就再新建一个对话，重新粘贴这句话。";
 "progress_guide.plugin.restart" = "重启 Antigravity，载入进度工具。";
 "progress_guide.plugin.restarting" = "正在重启 %@…";
 "progress_guide.plugin.allow" = "当 Antigravity 针对 Pacer 的进度工具询问“%1$@”时，点击第 3 项“%2$@”。";
@@ -1886,7 +1888,7 @@
 "demo.antigravity_reviewer" = "设计审阅员";
 "harness.weekly_remaining" = "本周额度剩余 %ld%%";
 "progress_guide.plugin.allow_hint" = "在 Antigravity 中允许 Pacer 的进度工具。";
-"progress_guide.plugin.conversation_hint" = "在 Antigravity 中开始新任务。";
+"progress_guide.plugin.conversation_hint" = "在 Antigravity 中新建对话。";
 "antigravity.quota.low" = "%@ 的短期额度快用完了。";
 "antigravity.quota.week_low" = "%@ 的本周额度快用完了。";
 "antigravity.quota.empty" = "%@ 的短期额度已用完。";

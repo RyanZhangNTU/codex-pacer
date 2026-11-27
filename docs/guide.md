@@ -87,7 +87,7 @@ Estimates are the agent's own guess, so a ring can move back. Rings are on by de
 
 Open **Progress Ring** on Pacer’s Antigravity page. During setup, Settings shows the permission card to look for. On Windows, restart Antigravity so it loads the tool.
 
-1. Start a new conversation in Antigravity and ask it to edit a file or run a command. If the card does not appear just after setup, try the task in one more new conversation.
+1. Click **Copy** beside the example in Settings or the floating guide. Open Antigravity, start a new conversation, and paste the prompt. It asks for today’s date and your computer’s name. If Antigravity doesn’t ask to use Pacer’s tool, start one more new conversation and paste it again.
 2. When Antigravity asks **“Allow using this MCP tool?”** for Pacer’s progress tool, Pacer opens a floating guide. Click row 3, **“Yes, and always allow”**. Antigravity asks before using an outside tool. With “Yes, allow this time” it asks again at the next report. With “Yes, and always allow in this conversation” it asks again in a new conversation. Only “Yes, and always allow” stops the questions.
 3. Settings shows **Ready** as soon as Antigravity saves the grant. The ring fills as each task reports progress. Antigravity remembers your choice if you turn the ring or module off and back on.
 

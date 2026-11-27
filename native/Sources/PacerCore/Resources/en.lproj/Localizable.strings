@@ -1864,8 +1864,10 @@
 "antigravity.quota.group" = "Quota shown on the island";
 "antigravity.quota.unavailable" = "Pacer couldn’t read your Antigravity quota.";
 
-"progress_guide.plugin.conversation" = "Start a new conversation in Antigravity and ask it to edit a file or run a command.";
-"progress_guide.plugin.conversation_again" = "If no prompt appears just after setup, try the task in one more new conversation.";
+"progress_guide.plugin.conversation" = "Open Antigravity, start a new conversation, and paste this prompt.";
+"progress_guide.plugin.example" = "Use terminal commands to check today's date and this computer's name, then tell me both in one sentence.";
+"progress_guide.action.copy" = "Copy";
+"progress_guide.plugin.conversation_again" = "If Antigravity doesn’t ask to use Pacer’s tool, start one more new conversation and paste it again.";
 "progress_guide.plugin.restart" = "Restart Antigravity to load the progress tool.";
 "progress_guide.plugin.restarting" = "Restarting %@…";
 "progress_guide.plugin.allow" = "When Antigravity asks “%1$@” for Pacer’s progress tool, click row 3, “%2$@”.";
@@ -1886,7 +1888,7 @@
 "demo.antigravity_reviewer" = "Design reviewer";
 "harness.weekly_remaining" = "%ld%% of weekly quota left";
 "progress_guide.plugin.allow_hint" = "Allow Pacer’s progress tool in Antigravity.";
-"progress_guide.plugin.conversation_hint" = "Start a new task in Antigravity.";
+"progress_guide.plugin.conversation_hint" = "Start a new conversation in Antigravity.";
 "antigravity.quota.low" = "Short-term quota for %@ is running low.";
 "antigravity.quota.week_low" = "Weekly quota for %@ is running low.";
 "antigravity.quota.empty" = "Short-term quota for %@ has run out.";

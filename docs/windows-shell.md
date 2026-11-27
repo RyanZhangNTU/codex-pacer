@@ -238,7 +238,7 @@ A Claude task without a live host opens through Desktop's `claude://code/continu
 
 ## Antigravity progress guide
 
-Core supplies the steps, current step’s `detail` and attention summary in `HarnessProgressGuide`. On Windows the guide asks the user to restart Antigravity, start a new conversation, and request a file edit or command. Clicking row 3 submits the lasting grant.
+Core supplies the steps, current step’s `detail` and attention summary in `HarnessProgressGuide`. On Windows, `newConversation` follows Restart. At this step, show Core’s localized `example` between the instruction and the retry detail in both Settings and the float. Put **Copy** beside it, copy the displayed string verbatim, and briefly show **Copied**. The example asks Antigravity for today’s date and the computer’s name. If Antigravity doesn’t ask to use Pacer’s tool, the guide asks the user to start one more new conversation and paste it again. Other stages omit the example and its button. When the permission card appears, clicking row 3 submits the lasting grant.
 
 Settings draws `picture` under the current step’s detail, or under the status line when there are no steps. Adding can show just the picture. Ready and removal have no picture. Settings and the float share a drawing of the English `approvalCard` in both UI languages. Its grey panel has an 18-DIP corner radius and a faint outline. A shield and lock sit beside “Permission”, above the bold “Allow using this MCP tool?” title. The monospaced field shows only `codex-pacer_pacer_progress/report_progress`. Thin lines separate four full-width, unselected choices with 20×20 number badges. A ring marks row 3, “Yes, and always allow”, and stays still when Windows animations are off.
 

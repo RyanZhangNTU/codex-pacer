@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "2b1e012732fbbe6a2834cd2b33267186589a3ba0537a2fa7bf9543e4338aa176",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "edbd4d4bbe0eb8d83afc0b13098029d33ccfc3a854551244360e9e8c72aafddc",
     "windows/EngineSupport/Resources/Localization/en.json": "9c5c3afa9978273c9160fabc0506c301ea0cb77b9090d382d0ec78e963927bff"
   },
   "strings": {
@@ -1384,6 +1384,7 @@
     "position.center": "Center",
     "position.topLeft": "Top Left",
     "position.topRight": "Top Right",
+    "progress_guide.action.copy": "Copy",
     "progress_guide.action.open": "Open",
     "progress_guide.action.open_app": "Open %@",
     "progress_guide.action.open_connectors": "Open %@ Connectors",
@@ -1425,9 +1426,10 @@
     "progress_guide.plugin.allow_hint": "Allow Pacer\u2019s progress tool in Antigravity.",
     "progress_guide.plugin.choose": "Click row 3, \u201c%@\u201d.",
     "progress_guide.plugin.conflict": "Move the files you want to keep out of the codex-pacer plugin folder before trying again.",
-    "progress_guide.plugin.conversation": "Start a new conversation in Antigravity and ask it to edit a file or run a command.",
-    "progress_guide.plugin.conversation_again": "If no prompt appears just after setup, try the task in one more new conversation.",
-    "progress_guide.plugin.conversation_hint": "Start a new task in Antigravity.",
+    "progress_guide.plugin.conversation": "Open Antigravity, start a new conversation, and paste this prompt.",
+    "progress_guide.plugin.conversation_again": "If Antigravity doesn\u2019t ask to use Pacer\u2019s tool, start one more new conversation and paste it again.",
+    "progress_guide.plugin.conversation_hint": "Start a new conversation in Antigravity.",
+    "progress_guide.plugin.example": "Use terminal commands to check today's date and this computer's name, then tell me both in one sentence.",
     "progress_guide.plugin.failed": "Check that you can save files in the Antigravity plugins folder and try again.",
     "progress_guide.plugin.needs_attention": "Needs attention",
     "progress_guide.plugin.off": "Turn on the codex-pacer plugin in Antigravity.",

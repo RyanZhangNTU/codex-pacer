@@ -183,6 +183,9 @@ struct GuideFloatContent: View {
                     Text(title).font(.system(size: 14.5, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
                 }
             }
+            if !waiting, let example = guide?.example {
+                ProgressGuideExample(text: example, language: language)
+            }
             if !waiting, let guide, let picture = guide.floatPicture {
                 ProgressGuidePicture(picture: picture, approvalCard: guide.approvalCard, provider: provider)
                     .frame(maxWidth: .infinity, alignment: .leading)

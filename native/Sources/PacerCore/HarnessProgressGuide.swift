@@ -54,6 +54,8 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
     public let tone: Tone
     /// The user’s steps while setting up; empty once ready or for a problem.
     public let steps: [Step]
+    /// The prompt to display and copy during the current step, in the guide's language.
+    public private(set) var example: String?
     /// A standalone status or recovery instruction.
     public let line: String?
     public let action: Action?
@@ -247,6 +249,7 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
         info = L10n.text("antigravity.progress_ring_help", language: language)
         let card = AntigravityApprovalCard.current
         let conversation = text("plugin.conversation"), retryConversation = text("plugin.conversation_again")
+        example = stage == .newConversation ? text("plugin.example") : nil
         let allow = text("plugin.allow", card.title, card.always)
         let reason = text("plugin.reason") + "\n" + text("plugin.scopes")
         let done = text("plugin.report")
@@ -256,7 +259,7 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
                 let state: StepState = index == current ? .current : index < current ? .done : .pending
                 switch step {
                 case .restartForPlugin: return Step(title: text("plugin.restart"), state: state)
-                case .newConversation: return Step(title: conversation, state: state, detail: retryConversation)
+                case .newConversation: return Step(title: state == .current ? conversation : text("plugin.conversation_hint"), state: state, detail: retryConversation)
                 case .allowTool: return Step(title: allow, state: state, detail: reason)
                 default: return Step(title: done, state: state)
                 }
@@ -315,7 +318,7 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
     public static func pendingFloat(stage: Stage, name: String, language: AppLanguage? = nil) -> (title: String, next: String)? {
         func text(_ key: String, _ arguments: CVarArg...) -> String { L10n.text("progress_guide." + key, arguments: arguments, language: language) }
         switch stage {
-        case .restartForPlugin: return (text("plugin.restarting", name), text("plugin.conversation"))
+        case .restartForPlugin: return (text("plugin.restarting", name), text("plugin.conversation_hint"))
         case .reopen: return (text("float.restarting", name), text("float.then_custom"))
         case .launch, .openConnectors: return (text("float.opening", name), text("float.then_custom"))
         default: return nil
