@@ -17,7 +17,7 @@ Pacer keeps an eye on every task for you, so you stay focused and get more done.
 <p>
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme-agents-dark.png">
-  <img src="docs/assets/readme-agents-light.png" width="805" alt="Works with Codex, Claude Code, DeepSeek Harness and WorkBuddy, with more agents coming">
+  <img src="docs/assets/readme-agents-light.png" width="958" alt="Works with Codex, Claude Code, DeepSeek Harness, WorkBuddy and Antigravity, with more agents coming">
 </picture>
 </p>
 
@@ -38,7 +38,7 @@ Pacer keeps an eye on every task for you, so you stay focused and get more done.
 </div>
 
 > [!TIP]
-> **New in 4.8: Google Antigravity.** Follow each Antigravity task, its subagents, its speed and both quota pools, with the same progress ring as Codex and Claude. [See what each agent shows](#supported-agents).
+> **New in 4.8: Pacer now supports Google Antigravity.** [See what each agent shows](#supported-agents).
 
 ## Why Pacer
 
@@ -66,7 +66,7 @@ A task that waits for your approval or reply turns the island amber and moves to
 
 ## Several agents at once, still in order
 
-Tasks on this computer, on your SSH hosts, in WSL and in Claude's cloud Projects share one list, each with its stage, model, speed and turn time.
+Tasks on this computer, on your SSH hosts, in WSL and in Claude's cloud Projects share one list, each with its stage, model, speed and turn time. Subagents show under their task.
 
 <table>
 <thead>
@@ -114,7 +114,7 @@ The welcome guide walks you through these when you first open Pacer.
 
 ## How much is left, and how fast it's going
 
-Codex and Claude show their 5-hour and weekly quota on one ring, with a tick for an even pace and a forecast for the reset. DeepSeek shows your balance and today's spend hour by hour, with budgets if you want them. WorkBuddy shows this month's credits and when extra credits expire.
+Codex and Claude show their 5-hour and weekly quota on one ring, with a tick for an even pace and a forecast for the reset. DeepSeek shows your balance and today's spend hour by hour, with budgets if you want them. WorkBuddy shows this month's credits and when extra credits expire. Antigravity shows short-term and weekly quota for each model group.
 
 <img src="docs/assets/readme-quota.png" width="100%" alt="Codex and Claude quota, each with its 5-hour and weekly windows, pace and a forecast for the reset">
 
@@ -128,7 +128,7 @@ Turn on **Claude calls Codex** in **Settings → Collaboration**, then just ask 
 
 ## Put it anywhere, make it yours
 
-Keep it at the top center of the screen, or drag it anywhere and let it snap to an edge. Choose black, graphite or Liquid Glass, one of four sizes, and what the collapsed bar shows. Each display remembers its own place.
+Keep it at the top center of the screen, or drag it anywhere and let it snap to an edge. Open it on hover or with a click. Choose black, graphite or Liquid Glass, one of four sizes, and what the collapsed bar shows. Each display remembers its own place.
 
 <img src="docs/assets/readme-forms.png" width="100%" alt="The collapsed bar floating over a window, snapped to the side of the screen, and snapped to the bottom">
 

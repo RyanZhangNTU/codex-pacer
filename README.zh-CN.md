@@ -17,7 +17,7 @@ Pacer 替你盯着每个任务的进度，你不再分心，效率自然更高�
 <p>
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme-agents-dark.zh-CN.png">
-  <img src="docs/assets/readme-agents-light.zh-CN.png" width="810" alt="支持 Codex、Claude Code、DeepSeek Harness 和 WorkBuddy，更多工具即将支持">
+  <img src="docs/assets/readme-agents-light.zh-CN.png" width="963" alt="支持 Codex、Claude Code、DeepSeek Harness、WorkBuddy 和 Antigravity，更多工具即将支持">
 </picture>
 </p>
 
@@ -38,7 +38,7 @@ Pacer 替你盯着每个任务的进度，你不再分心，效率自然更高�
 </div>
 
 > [!TIP]
-> **4.8 新功能：支持 Google Antigravity。** 跟踪每个 Antigravity 任务、它的子代理、速度和两组额度，进度圆环也和 Codex、Claude 一样。[看看各工具显示什么](#supported-agents)
+> **4.8 新功能：Pacer 现在支持 Google Antigravity。** [看看各工具显示什么](#supported-agents)
 
 ## 为什么用 Pacer
 
@@ -66,7 +66,7 @@ Codex、Claude Code、DeepSeek Harness、WorkBuddy 和 Antigravity 会报告你�
 
 ## 几个 AI 一起跑，也不乱
 
-本机、SSH 主机、WSL 和 Claude 云端项目里的任务都在一个列表里，各自显示阶段、模型、速度和本轮用时。
+本机、SSH 主机、WSL 和 Claude 云端项目里的任务都在一个列表里，各自显示阶段、模型、速度和本轮用时，子代理显示在所属任务下方。
 
 <table>
 <thead>
@@ -114,7 +114,7 @@ Codex、Claude Code、DeepSeek Harness、WorkBuddy 和 Antigravity 会报告你�
 
 ## 额度还剩多少，用得快不快
 
-Codex 和 Claude 一个圆环同时看 5 小时和每周额度，刻度告诉你比匀速快还是慢，还会预计重置时剩多少。DeepSeek 显示余额和今天每小时的花费，也能设预算。WorkBuddy 显示本月积分，以及额外积分什么时候到期。
+Codex 和 Claude 一个圆环同时看 5 小时和每周额度，刻度告诉你比匀速快还是慢，还会预计重置时剩多少。DeepSeek 显示余额和今天每小时的花费，也能设预算。WorkBuddy 显示本月积分，以及额外积分什么时候到期。Antigravity 按模型组显示短期和每周额度。
 
 <img src="docs/assets/readme-quota.zh-CN.png" width="100%" alt="Codex 和 Claude 的额度：各自的 5 小时和每周额度、配速和重置时的预测">
 
@@ -128,7 +128,7 @@ Codex 和 Claude 一个圆环同时看 5 小时和每周额度，刻度告诉你
 
 ## 放在哪、长什么样，随你
 
-可以作为灵动岛留在屏幕顶部中央，也可以拖到任意位置，靠近边缘会自动吸附。纯黑、石墨或液态玻璃，四种大小，折叠栏显示什么也由你定。每块屏幕单独记住位置。
+可以作为灵动岛留在屏幕顶部中央，也可以拖到任意位置，靠近边缘会自动吸附。悬停或点击都能展开。纯黑、石墨或液态玻璃，四种大小，折叠栏显示什么也由你定。每块屏幕单独记住位置。
 
 <img src="docs/assets/readme-forms.zh-CN.png" width="100%" alt="折叠栏的三种摆法：浮在窗口上、吸附在屏幕侧边、吸附在屏幕底部">
 
