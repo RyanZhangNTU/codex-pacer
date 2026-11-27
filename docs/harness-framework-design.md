@@ -22,11 +22,11 @@ Strings follow key families by module ID, so a new module adds strings without c
 
 ## The module library
 
-`ModuleLibrary` combines the modes in `ProviderModules`, installation detection and the modules a host supports. A module is *prominent* when it is found on this computer or turned on explicitly; the rest are collapsed.
+`ModuleLibrary` combines provider modes, installation detection and the modules a host supports. It keeps registry order within each group.
 
-- **Settings sidebar:** prominent modules in registry order, then **Module Library** with the number of collapsed modules, then Remote. The page of a collapsed module stays reachable from the library and search.
-- **Module Library page:** a tile per module, with its icon, name, one-line summary and state (On, Off, Not found). Clicking a tile opens the module's page; the round button turns it on or off. A module that isn't found shows a **Get** link to its website, and can still be turned on, for example when its data is in a custom folder.
-- **Onboarding:** prominent modules as cards; the others under a folded “N more not found on this computer”.
+- The Settings sidebar lists detected and explicitly enabled modules, followed by **Module Library** with the count of the remaining modules. Every supported page is reachable from the library and search.
+- The Module Library shows both detection groups in full. Each tile has an icon, name, inline ⓘ, state and round on/off button. The body opens the module page. The ⓘ reveals a one-sentence summary inside that tile, and an undetected module with a website offers **Get** below its name. **More coming** occupies the last slot of the last visible group. Both hosts follow the [Module Library layout](windows-shell.md#module-library).
+- Onboarding shows prominent modules as cards and folds the others under “N more not found on this computer”.
 
 Local modules count as installed when the app or its data file is found in a supported location. A definition can use the data directory itself as evidence, as Antigravity does before its first conversation.
 

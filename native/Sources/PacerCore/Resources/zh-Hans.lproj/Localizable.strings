@@ -1415,8 +1415,6 @@
 "main.search.modules" = "模块 服务 添加 移除 安装 检测 模块库";
 "modules.on_this_computer" = "这台电脑上的服务";
 "modules.not_found" = "未在这台电脑上找到";
-"modules.show_not_found" = "显示另外 %ld 个";
-"modules.hide_not_found" = "收起";
 "modules.state.on" = "已开启";
 "modules.state.off" = "已关闭";
 "modules.state.not_found" = "未找到";
@@ -1424,12 +1422,12 @@
 "modules.turn_off" = "关闭 %@";
 "modules.get" = "获取 %@";
 "modules.sidebar_more" = "另有 %ld 个";
-"modules.info" = "先列出这台电脑上找到的服务。没找到的服务也可以手动开启，例如数据放在自定义文件夹时。";
+"modules.more_coming" = "更多服务即将推出";
 "modules.empty" = "这台电脑上还没有找到服务。";
-"module.codex.summary" = "Codex 应用和命令行的任务、额度和进度。";
-"module.claude.summary" = "Claude Code 的任务、额度和进度。";
-"module.deepseek.summary" = "DeepSeek Harness 的任务、余额和花费。";
-"module.workbuddy.summary" = "WorkBuddy 的任务、积分和进度。";
+"module.codex.summary" = "查看 Codex 的任务、额度和进度。";
+"module.claude.summary" = "查看 Claude Code 的任务、额度和进度。";
+"module.deepseek.summary" = "查看 DeepSeek Harness 的任务、余额和花费。";
+"module.workbuddy.summary" = "查看 WorkBuddy 的任务、积分和进度。";
 "welcome.modules.more" = "另有 %ld 个服务未在这台电脑上找到";
 "welcome.modules.less" = "收起未找到的服务";
 "welcome.module.workbuddy_missing" = "未找到 WorkBuddy";
@@ -1536,7 +1534,7 @@
 "harness.notice.expiring_credits" = "积分快到期";
 "harness.notice.expiring_credits_detail" = "%1$@ 积分将在 %2$@ 到期。";
 "module.workbuddy-ai.title" = "WorkBuddy AI（海外版）";
-"module.workbuddy-ai.summary" = "WorkBuddy AI（海外版）的任务、积分和进度。";
+"module.workbuddy-ai.summary" = "查看 WorkBuddy AI 的任务、积分和进度。";
 "panel.block.workbuddy-ai" = "WorkBuddy AI 积分";
 "panel.block_detail.workbuddy-ai" = "显示本月积分、额外积分，以及刷新和到期时间。";
 "workbuddy-ai.login.title" = "登录 WorkBuddy AI";

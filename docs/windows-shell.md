@@ -66,6 +66,33 @@ Settings is the main window, as on the Mac. Windows-specific points:
 
 Opaque WPF windows (Settings, sign-in windows, dialogs and non-layered popups) use `RenderMode.SoftwareOnly`, because hardware rendering showed an empty client area on a machine with several physical and virtual display adapters. The layered island keeps hardware rendering. This costs CPU only for mostly static windows; measure before extending it to animated surfaces.
 
+### Module Library
+
+Use the same layout in WPF and on the Mac. Read supported modules in Core registry order. Keep the sidebar’s existing `main.pane.modules · modules.sidebar_more` treatment and count the modules omitted from the sidebar.
+
+1. Show the page title `main.pane.modules` (“Module Library” / “模块库”).
+2. Always show `modules.on_this_computer` (“On This Computer” / “这台电脑上的服务”) with every detected module. When empty, show `modules.empty` (“No services found on this computer yet.” / “这台电脑上还没有找到服务。”) in secondary text.
+3. Show `modules.not_found` (“Not Found on This Computer” / “未在这台电脑上找到”) only when there are undetected modules. Show all of them immediately, including any turned on manually. Use the engine’s module detection field (`installed`) to group tiles. Both headings are plain section titles. There is no expander or Show/Hide row.
+4. Append exactly one `modules.more_coming` (“More coming” / “更多服务即将推出”) to the last visible grid. If the host supports zero modules, it follows the first group’s empty message.
+
+Each group uses a leading-aligned adaptive grid with a minimum tile width of 280 and an 8-point gap in both directions (DIPs on Windows). At the normal Settings width it has two equal columns. Fill rows left to right in registry order, with tiles aligned at the top.
+
+A closed tile is about 54 high. Give every module the same neutral card fill and thin border, with a 10-point corner radius. The main row contains these elements in order:
+
+| Element | Layout and behavior |
+| --- | --- |
+| App icon | 28 × 28, inset 12 from the leading edge. Use 55% opacity only when undetected and off. |
+| Name and ⓘ | Leave 10 after the icon. Use the Settings name (`module.<id>.title` when available, otherwise the descriptor name) in 13-point medium type. Allow long names to wrap. Place the 20 × 20 ⓘ control 3 after the name. |
+| Flexible space | Push the state and round control to the trailing edge. |
+| State | 11.5-point text. When enabled, use `modules.state.on` (“On” / “已开启”) in monitoring-status green (`SettingsSuccess`). Otherwise use `modules.state.off` (“Off” / “已关闭”) if detected or `modules.state.not_found` (“Not found” / “未找到”) if undetected, both in secondary text. |
+| Round button | Use the shared library control, with a 24-point accent-filled check when on and an outlined plus when off. Use `modules.turn_off` or `modules.turn_on` with the Settings name as the accessible button label. |
+
+The tile body opens the module page. Its accessible name is the Settings name and its value is the state. The ⓘ, Get link and round button have independent hit targets, keyboard actions and accessible names. Activating them stays on the library page.
+
+- The ⓘ starts closed. Activating it reveals `module.<id>.summary` inside that tile, below and aligned with the name. A second activation hides it. Give the sentence space to wrap and the tile room to grow. Use secondary 11.5-point text. Each summary describes what Pacer shows for that app. The ⓘ uses `main.info` with the Settings name and reports `main.info_shown` or `main.info_hidden`. It has no hover tooltip or popover.
+- An undetected module with a website shows `modules.get` (“Get %@” / “获取 %@”) inside the tile, aligned with the name. It remains visible whether the ⓘ is open or closed and follows an open summary. Open the descriptor’s website on activation.
+- The final placeholder occupies a regular grid slot, 54 high, with the same corner radius. Draw a thin dashed outline (4 on, 4 off), a neutral sparkles glyph in the icon slot and the title in secondary text. Leave the interior unfilled. Expose the title as static text, with no interactive target, state or controls.
+
 ## Island
 
 - The island keeps one transparent HWND canvas across transitions, so its window can stay large after the panel closes. Its root UIA `ExpandCollapse` pattern reports the logical state; input tests should read that, not infer it from the window size. Hover exit keeps the Mac's 0.4-second grace period.

@@ -27,12 +27,7 @@ internal sealed partial class SettingsWindow
 
     private void BuildModules()
     {
-        AutomationProperties.SetHelpText(paneScroller, ui.Text("modules.info"));
-        // The explanation stays behind the ⓘ beside the first section's title.
-        var title = SectionTitle(ui.Text("modules.on_this_computer"), 0); title.Margin = new Thickness(4, 0, 0, 0); title.VerticalAlignment = VerticalAlignment.Center;
-        var info = InfoBox(ui.Text("modules.info")); info.Margin = new Thickness(4, 0, 4, 10);
-        form.Children.Add(new WrapPanel { Margin = new Thickness(0, 0, 0, 6), Children = { title, InfoButton(ui.Text("modules.on_this_computer"), info, "settings.modules") } });
-        form.Children.Add(info);
+        form.Children.Add(SectionTitle(ui.Text("modules.on_this_computer"), 0));
         modulesFound = new StackPanel(); form.Children.Add(modulesFound);
         modulesEmpty = Detail(ui.Text("modules.empty")); modulesEmpty.Margin = new Thickness(4, 0, 4, 8); form.Children.Add(modulesEmpty);
         modulesMissing = new StackPanel { Margin = new Thickness(0, 6, 0, 0) };

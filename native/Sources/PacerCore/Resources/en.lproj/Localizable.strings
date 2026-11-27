@@ -1415,8 +1415,6 @@
 "main.search.modules" = "modules services add remove install found library";
 "modules.on_this_computer" = "On This Computer";
 "modules.not_found" = "Not Found on This Computer";
-"modules.show_not_found" = "Show %ld More";
-"modules.hide_not_found" = "Hide";
 "modules.state.on" = "On";
 "modules.state.off" = "Off";
 "modules.state.not_found" = "Not found";
@@ -1424,12 +1422,12 @@
 "modules.turn_off" = "Turn Off %@";
 "modules.get" = "Get %@";
 "modules.sidebar_more" = "%ld more";
-"modules.info" = "Services found on this computer come first. Turn on one that isn’t found to follow it anyway, for example when its data is in a custom folder.";
+"modules.more_coming" = "More coming";
 "modules.empty" = "No services found on this computer yet.";
-"module.codex.summary" = "Tasks, quota and progress from the Codex app and CLI.";
-"module.claude.summary" = "Tasks, quota and progress from Claude Code.";
-"module.deepseek.summary" = "Tasks, balance and spending from DeepSeek Harness.";
-"module.workbuddy.summary" = "Tasks, credits and progress from WorkBuddy.";
+"module.codex.summary" = "See Codex tasks, quota and progress.";
+"module.claude.summary" = "See Claude Code tasks, quota and progress.";
+"module.deepseek.summary" = "See DeepSeek Harness tasks, balance and spending.";
+"module.workbuddy.summary" = "See WorkBuddy tasks, credits and progress.";
 "welcome.modules.more" = "%ld more not found on this computer";
 "welcome.modules.less" = "Hide services not found";
 "welcome.module.workbuddy_missing" = "WorkBuddy not found";
@@ -1536,7 +1534,7 @@
 "harness.notice.expiring_credits" = "Credits expiring soon";
 "harness.notice.expiring_credits_detail" = "%1$@ credits expire %2$@.";
 "module.workbuddy-ai.title" = "WorkBuddy AI (International)";
-"module.workbuddy-ai.summary" = "Tasks, credits and progress from WorkBuddy AI, the international version.";
+"module.workbuddy-ai.summary" = "See WorkBuddy AI tasks, credits and progress.";
 "panel.block.workbuddy-ai" = "WorkBuddy AI credits";
 "panel.block_detail.workbuddy-ai" = "This month's credits, extra credits and when they refresh or expire.";
 "workbuddy-ai.login.title" = "Sign in to WorkBuddy AI";
@@ -1846,7 +1844,7 @@
 "collab.intro.demo.claude_model" = "Opus 5.5 high";
 "collab.intro.demo.codex_model" = "Sol 6.2 high";
 
-"module.antigravity.summary" = "Follow your Antigravity tasks, subagents and remaining quota.";
+"module.antigravity.summary" = "See Antigravity tasks, subagents and remaining quota.";
 "welcome.module.antigravity_missing" = "Antigravity not found";
 "main.search.antigravity" = "Google Antigravity tasks subagents approval questions progress ring model quota speed folder";
 "panel.block.antigravity" = "Antigravity quota";

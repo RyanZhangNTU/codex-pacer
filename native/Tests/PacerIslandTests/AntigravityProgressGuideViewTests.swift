@@ -106,9 +106,10 @@ final class AntigravityProgressGuideViewTests: XCTestCase {
         // XCTest has a generic icon. Give the float the icon from the app bundle.
         let icon = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Resources/Pacer.icns")
-        let previousIcon = NSApp.applicationIconImage
-        NSApp.applicationIconImage = try XCTUnwrap(NSImage(contentsOf: icon))
-        defer { NSApp.applicationIconImage = previousIcon }
+        let app = NSApplication.shared
+        let previousIcon = app.applicationIconImage
+        app.applicationIconImage = try XCTUnwrap(NSImage(contentsOf: icon))
+        defer { app.applicationIconImage = previousIcon }
         XCTAssertFalse(model.harnessGuideFloat.isShowing, "The ordinary Antigravity demo has no automatic float")
         for stage in [HarnessProgressGuide.Stage.adding, .newConversation, .conversationMissedTool, .allowTool, .ready] {
             let now = Date()
