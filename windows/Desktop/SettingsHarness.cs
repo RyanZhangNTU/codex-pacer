@@ -144,13 +144,6 @@ internal sealed partial class SettingsWindow
             harnessSections.Children.Add(SectionTitle(ui.Text("provider.usage_settings")));
             harnessSections.Children.Add(Card(harnessCreditsBlock));
         }
-        if (descriptor.QuotaGroups != null && Uri.TryCreate(descriptor.Website, UriKind.Absolute, out var website) && website.Scheme == Uri.UriSchemeHttps)
-        {
-            var link = new Button { Content = website.Host, Style = (Style)FindResource("SettingsLink"), HorizontalAlignment = HorizontalAlignment.Left };
-            Identify(link, id + ".website", website.Host);
-            link.Click += (_, _) => { if (!SettingsPagePolicy.OpenWebsite(website, guideLinkLauncher)) ShowIssue("windows.pages.open_failed"); };
-            harnessSections.Children.Add(link);
-        }
         if (descriptor.Local == true) harnessSections.Children.Add(Card(ProviderHomeEditor(provider)));
     }
 

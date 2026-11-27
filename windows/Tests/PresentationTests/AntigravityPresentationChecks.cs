@@ -55,8 +55,9 @@ internal static class AntigravityPresentationChecks
                 && Texts(settings).Any(t => t.Contains("66%")), "The account, weekly usage and group picker must match the reading");
             Check(Get<Button>(settings, Prefix + "open").IsVisible && Get<Button>(settings, Prefix + "refresh").IsEnabled,
                 "The module must offer Open Antigravity and Refresh");
-            Click(Get<Button>(settings, Prefix + "website"));
-            Check(website?.AbsoluteUri == "https://antigravity.google/", "The module's website must use its descriptor URL");
+            // As on the Mac, an installed module's page has no bare website link; the Module Library offers Get instead.
+            Check(Find<Button>(settings, Prefix + "website") == null && !Texts(settings).Any(t => t.Contains("antigravity.google")),
+                "The installed module's page must not show a website link");
             var guide = Module()!.ProgressGuide!;
             Check(guide.Stage == "allowTool" && guide.Steps.Count == 4 && guide.Steps[0].Title == ui.Text("progress_guide.plugin.restart")
                 && guide.Steps[2].State == "current" && guide.Picture == "antigravityApproval",
