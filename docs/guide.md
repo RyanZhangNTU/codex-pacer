@@ -123,7 +123,7 @@ The Collaboration page lists the pairs, each with its switch; Claude calls Codex
 
 **DeepSeek Harness.** Pacer follows local Harness sessions, their speed and cost.
 
-**Antigravity on Mac.** Each task shows its stage, time to first output, and the roles and states of its subagents. The island tells you when a task is waiting for a child, an answer or an approval. An ended task keeps its last measured response speed. Click a task or its notification to open Antigravity and select the conversation there. Opening the app leaves ended tasks unread.
+**Antigravity on Mac.** Each task shows its stage, time to first output, and the roles and states of its subagents. The island tells you when a task is waiting for a child, an answer or an approval. An ended task keeps its last measured response speed. Click a task or its notification to open Antigravity and select the conversation there; clicking also clears an ended task.
 
 **WorkBuddy.** Pacer follows WorkBuddy's tasks on this computer: running work, questions waiting for you and finished turns. Click a task to return to its conversation. To see your credits, click **Sign In** on the WorkBuddy page; the window closes by itself once you're signed in. The page lists this month's credits, extra credits and the total, then what each kind has left and when it refreshes or expires. The **⋯** menu next to the account refreshes, switches account or signs out. History shows the credits you used each day of the last week. WorkBuddy AI, the international version, works the same way on its own page and account.
 

@@ -424,7 +424,8 @@ public struct ActivityTaskRowPresentation: Sendable {
         source = Self.sourceName(activity, options: options)
         sourceLabel = source.map { Self.middleTruncated($0, limit: 16) }
         sourceKind = activity.claudeCloud != nil ? "cloud" : activity.sourceHostID != nil ? "server" : source == nil ? nil : "application"
-        ratePlaceholder = activity.claudeCloud == nil && HarnessRegistry.descriptor(for: activity.provider)?.hasRateDisplay == true
+        // Only a running task can still be waiting for its usage; an ended one without a speed shows none.
+        ratePlaceholder = phase == .running && activity.claudeCloud == nil && HarnessRegistry.descriptor(for: activity.provider)?.hasRateDisplay == true
             ? L10n.text("performance.awaiting_usage") : nil
         switch activity.turnCharge {
         case .estimatedYuan(let total, let peak) where options.showsDeepSeekTurnCost:
