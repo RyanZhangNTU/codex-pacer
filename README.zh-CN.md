@@ -33,7 +33,7 @@ Pacer 替你盯着每个任务的进度，你不再分心，效率自然更高�
 
 [功能](#features) · [支持的工具](#supported-agents) · [安装](#install) · [使用指南](docs/guide.zh-CN.md) · [交流群](#community) · [English](README.md)
 
-<p><img src="docs/assets/readme-hero.zh-CN.png" width="100%" alt="Codex Pacer（演示数据）：三个来自不同工具的任务，图标外各有一圈进度圆环，旁边是速度和模型"></p>
+<p><img src="docs/assets/readme-hero.zh-CN.png" width="100%" alt="Codex Pacer（演示数据）：Antigravity、Codex 和 Claude Code 的任务，图标外各有一圈进度圆环，旁边是速度和模型；Claude 任务下方列出它的两个子代理"></p>
 
 </div>
 
@@ -116,7 +116,7 @@ Codex、Claude Code、DeepSeek Harness、WorkBuddy 和 Antigravity 会报告你�
 
 Codex 和 Claude 一个圆环同时看 5 小时和每周额度，刻度告诉你比匀速快还是慢，还会预计重置时剩多少。DeepSeek 显示余额和今天每小时的花费，也能设预算。WorkBuddy 显示本月积分，以及额外积分什么时候到期。Antigravity 按模型组显示短期和每周额度。
 
-<img src="docs/assets/readme-quota.zh-CN.png" width="100%" alt="Codex 和 Claude 的额度：各自的 5 小时和每周额度、配速和重置时的预测">
+<img src="docs/assets/readme-quota.zh-CN.png" width="100%" alt="Codex、Claude 和 Antigravity 的额度：各自的 5 小时和每周额度、配速和重置时的预测">
 
 <a id="collab"></a>
 

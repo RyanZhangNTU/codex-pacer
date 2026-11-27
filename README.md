@@ -33,7 +33,7 @@ Pacer keeps an eye on every task for you, so you stay focused and get more done.
 
 [Features](#features) · [Supported agents](#supported-agents) · [Install](#install) · [User Guide](docs/guide.md) · [Community](#community) · [简体中文](README.zh-CN.md)
 
-<p><img src="docs/assets/readme-hero.png" width="100%" alt="Codex Pacer with sample data: three tasks from different agents, each with a progress ring around its icon, its speed and its model"></p>
+<p><img src="docs/assets/readme-hero.png" width="100%" alt="Codex Pacer with sample data: tasks from Antigravity, Codex and Claude Code, each with a progress ring around its icon, its speed and its model, and the Claude task's two subagents listed under it"></p>
 
 </div>
 
@@ -116,7 +116,7 @@ The welcome guide walks you through these when you first open Pacer.
 
 Codex and Claude show their 5-hour and weekly quota on one ring, with a tick for an even pace and a forecast for the reset. DeepSeek shows your balance and today's spend hour by hour, with budgets if you want them. WorkBuddy shows this month's credits and when extra credits expire. Antigravity shows short-term and weekly quota for each model group.
 
-<img src="docs/assets/readme-quota.png" width="100%" alt="Codex and Claude quota, each with its 5-hour and weekly windows, pace and a forecast for the reset">
+<img src="docs/assets/readme-quota.png" width="100%" alt="Codex, Claude and Antigravity quota, each with its 5-hour and weekly windows, pace and a forecast for the reset">
 
 <a id="collab"></a>
 
