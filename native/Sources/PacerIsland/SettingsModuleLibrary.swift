@@ -40,16 +40,26 @@ private struct ModuleTile: View {
                                        removeLabel: L10n.text("modules.turn_off", name), toggle: toggle)
                         .frame(height: 32)
                 }
+                // The summary and, for an app that isn't installed, a quiet way to
+                // get it live behind the ⓘ; the tile itself stays one line.
                 if showsInfo {
-                    Text(L10n.text(entry.summaryKey))
-                        .font(.system(size: 11.5)).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.leading, 38).padding(.trailing, 10)
-                        .allowsHitTesting(false)
-                }
-                if !entry.detected, let site = entry.website {
-                    Link(L10n.text("modules.get", name), destination: site)
-                        .font(.system(size: 11.5)).padding(.leading, 38)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(L10n.text(entry.summaryKey))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .allowsHitTesting(false)
+                        if !entry.detected, let site = entry.website {
+                            Link(destination: site) {
+                                HStack(spacing: 2) {
+                                    Text(L10n.text("modules.get", name))
+                                    Image(systemName: "arrow.up.right").font(.system(size: 9, weight: .semibold))
+                                }
+                            }
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel(L10n.text("modules.get", name))
+                        }
+                    }
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    .padding(.leading, 38).padding(.trailing, 10)
                 }
             }
             .padding(.leading, 12).padding(.trailing, 5).padding(.vertical, 5)

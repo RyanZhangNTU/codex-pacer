@@ -90,7 +90,7 @@ A closed tile is about 54 high. Give every module the same neutral card fill and
 The tile body opens the module page. Its accessible name is the Settings name and its value is the state. The ⓘ, Get link and round button have independent hit targets, keyboard actions and accessible names. Activating them stays on the library page.
 
 - The ⓘ starts closed. Activating it reveals `module.<id>.summary` inside that tile, below and aligned with the name. A second activation hides it. Give the sentence space to wrap and the tile room to grow. Use secondary 11.5-point text. Each summary describes what Pacer shows for that app. The ⓘ uses `main.info` with the Settings name and reports `main.info_shown` or `main.info_hidden`. It has no hover tooltip or popover.
-- An undetected module with a website shows `modules.get` (“Get %@” / “获取 %@”) inside the tile, aligned with the name. It remains visible whether the ⓘ is open or closed and follows an open summary. Open the descriptor’s website on activation.
+- An undetected module with a website shows `modules.get` (“Get %@” / “获取 %@”) only while its ⓘ is open, on the line under the summary, in the summary’s secondary color with a small ↗ glyph (not an accent-colored link). The closed tile never shows it. Open the descriptor’s website on activation.
 - The final placeholder occupies a regular grid slot, 54 high, with the same corner radius. Draw a thin dashed outline (4 on, 4 off), a neutral sparkles glyph in the icon slot and the title in secondary text. Leave the interior unfilled. Expose the title as static text, with no interactive target, state or controls.
 
 ## Island

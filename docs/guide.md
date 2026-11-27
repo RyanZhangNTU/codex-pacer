@@ -154,7 +154,7 @@ Click the gear in the expanded island to open the main window.
 | **Overview** | Anything that needs you, each service at a glance and the running tasks. |
 | **History** | Each service's quota over the current period, and the last 7 days of DeepSeek spend and WorkBuddy credits. |
 | **Codex, Claude, DeepSeek, WorkBuddy, Antigravity** | Turn each service on or off. Every service page starts with the same status: **Task monitoring** (whether Pacer reads its tasks on this computer), **Account** and **Usage**; then what it shows, its usage settings if it has any, and custom folders. Only services found on this computer, or turned on, are listed. |
-| **Module Library** | Browse services found on this computer and those you can add. Click ⓘ to see what a service shows in Pacer, use the round button to turn it on or off, or follow its Get link. |
+| **Module Library** | Browse services found on this computer and those you can add. Click ⓘ to see what a service shows in Pacer (and, for one that isn't installed, a link to get it), or use the round button to turn it on or off. |
 | **Collaboration** | Pairs like Claude calls Codex: the switch, and how Codex runs for Claude. |
 | **Remote** | Tasks on other machines: SSH hosts and, on Windows, WSL. |
 | **Appearance** | Theme, accent color, the island's material and size, Island or Free Move, and which display it uses. |
