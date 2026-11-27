@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace CodexPacer.Windows;
 
@@ -100,23 +101,58 @@ internal sealed record EngineModule(string Provider, string Mode, bool? Installe
     bool? Local = null, DeepSeekWeekPresentation? Week = null, EngineModuleLaunch? Launch = null,
     HarnessProgressGuide? ProgressGuide = null, EngineStatusRow? Monitoring = null, EngineStatusRow? Account = null,
     EngineQuotaGroups? QuotaGroups = null, bool? ApplicationInstalled = null,
-    IReadOnlyList<string>? ProgressApprovals = null, PendingGuideFloat? PendingFloat = null)
+    IReadOnlyList<string>? ProgressApprovals = null, PendingGuideFloat? PendingFloat = null,
+    MissedProgressConversation? MissedProgressConversation = null)
 {
     /// Found on this computer or turned on explicitly. Older engines send
     /// nothing, so their modules stay listed.
     internal bool IsProminent => Prominent ?? true;
     internal bool? HasApplication => ApplicationInstalled ?? Installed;
 
-    internal bool ShouldOpenApprovalFloat(IReadOnlySet<string> shown, bool active, bool demo, bool guideDemo) =>
-        active && (!demo || guideDemo) && Enabled && Provider == "antigravity"
-        && ProgressGuide is { Stage: not "ready", FloatPicture: "antigravityApproval" }
-        && ProgressApprovals?.Any(id => !shown.Contains(id)) == true;
+    internal ProgressGuideFloatTrigger? GetProgressGuideFloatTrigger(IReadOnlySet<string> shownApprovals,
+        IReadOnlySet<string> shownMisses, bool active, bool ringEnabled, bool demo, bool guideDemo)
+    {
+        if (!active || !ringEnabled || (demo && !guideDemo) || !Enabled || Provider != "antigravity"
+            || ProgressGuide is not { Stage: not "ready" } guide) return null;
+        if (guide.FloatPicture == "antigravityApproval" && ProgressApprovals is { } approvals
+            && approvals.Any(id => !shownApprovals.Contains(id))) return new(approvals, null);
+        if (guide.Stage == "conversationMissedTool" && MissedProgressConversation is { } missed
+            && !shownMisses.Contains(missed.Id)) return new([], missed.Id);
+        return null;
+    }
 
     internal string ProgressAttentionTitle(string summary)
     {
         string name = DisplayName ?? Provider;
         return summary.Contains(name, StringComparison.Ordinal) ? summary : name + " · " + summary;
     }
+}
+internal sealed record ProgressGuideFloatTrigger(IReadOnlyList<string> ApprovalIds, string? MissedConversationId)
+{
+    internal void Remember(HashSet<string> shownApprovals, HashSet<string> shownMisses)
+    {
+        if (MissedConversationId is { } id) shownMisses.Add(id);
+        else shownApprovals.UnionWith(ApprovalIds);
+    }
+}
+internal sealed record MissedProgressConversation(string Id,
+    [property: JsonConverter(typeof(SwiftDateConverter))] DateTimeOffset FirstInputAt);
+
+// Swift's default JSONEncoder writes Date as seconds since 2001-01-01 UTC.
+internal sealed class SwiftDateConverter : JsonConverter<DateTimeOffset>
+{
+    private static readonly DateTimeOffset Epoch = new(2001, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+    public override DateTimeOffset Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options)
+    {
+        if (reader.TokenType != JsonTokenType.Number || !reader.TryGetDouble(out var seconds) || !double.IsFinite(seconds))
+            throw new JsonException("Expected seconds since the Swift reference date.");
+        try { return Epoch.AddSeconds(seconds); }
+        catch (ArgumentOutOfRangeException error) { throw new JsonException("Swift date is out of range.", error); }
+    }
+
+    public override void Write(Utf8JsonWriter writer, DateTimeOffset value, JsonSerializerOptions options) =>
+        writer.WriteNumberValue((value - Epoch).TotalSeconds);
 }
 /// A row of a module page's Status card, worded by Core: state, tone
 /// (`positive`, `neutral`, `attention`), text, a line under it and one action.

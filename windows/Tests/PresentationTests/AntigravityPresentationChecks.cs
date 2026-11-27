@@ -62,11 +62,7 @@ internal static class AntigravityPresentationChecks
                 && guide.Steps[2].State == "current" && guide.Picture == "antigravityApproval",
                 $"The guide must lead from restart and a new task to the permission card (stage {guide.Stage}, steps {guide.Steps.Count}, "
                 + $"first '{guide.Steps.FirstOrDefault()?.Title}', third {guide.Steps.ElementAtOrDefault(2)?.State}, picture {guide.Picture})");
-            // The plain demo stays at the permission card; the engine tests cover the example in the guide demo.
-            var conversation = guide with { Stage = "newConversation", Example = ui.Text("progress_guide.plugin.example"), FloatPicture = null,
-                Steps = guide.Steps.Select((step, i) => i == 1 ? step with { Title = ui.Text("progress_guide.plugin.conversation"), State = "current" }
-                    : step with { State = i < 1 ? "done" : "pending" }).ToArray() };
-            await CheckGuideStates(settings, ui, guide, conversation);
+            await CheckGuideStates(settings, ui, guide);
             settings.CapturePreview(Path.Combine(output, $"antigravity-settings-{language}-{(dark ? "dark" : "light")}.png"));
 
             island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync();
@@ -186,13 +182,21 @@ internal static class AntigravityPresentationChecks
         Check(!Descendants(picture).OfType<System.Windows.Controls.Primitives.ButtonBase>().Any(), "The drawing must have no buttons or radio controls");
     }
 
-    private static async Task CheckGuideStates(SettingsWindow settings, UiText ui, HarnessProgressGuide guide, HarnessProgressGuide conversation)
+    private static HarnessProgressGuide ConversationGuide(UiText ui, HarnessProgressGuide guide, string stage)
+    {
+        string title = ui.Text(stage == "conversationMissedTool" ? "progress_guide.plugin.conversation_missed_tool" : "progress_guide.plugin.conversation");
+        return guide with { Stage = stage, FloatTitle = title, FloatNext = null, FloatPicture = null, Example = ui.Text("progress_guide.plugin.example"),
+            Steps = guide.Steps.Select((step, i) => i == 1 ? step with { Title = title, State = "current" }
+                : step with { State = i == 0 ? "done" : "pending" }).ToArray() };
+    }
+
+    private static async Task CheckGuideStates(SettingsWindow settings, UiText ui, HarnessProgressGuide guide)
     {
         var card = guide.ApprovalCard ?? throw new InvalidOperationException("Missing approval card");
         Check(card == EnglishCard, "Antigravity's permission prompt uses the same English labels in both languages");
-        foreach (var (stage, index) in new[] { ("restartForPlugin", 0), ("newConversation", 1), ("allowTool", 2) })
+        foreach (var (stage, index) in new[] { ("restartForPlugin", 0), ("newConversation", 1), ("conversationMissedTool", 1), ("allowTool", 2) })
         {
-            var state = stage == "newConversation" ? conversation : guide with { Stage = stage,
+            var state = index == 1 ? ConversationGuide(ui, guide, stage) : guide with { Stage = stage,
                 Steps = guide.Steps.Select((step, i) => step with { State = i < index ? "done" : i == index ? "current" : "pending" }).ToArray() };
             var steps = state.Steps;
             settings.RefreshHarnessProgressGuide(Provider, state, true);
@@ -201,18 +205,17 @@ internal static class AntigravityPresentationChecks
             Check(Name(current) == steps[index].Title && AutomationProperties.GetItemStatus(current) == ui.Text("progress_guide.state.current"),
                 "The current plugin step must have a localized accessible state");
             CheckPicture(current, card);
-            if (index == 1) Check(steps[index].Detail == null, "The ordinary conversation step omits the retry instruction");
             if (index == 2) Check(!string.IsNullOrEmpty(steps[index].Detail), "The approval step must explain the next action");
             var detail = Find<TextBlock>(current, Prefix + "progress_detail");
             Check(detail?.Text == steps[index].Detail && (detail == null || detail.TextWrapping == TextWrapping.Wrap),
                 "The current step must show its complete, wrapping detail");
-            if (stage == "newConversation")
+            if (index == 1)
             {
                 var box = Descendants(settings).OfType<ProgressGuideExample>().Single();
-                Check(detail?.Parent is StackPanel body && body.Children[0] is TextBlock title
-                    && title.Text == ui.Text("progress_guide.plugin.conversation") && body.Children[1] == box && body.Children[2] == detail,
-                    "The example belongs between the current conversation instruction and its retry detail");
-                await CheckCopy(box, ui, conversation.Example!);
+                Check(steps[index].Detail == null && detail == null && box.Parent is StackPanel body
+                    && body.Children[0] is TextBlock title && title.Text == state.FloatTitle && body.Children[1] == box,
+                    "The conversation title must be followed by the example, with no detail");
+                await CheckCopy(box, ui, ui.Text("progress_guide.plugin.example"));
             }
             else CheckNoExample(settings, stage);
             Check(Descendants(settings).OfType<DecorativeBorder>().Count(x => AutomationProperties.GetAutomationId(x) == "progress_approval.picture") == 1,
@@ -283,10 +286,7 @@ internal static class AntigravityPresentationChecks
             Picture: "antigravityApproval", FloatTitle: "Choose the lasting grant", FloatNext: steps[2].Detail,
             FloatPicture: "antigravityApproval", ApprovalCard: EnglishCard);
         var module = new EngineModule(Provider, "enabled", true, true, ProgressConnector: true, ProgressGuide: guide);
-        var conversation = guide with { Stage = "newConversation", Example = ui.Text("progress_guide.plugin.example"),
-            Steps = [steps[0], steps[1] with { Title = ui.Text("progress_guide.plugin.conversation"), State = "current" },
-                steps[2] with { State = "pending" }, steps[3]], FloatTitle = ui.Text("progress_guide.plugin.conversation"),
-            FloatNext = steps[1].Detail, FloatPicture = null };
+        var conversation = ConversationGuide(ui, guide, "newConversation");
         var session = new PreferencesSession(new DesktopPreferences(), _ => Task.CompletedTask, _ => true);
         var settings = new SettingsWindow(ui, session, new DemoStartupRegistration(), true, dark) { ShowActivated = false };
         var area = new System.Drawing.Rectangle(0, 0, 1280, 900);
@@ -296,7 +296,7 @@ internal static class AntigravityPresentationChecks
         {
             settings.Content = settings.BuildHarnessProgressRow(Provider, "settings." + Provider, module);
             settings.Show();
-            await CheckGuideStates(settings, ui, guide, conversation);
+            await CheckGuideStates(settings, ui, guide);
             await ProviderHomeSettingsChecks.CheckGuideFloat(settings, ui, !dark);
             settings.AllowClose = true; settings.Close();
             var starting = module with { ProgressGuide = conversation };
@@ -306,7 +306,7 @@ internal static class AntigravityPresentationChecks
                 && Find<DecorativeBorder>(floating, "progress_approval.picture") == null, "The restart must keep its pending instruction until the app returns");
             floating.Update(starting, false, DateTime.UtcNow);
             floating.UpdateLayout();
-            await ProviderHomeSettingsChecks.CheckGuideFloatExample(floating, ui, conversation.Example!);
+            await ProviderHomeSettingsChecks.CheckGuideFloatExample(floating, ui, ui.Text("progress_guide.plugin.conversation"));
             floating.Present(guide with { FloatPicture = null });
             CheckNoExample(floating, guide.Stage);
             Check(Find<DecorativeBorder>(floating, "progress_approval.picture") == null, "The float must ignore the Settings preview");
@@ -320,6 +320,9 @@ internal static class AntigravityPresentationChecks
             ring.Resources[SystemParameters.ClientAreaAnimationKey] = false;
             await PresentationWait.UntilAsync(() => !ring.IsEnabled && !ring.HasAnimatedProperties && ring.Opacity == 1,
                 "Reduced motion must leave a static, visible ring");
+            floating.Update(module with { ProgressGuide = ConversationGuide(ui, guide, "conversationMissedTool") }, false, DateTime.UtcNow);
+            floating.UpdateLayout();
+            await ProviderHomeSettingsChecks.CheckGuideFloatExample(floating, ui, ui.Text("progress_guide.plugin.conversation_missed_tool"));
             var ready = module with { ProgressGuide = guide with { Stage = "ready", FloatTitle = ui.Text("progress_guide.plugin.report"),
                 FloatNext = null, FloatPicture = null }, ProgressApprovals = ["still-pending"] };
             var now = DateTime.UtcNow;

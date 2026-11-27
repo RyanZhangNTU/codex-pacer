@@ -335,17 +335,18 @@ final class WindowsAntigravityTests: XCTestCase {
         XCTAssertEqual(EngineModule.approvalIDs(for: .antigravity, in: sample), [])
     }
 
-    func testGuideDemoProjectsFourStagesAndOneApprovalID() async throws {
+    func testGuideDemoProjectsMissedConversationAndApprovalAtTheirStages() async throws {
         let capture = Capture()
-        let runtime = EngineRuntime(demo: true, dismissalStore: nil, output: { capture.receive($0) }, demoAntigravityGuide: true)
+        let date = Date(timeIntervalSinceReferenceDate: 812_345_678.25)
+        let runtime = EngineRuntime(demo: true, now: { date }, dismissalStore: nil, output: { capture.receive($0) }, demoAntigravityGuide: true)
         func send(_ method: String, _ params: [String: Any]) async throws {
             let frame = try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": method, "method": method,
                 "supportsHarnessModules": true, "params": params])
             _ = await runtime.receive(frame)
         }
         try await send("initialize", ["providerModes": ["antigravity": "enabled"]])
-        let stages: [HarnessProgressGuide.Stage] = [.adding, .newConversation, .allowTool, .ready]
-        for (index, stage) in stages.enumerated() {
+        let stages: [(Int, HarnessProgressGuide.Stage)] = [(0, .adding), (4, .conversationMissedTool), (1, .newConversation), (2, .allowTool), (3, .ready)]
+        for (index, stage) in stages {
             try await send("demoStage", ["demoStage": index])
             let module = try XCTUnwrap(capture.snapshot?.modules?.first { $0.provider == "antigravity" })
             let guide = try XCTUnwrap(module.progressGuide)
@@ -354,9 +355,24 @@ final class WindowsAntigravityTests: XCTestCase {
             XCTAssertEqual(guide.floatPicture, index == 2 ? .antigravityApproval : nil)
             XCTAssertEqual(guide.picture, index == 3 ? nil : .antigravityApproval)
             XCTAssertEqual(guide.approvalCard?.always, index == 3 ? nil : "Yes, and always allow")
-            // Only the new-conversation step offers the prompt to copy.
-            XCTAssertEqual(guide.example != nil, index == 1)
-            if index == 1 { XCTAssertNil(guide.steps.first { $0.state == .current }?.detail) }
+            if stage == .conversationMissedTool {
+                XCTAssertEqual(module.missedProgressConversation?.id, "demo-missed-conversation")
+                XCTAssertEqual(module.missedProgressConversation?.firstInputAt, date)
+            } else {
+                XCTAssertNil(module.missedProgressConversation)
+            }
+            if stage == .newConversation || stage == .conversationMissedTool {
+                let title = L10n.text(stage == .newConversation ? "progress_guide.plugin.conversation" : "progress_guide.plugin.conversation_missed_tool")
+                let current = try XCTUnwrap(guide.steps.firstIndex { $0.state == .current })
+                XCTAssertEqual(current, 1)
+                XCTAssertEqual(guide.steps[current].title, title)
+                XCTAssertNil(guide.steps[current].detail)
+                XCTAssertEqual(guide.example, L10n.text("progress_guide.plugin.example"))
+                XCTAssertEqual(guide.floatTitle, title)
+                XCTAssertNil(guide.floatNext)
+            } else {
+                XCTAssertNil(guide.example)
+            }
             if index == 2 { XCTAssertNotNil(guide.steps.first { $0.state == .current }?.detail) }
         }
         await runtime.stop()

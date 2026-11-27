@@ -146,6 +146,7 @@ actor EngineRuntime {
     private let demo: Bool
     private let now: @Sendable () -> Date
     private var stage = DemoTaskStage.thinking
+    private var demoMissedProgressTool = false
     private var initialized = false
     private let claudeHookServices: EngineClaudeHookServices?
     private var claudeHookSetup: EngineClaudeHookSetup?
@@ -1130,10 +1131,16 @@ actor EngineRuntime {
                 failure(id: command.id, code: "notRunning"); return true
             }
         case "demoStage":
-            guard demo, let value = command.params?.demoStage, let next = DemoTaskStage(rawValue: value) else {
+            if demoAntigravityGuide, command.params?.demoStage == 4 {
+                stage = .tool
+                demoMissedProgressTool = true
+            } else if demo, let value = command.params?.demoStage, let next = DemoTaskStage(rawValue: value) {
+                stage = next
+                demoMissedProgressTool = false
+            } else {
                 failure(id: command.id, code: "demoOnly"); return true
             }
-            stage = next; await refresh(discover: false)
+            await refresh(discover: false)
         case "shutdown":
             await stop()
             send(["protocolVersion": EngineProtocol.version, "type": "result", "id": command.id, "ok": true])
@@ -3105,6 +3112,9 @@ actor EngineRuntime {
             if demoAntigravity, enabled.contains(.antigravity) {
                 var sample = DemoScenario.antigravityTasks(at: date, requestsProgressApproval: !demoAntigravityGuide || stage == .responding)
                 sample.scope = "demo-antigravity"
+                if demoMissedProgressTool {
+                    sample.missedProgressConversation = .init(id: "demo-missed-conversation", firstInputAt: date)
+                }
                 rows += sample.activities; requests += sample.requests
                 harnessActivities.replace(.antigravity, with: sample)
                 let reading = DemoScenario.antigravityQuota(at: date)
@@ -3113,7 +3123,7 @@ actor EngineRuntime {
                 if demoAntigravityGuide { localHarnessApps[.antigravity] = .running(since: date) }
                 localProgressStatuses[.antigravity] = disabledHarnessProgress.contains(.antigravity) ? nil :
                     .init(demoAntigravityGuide && stage == .thinking ? .settingUp : .configured,
-                          reported: demoAntigravityGuide && stage == .completed, addedAt: demoAntigravityGuide ? date : nil)
+                          reported: demoAntigravityGuide && stage == .completed, addedAt: demoAntigravityGuide ? date.addingTimeInterval(-120) : nil)
             }
             demoActivity = HarnessActivity(activities: rows, requests: requests)
             quota = Dictionary(uniqueKeysWithValues: [AgentProvider.codex, .claude].compactMap { provider in

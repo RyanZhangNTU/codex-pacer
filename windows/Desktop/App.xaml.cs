@@ -37,6 +37,7 @@ public partial class App : Application
     private bool demo;
     private bool demoSubagents, demoAntigravity, demoAntigravityGuide;
     private readonly HashSet<string> shownProgressApprovals = new(StringComparer.Ordinal);
+    private readonly HashSet<string> shownMissedConversations = new(StringComparer.Ordinal);
     private string? demoPreferencesFile;
     private Guid? demoPreferencesScope;
     private bool? demoDark;
@@ -127,8 +128,9 @@ public partial class App : Application
             if (position < 0) throw new ArgumentException("Unknown island position.");
         }
         int stage = 0, stageIndex = Array.IndexOf(e.Args, "--stage");
-        if (stageIndex >= 0 && (!demo || stageIndex + 1 >= e.Args.Length || !int.TryParse(e.Args[stageIndex + 1], out stage) || stage < 0 || stage > 3))
-            throw new ArgumentException("Demo stage must be between zero and three.");
+        int lastStage = demoAntigravityGuide ? 4 : 3;
+        if (stageIndex >= 0 && (!demo || stageIndex + 1 >= e.Args.Length || !int.TryParse(e.Args[stageIndex + 1], out stage) || stage < 0 || stage > lastStage))
+            throw new ArgumentException($"Demo stage must be between 0 and {lastStage}.");
         int capture = Array.IndexOf(e.Args, "--capture-preview");
         bool captureSettings = e.Args.Contains("--settings-preview");
         if (captureSettings && (!demo || capture < 0)) throw new ArgumentException("Settings capture requires a demo preview destination.");
@@ -215,7 +217,7 @@ public partial class App : Application
             // Colors come with the registry entry; the island redraws on its next snapshot.
             PacerPalette.RegisterModules(snapshot.Modules);
             WindowsConversationApplication.Register(snapshot.Modules);
-            UpdateProgressApprovalFloat();
+            UpdateProgressGuideFloat();
             foreach (var account in accounts.All)
                 account.SetEnabled(snapshot.Modules?.Any(module =>
                     module.Provider == account.Provider && module is { Enabled: true, ReportsAccountCredits: true }) == true);
@@ -233,7 +235,7 @@ public partial class App : Application
         var applications = demo ? new WindowsDesktopApplications(_ => true, _ => true) : new WindowsDesktopApplications();
         island = new IslandWindow(engine, demo, language == "zh-Hans", position, desktopApplications: applications,
             displayMode: positionIndex >= 0 ? 2 : Array.IndexOf(new[] { "automatic", "notch", "floating" }, preferences.DisplayMode),
-            canConnectDeepSeekWeb: () => webConnection.Available, harnessAccounts: accounts);
+            canConnectDeepSeekWeb: () => webConnection.Available, harnessAccounts: accounts, demoAntigravityGuide: demoAntigravityGuide);
         island.Presence.Changed += OnPresenceChanged;
         if (capture < 0 || activationQa != null)
             instanceActivation = new WindowsInstanceActivation(island, action =>
@@ -422,15 +424,17 @@ public partial class App : Application
         settings.Show(); settings.Activate();
     }
 
-    private void UpdateProgressApprovalFloat()
+    private void UpdateProgressGuideFloat()
     {
         if (engine is not { } client || settingsSession == null || ui == null || island == null) return;
         HarnessGuideFloat.Follow();
         var module = client.LatestSnapshot?.Modules?.FirstOrDefault(value => value.Provider == "antigravity");
         bool active = !sleeping && !quitting && !client.IsConnectionClosed;
-        if (module == null || !module.ShouldOpenApprovalFloat(shownProgressApprovals, active, demo, demoAntigravityGuide)
-            || settingsSession.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal)) return;
-        shownProgressApprovals.UnionWith(module.ProgressApprovals!);
+        if (module == null) return;
+        bool ringEnabled = !settingsSession.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal);
+        var trigger = module.GetProgressGuideFloatTrigger(shownProgressApprovals, shownMissedConversations, active, ringEnabled, demo, demoAntigravityGuide);
+        if (trigger == null) return;
+        trigger.Remember(shownProgressApprovals, shownMissedConversations);
         if (HarnessGuideFloat.Current?.Provider == module.Provider) return;
         var appearance = island.AppearanceSource?.Current;
         bool dark = demoDark ?? appearance?.Dark ?? SettingsWindow.IsSystemDark();

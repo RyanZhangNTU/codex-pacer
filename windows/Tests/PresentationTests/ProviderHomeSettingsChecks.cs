@@ -278,16 +278,19 @@ internal static class ProviderHomeSettingsChecks
         Check(AppWindows.MainWindow([]) == null, "Without the app's processes there is no window to bring forward");
     }
 
-    internal static async Task CheckGuideFloatExample(HarnessGuideFloat shown, UiText ui, string expected)
+    internal static async Task CheckGuideFloatExample(HarnessGuideFloat shown, UiText ui, string expectedTitle)
     {
         var prompt = Find<TextBlock>(shown, "progress_guide.example");
         var button = Find<Button>(shown, "progress_guide.example.copy");
         var title = Find<TextBlock>(shown, "guide_float.title");
         var next = Find<TextBlock>(shown, "guide_float.next");
-        Check(prompt.IsVisible && button.IsVisible && prompt.Text == expected
+        string expected = ui.Text("progress_guide.plugin.example");
+        Check(title.IsVisible && title.Text == expectedTitle && prompt.IsVisible && button.IsVisible && prompt.Text == expected
+            && AutomationProperties.GetName(button) == ui.Text("progress_guide.action.copy")
             && prompt.TranslatePoint(new Point(), title).Y >= title.ActualHeight
-            && next.TranslatePoint(new Point(), prompt).Y >= prompt.ActualHeight,
-            "The floating guide must show the example between the instruction and the retry detail");
+            && (!next.IsVisible || string.IsNullOrEmpty(next.Text))
+            && !Descendants(shown).Any(value => AutomationProperties.GetAutomationId(value) == "progress_approval.picture"),
+            "The conversation float must show its title, example and Copy button without a retry detail or approval picture");
         var box = Descendants(shown).OfType<ProgressGuideExample>().Single();
         string? written = null;
         box.WriteClipboard = value => { written = value; return true; };
