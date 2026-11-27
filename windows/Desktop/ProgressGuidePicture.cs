@@ -77,25 +77,21 @@ internal static class ProgressGuidePicture
     private static DecorativeBorder ApprovalPicture(AntigravityApprovalCard card)
     {
         var content = new StackPanel();
-        var permission = new StackPanel { Orientation = Orientation.Horizontal };
-        var shield = new Path
+        var heading = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
+        var padlock = new Path
         {
-            Data = Geometry.Parse("M8,1 L14,3.5 V8 Q14,12.5 8,15 Q2,12.5 2,8 V3.5 Z M6.5,7 V6 A1.5,1.5 0 0 1 9.5,6 V7 M5.5,7 H10.5 V11 H5.5 Z"),
-            Width = 14, Height = 14, Stretch = Stretch.Uniform, StrokeThickness = 1.2, Margin = new Thickness(0, 0, 5, 0)
+            Data = Geometry.Parse("M3,6 V4 A4,4 0 0 1 11,4 V6 Q13,6 13,8 V13 Q13,15 11,15 H3 Q1,15 1,13 V8 Q1,6 3,6 Z M5,6 H9 V4 A2,2 0 0 0 5,4 Z"),
+            Width = 12, Height = 14, Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0)
         };
-        shield.SetResourceReference(Shape.StrokeProperty, "SettingsSecondary");
-        permission.Children.Add(shield);
-        var heading = Label(card.Permission, 11);
-        heading.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
-        permission.Children.Add(heading);
-        content.Children.Add(permission);
-        var title = Label(card.Title, 14, FontWeights.Bold);
-        title.Margin = new Thickness(0, 8, 0, 8);
-        content.Children.Add(title);
+        padlock.SetResourceReference(Shape.FillProperty, "SettingsPrimary");
+        heading.Children.Add(padlock);
+        heading.Children.Add(Label(card.Title, 14, FontWeights.Bold));
+        content.Children.Add(heading);
 
         var mono = new FontFamily("Consolas");
         var resource = Label(card.Resource, 11);
         resource.FontFamily = mono;
+        resource.TextTrimming = TextTrimming.CharacterEllipsis;
         var field = new Border { Child = resource, CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 6, 8, 6),
             BorderThickness = new Thickness(1), Margin = new Thickness(0, 0, 0, 8) };
         field.SetResourceReference(Border.BorderBrushProperty, "SettingsPickerStroke");
@@ -103,47 +99,88 @@ internal static class ProgressGuidePicture
         content.Children.Add(field);
 
         var rows = new StackPanel();
-        string[] choices = [card.Once, card.Conversation, card.Always, card.Deny];
+        string[] choices = [card.Once, card.Conversation, card.Always, card.No];
         for (int index = 0; index < choices.Length; index++)
         {
-            if (index > 0)
-            {
-                var divider = new Border { Height = 1 };
-                divider.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator");
-                rows.Children.Add(divider);
-            }
-            var row = new Grid();
+            bool selected = index == 2;
+            var row = new Grid { Margin = new Thickness(0, index == 0 ? 0 : 2, 0, 0) };
             AutomationProperties.SetAutomationId(row, "progress_approval.row" + (index + 1));
             var cells = new DockPanel { Margin = new Thickness(8, 5, 8, 5) };
             var number = Label((index + 1).ToString(CultureInfo.InvariantCulture), 11);
             number.FontFamily = mono;
-            number.HorizontalAlignment = HorizontalAlignment.Center;
+            number.Margin = new Thickness(0, 0, 10, 0);
             number.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
-            var badge = new Border { Width = 20, Height = 20, CornerRadius = new CornerRadius(5), Child = number, Margin = new Thickness(0, 0, 8, 0) };
-            badge.SetResourceReference(Border.BackgroundProperty, "SettingsButton");
-            cells.Children.Add(badge);
+            cells.Children.Add(number);
             var choice = Label(choices[index], 12);
-            choice.TextWrapping = TextWrapping.Wrap;
+            choice.TextTrimming = TextTrimming.CharacterEllipsis;
+            choice.SetResourceReference(TextBlock.ForegroundProperty, selected ? "SettingsPrimary" : "SettingsSecondary");
             cells.Children.Add(choice);
-            row.Children.Add(cells);
-            if (index == 2)
+            if (index == 3) cells.Children.Add(ApprovalFooter(card));
+            if (selected)
             {
-                var ring = new Border { CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(2), IsHitTestVisible = false };
-                ring.SetResourceReference(Border.BorderBrushProperty, "SettingsAccent");
-                ring.SetResourceReference(FrameworkElement.StyleProperty, "ApprovalPictureRing");
-                AutomationProperties.SetAutomationId(ring, "progress_approval.ring");
-                row.Children.Add(ring);
+                var fill = new Border { CornerRadius = new CornerRadius(7), Child = cells };
+                fill.SetResourceReference(Border.BackgroundProperty, "SettingsTileStroke");
+                row.Children.Add(fill);
+                row.Children.Add(ApprovalRing("progress_approval.ring", 7));
             }
+            else row.Children.Add(cells);
             rows.Children.Add(row);
         }
-        var group = new Border { Child = rows, CornerRadius = new CornerRadius(9) };
-        group.SetResourceReference(Border.BackgroundProperty, "SettingsFill");
-        content.Children.Add(group);
+        content.Children.Add(rows);
         var frame = new DecorativeBorder { Child = content, CornerRadius = new CornerRadius(18), MaxWidth = 420,
-            Padding = new Thickness(12), BorderThickness = new Thickness(1), HorizontalAlignment = HorizontalAlignment.Stretch };
+            Padding = new Thickness(12), BorderThickness = new Thickness(1), HorizontalAlignment = HorizontalAlignment.Stretch, IsHitTestVisible = false };
         AutomationProperties.SetAutomationId(frame, "progress_approval.picture");
         frame.SetResourceReference(Border.BackgroundProperty, "SettingsTile");
         frame.SetResourceReference(Border.BorderBrushProperty, "SettingsPickerStroke");
         return frame;
+    }
+
+    private static Grid ApprovalFooter(AntigravityApprovalCard card)
+    {
+        var footer = new Grid { Margin = new Thickness(10, 0, 0, 0) };
+        footer.ColumnDefinitions.Add(new ColumnDefinition());
+        footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var hint = Label(card.NoHint, 12);
+        hint.Margin = new Thickness(0, 0, 8, 0);
+        hint.TextTrimming = TextTrimming.CharacterEllipsis;
+        hint.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+        hint.Opacity = 0.85;
+        footer.Children.Add(hint);
+
+        var actions = new StackPanel { Orientation = Orientation.Horizontal };
+        var microphone = new Path
+        {
+            Data = Geometry.Parse("M5,7 V4 A2,2 0 0 1 9,4 V7 A2,2 0 0 1 5,7 Z M3,7 A4,4 0 0 0 11,7 M7,11 V14 M5,14 H9"),
+            Width = 11, Height = 13, Stretch = Stretch.Uniform, StrokeThickness = 1.3, StrokeLineJoin = PenLineJoin.Round,
+            StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, VerticalAlignment = VerticalAlignment.Center
+        };
+        microphone.SetResourceReference(Shape.StrokeProperty, "SettingsSecondary");
+        actions.Children.Add(microphone);
+        var skip = Label(card.Skip, 12);
+        skip.Margin = new Thickness(10, 0, 10, 0);
+        skip.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+        actions.Children.Add(skip);
+
+        var label = Label(card.Submit + " ↵", 12, FontWeights.SemiBold);
+        label.Foreground = Brushes.White;
+        var capsule = new Border { Child = label, Background = new SolidColorBrush(Color.FromRgb(33, 92, 194)),
+            CornerRadius = new CornerRadius(14), Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(2) };
+        AutomationProperties.SetAutomationId(capsule, "progress_approval.submit");
+        var submit = new Grid();
+        submit.Children.Add(capsule);
+        submit.Children.Add(ApprovalRing("progress_approval.submit_ring", 14));
+        actions.Children.Add(submit);
+        Grid.SetColumn(actions, 1);
+        footer.Children.Add(actions);
+        return footer;
+    }
+
+    private static Border ApprovalRing(string id, double radius)
+    {
+        var ring = new Border { CornerRadius = new CornerRadius(radius), BorderThickness = new Thickness(2), IsHitTestVisible = false };
+        ring.SetResourceReference(Border.BorderBrushProperty, "SettingsAccent");
+        ring.SetResourceReference(FrameworkElement.StyleProperty, "ApprovalPictureRing");
+        AutomationProperties.SetAutomationId(ring, id);
+        return ring;
     }
 }

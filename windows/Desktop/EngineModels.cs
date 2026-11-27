@@ -163,7 +163,8 @@ internal sealed record HarnessProgressGuide(string Stage, string Chip, string To
     string? WaitingText = null, string? Picture = null, string? FloatTitle = null, string? FloatNext = null,
     string? FloatPicture = null, AntigravityApprovalCard? ApprovalCard = null, string? Example = null);
 internal sealed record PendingGuideFloat(string Title, string Next);
-internal sealed record AntigravityApprovalCard(string Permission, string Title, string Resource, string Once, string Conversation, string Always, string Deny);
+internal sealed record AntigravityApprovalCard(string Permission, string Title, string Resource, string Once, string Conversation,
+    string Always, string Deny, string No, string NoHint, string Skip, string Submit);
 internal sealed record HarnessProgressStep(string Title, string State, string? Detail = null);
 internal sealed record EngineGroupOption(string Id, string Label);
 internal sealed record EngineQuotaGroups(string DefaultsKey, string Title, IReadOnlyList<EngineGroupOption> Options, string Selected);

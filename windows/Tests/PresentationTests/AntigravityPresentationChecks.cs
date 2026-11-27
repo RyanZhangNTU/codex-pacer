@@ -164,22 +164,61 @@ internal static class AntigravityPresentationChecks
 
     private static readonly AntigravityApprovalCard EnglishCard = new("Permission", "Allow using this MCP tool?",
         "codex-pacer_pacer_progress/report_progress", "Yes, allow this time", "Yes, and always allow in this conversation",
-        "Yes, and always allow", "Deny");
+        "Yes, and always allow", "Deny", "No", "(tell the agent what to do instead)", "Skip", "Submit");
 
     private static void CheckPicture(DependencyObject parent, AntigravityApprovalCard card)
     {
         var picture = Get<DecorativeBorder>(parent, "progress_approval.picture");
         var rows = Descendants(picture).OfType<Grid>().Where(row => AutomationProperties.GetAutomationId(row).StartsWith("progress_approval.row", StringComparison.Ordinal)).ToArray();
-        Check(rows.Length == 4 && Texts(picture).Take(3).SequenceEqual([card.Permission, card.Title, card.Resource]),
-            "The permission label, title and tool target must come from the engine card");
-        string[] choices = [card.Once, card.Conversation, card.Always, card.Deny];
+        var header = Descendants(picture).OfType<TextBlock>().Take(2).ToArray();
+        Check(header.Length == 2 && header[0].Text == card.Title && header[0].FontWeight == FontWeights.Bold
+            && header[1].Text == card.Resource && header[1].FontFamily.Source == "Consolas"
+            && !Texts(picture).Any(text => text == card.Permission || text == card.Deny),
+            "The card must open with its bold title and monospaced tool target");
+        Check(rows.Length == 4 && rows[0].Parent is Panel group && group.Children.Cast<UIElement>().SequenceEqual(rows)
+            && !Descendants(picture).OfType<Separator>().Any(), "The four rows must be consecutive, without separators");
+        string[] choices = [card.Once, card.Conversation, card.Always, card.No];
         for (int index = 0; index < rows.Length; index++)
         {
-            Check(Texts(rows[index]).SequenceEqual([(index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture), choices[index]]),
-                "Each choice must follow its numbered badge in the engine's order");
-            Check((Find<Border>(rows[index], "progress_approval.ring") != null) == (index == 2), "Only the lasting grant gets a ring");
+            var row = rows[index];
+            string digit = (index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var labels = Descendants(row).OfType<TextBlock>().ToArray();
+            string[] expected = index == 3 ? [digit, card.No, card.NoHint, card.Skip, card.Submit + " ↵"] : [digit, choices[index]];
+            Check(AutomationProperties.GetAutomationId(row) == "progress_approval.row" + digit && labels.Select(label => label.Text).SequenceEqual(expected),
+                "Each numbered choice must display the engine labels in order");
+            Check(labels[0].Parent is Panel && labels[0].Background == null && labels[0].Foreground == row.FindResource("SettingsSecondary"),
+                "Row numbers must be plain grey text");
+            bool selected = index == 2;
+            Check(labels[1].Foreground == row.FindResource(selected ? "SettingsPrimary" : "SettingsSecondary"),
+                "Only the selected choice uses primary text");
+            var fill = row.Children.OfType<Border>().SingleOrDefault(border => border.Background != null);
+            var ring = Find<Border>(row, "progress_approval.ring");
+            Check(selected ? fill is { CornerRadius.TopLeft: > 0 } && fill.Background == row.FindResource("SettingsTileStroke")
+                && ring?.RenderSize == row.RenderSize : fill == null && ring == null,
+                "Only row 3 must have a rounded fill and a ring around the whole row");
         }
-        Check(!Descendants(picture).OfType<System.Windows.Controls.Primitives.ButtonBase>().Any(), "The drawing must have no buttons or radio controls");
+        var last = rows[3];
+        var hint = Descendants(last).OfType<TextBlock>().Single(label => label.Text == card.NoHint);
+        var skip = Descendants(last).OfType<TextBlock>().Single(label => label.Text == card.Skip);
+        var submit = Get<Border>(last, "progress_approval.submit");
+        var submitRing = Get<Border>(last, "progress_approval.submit_ring");
+        var mic = Descendants(last).OfType<System.Windows.Shapes.Path>().Single();
+        Rect Bounds(FrameworkElement element) => new(element.TranslatePoint(new Point(), last), element.RenderSize);
+        var no = Descendants(last).OfType<TextBlock>().Single(label => label.Text == card.No);
+        Rect[] parts = [Bounds(no), Bounds(hint), Bounds(mic), Bounds(skip), Bounds(submit)];
+        double centerY = last.ActualHeight / 2;
+        Check(hint.Opacity < skip.Opacity && parts.All(part => part.Width > 0 && part.Top <= centerY && centerY <= part.Bottom)
+            && parts.Zip(parts.Skip(1)).All(pair => pair.First.Right <= pair.Second.Left),
+            "No, its muted hint, the microphone, Skip and Submit must share the last line in that order");
+        var submitBounds = Bounds(submit);
+        var ringBounds = Bounds(submitRing);
+        Check(Texts(submit).Single() == card.Submit + " ↵" && submit.CornerRadius.TopLeft >= submit.ActualHeight / 2
+            && ringBounds.Contains(submitBounds) && Rect.Inflate(submitBounds, 3, 3).Contains(ringBounds)
+            && submitRing.Style == Get<Border>(rows[2], "progress_approval.ring").Style
+            && Descendants(picture).OfType<Border>().Count(border => border.Style == picture.FindResource("ApprovalPictureRing")) == 2,
+            "The second ring must surround just the Submit capsule");
+        Check(!picture.Focusable && !picture.IsHitTestVisible && !Descendants(picture).OfType<UIElement>().Any(element => element.Focusable)
+            && !Descendants(picture).OfType<System.Windows.Controls.Primitives.ButtonBase>().Any(), "The illustration must be decorative");
     }
 
     private static HarnessProgressGuide ConversationGuide(UiText ui, HarnessProgressGuide guide, string stage)
@@ -205,7 +244,8 @@ internal static class AntigravityPresentationChecks
             Check(Name(current) == steps[index].Title && AutomationProperties.GetItemStatus(current) == ui.Text("progress_guide.state.current"),
                 "The current plugin step must have a localized accessible state");
             CheckPicture(current, card);
-            if (index == 2) Check(!string.IsNullOrEmpty(steps[index].Detail), "The approval step must explain the next action");
+            if (index == 2) Check(steps[index].Title.Contains(card.Submit, StringComparison.Ordinal) && !string.IsNullOrEmpty(steps[index].Detail),
+                "The approval step must mention Submit and explain the grant");
             var detail = Find<TextBlock>(current, Prefix + "progress_detail");
             Check(detail?.Text == steps[index].Detail && (detail == null || detail.TextWrapping == TextWrapping.Wrap),
                 "The current step must show its complete, wrapping detail");
@@ -280,10 +320,12 @@ internal static class AntigravityPresentationChecks
     internal static async Task RunGuideFixtures(string language, bool dark)
     {
         var ui = UiText.For(language == "zh-Hans");
+        string allow = ui.Text("progress_guide.plugin.allow").Replace("%1$@", EnglishCard.Title).Replace("%2$@", EnglishCard.Always).Replace("%3$@", EnglishCard.Submit);
+        string choose = ui.Text("progress_guide.plugin.choose").Replace("%1$@", EnglishCard.Always).Replace("%2$@", EnglishCard.Submit);
         var steps = new HarnessProgressStep[] { new("Restart", "done"), new("New conversation", "done"),
-            new("Choose a grant", "current", "Why Antigravity asks.\nWhen it asks again."), new("Ready", "pending") };
+            new(allow, "current", "Why Antigravity asks.\nWhen it asks again."), new("Ready", "pending") };
         var guide = new HarnessProgressGuide("allowTool", "Setup", "attention", steps, null, null, null, true, null, true, "",
-            Picture: "antigravityApproval", FloatTitle: "Choose the lasting grant", FloatNext: steps[2].Detail,
+            Picture: "antigravityApproval", FloatTitle: choose, FloatNext: steps[2].Detail,
             FloatPicture: "antigravityApproval", ApprovalCard: EnglishCard);
         var module = new EngineModule(Provider, "enabled", true, true, ProgressConnector: true, ProgressGuide: guide);
         var conversation = ConversationGuide(ui, guide, "newConversation");
@@ -314,12 +356,14 @@ internal static class AntigravityPresentationChecks
             floating.UpdateLayout();
             CheckPicture(floating, EnglishCard);
             Check(!floating.ShowActivated && !floating.IsActive, "The approval guide must leave the foreground app active");
-            var ring = Get<Border>(floating, "progress_approval.ring");
-            ring.Resources[SystemParameters.ClientAreaAnimationKey] = true;
-            await PresentationWait.UntilAsync(() => ring.Opacity < 0.98, "The lasting grant must pulse with animations enabled");
-            ring.Resources[SystemParameters.ClientAreaAnimationKey] = false;
-            await PresentationWait.UntilAsync(() => !ring.IsEnabled && !ring.HasAnimatedProperties && ring.Opacity == 1,
-                "Reduced motion must leave a static, visible ring");
+            Check(Get<TextBlock>(floating, "guide_float.title").Text == choose, "The float must display the instruction to select and submit");
+            var picture = Get<DecorativeBorder>(floating, "progress_approval.picture");
+            Border[] rings = [Get<Border>(picture, "progress_approval.ring"), Get<Border>(picture, "progress_approval.submit_ring")];
+            picture.Resources[SystemParameters.ClientAreaAnimationKey] = true;
+            await PresentationWait.UntilAsync(() => rings.All(ring => ring.Opacity < 0.98), "Both rings must pulse with animations enabled");
+            picture.Resources[SystemParameters.ClientAreaAnimationKey] = false;
+            await PresentationWait.UntilAsync(() => rings.All(ring => !ring.IsEnabled && !ring.HasAnimatedProperties && ring.Opacity == 1),
+                "Reduced motion must leave both rings visible and still");
             floating.Update(module with { ProgressGuide = ConversationGuide(ui, guide, "conversationMissedTool") }, false, DateTime.UtcNow);
             floating.UpdateLayout();
             await ProviderHomeSettingsChecks.CheckGuideFloatExample(floating, ui, ui.Text("progress_guide.plugin.conversation_missed_tool"));

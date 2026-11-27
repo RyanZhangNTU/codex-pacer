@@ -45,8 +45,15 @@ internal static class GuideControlChecks
     }
     private static void CheckProgressGuideFloat()
     {
+        var card = JsonSerializer.Deserialize<AntigravityApprovalCard>("""
+            {"permission":"Permission","title":"Allow using this MCP tool?","resource":"codex-pacer_pacer_progress/report_progress",
+             "once":"Yes, allow this time","conversation":"Yes, and always allow in this conversation","always":"Yes, and always allow",
+             "deny":"Deny","no":"No","noHint":"(tell the agent what to do instead)","skip":"Skip","submit":"Submit"}
+            """, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        Check(card is { No: "No", NoHint: "(tell the agent what to do instead)", Skip: "Skip", Submit: "Submit", Permission: "Permission", Deny: "Deny" },
+            "The desktop must decode both the docked card labels and the legacy wire fields");
         var guide = new HarnessProgressGuide("allowTool", "Setup", "attention", [], null, null, null, true, null, true, "",
-            FloatPicture: "antigravityApproval");
+            FloatPicture: "antigravityApproval", ApprovalCard: card);
         var module = new EngineModule("antigravity", "enabled", true, true, ProgressGuide: guide, ProgressApprovals: ["a", "b"]);
         var shownApprovals = new HashSet<string>(StringComparer.Ordinal);
         var shownMisses = new HashSet<string>(StringComparer.Ordinal);

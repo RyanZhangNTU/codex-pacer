@@ -354,7 +354,15 @@ final class WindowsAntigravityTests: XCTestCase {
             XCTAssertEqual(module.progressApprovals, index == 2 ? ["demo-progress-approval"] : [])
             XCTAssertEqual(guide.floatPicture, index == 2 ? .antigravityApproval : nil)
             XCTAssertEqual(guide.picture, index == 3 ? nil : .antigravityApproval)
-            XCTAssertEqual(guide.approvalCard?.always, index == 3 ? nil : "Yes, and always allow")
+            if stage == .ready {
+                XCTAssertNil(guide.approvalCard)
+            } else {
+                let card = try XCTUnwrap(guide.approvalCard)
+                XCTAssertEqual(card.choices, ["Yes, allow this time", "Yes, and always allow in this conversation", "Yes, and always allow", "No"])
+                XCTAssertEqual(card.noHint, "(tell the agent what to do instead)")
+                XCTAssertEqual(card.skip, "Skip")
+                XCTAssertEqual(card.submit, "Submit")
+            }
             if stage == .conversationMissedTool {
                 XCTAssertEqual(module.missedProgressConversation?.id, "demo-missed-conversation")
                 XCTAssertEqual(module.missedProgressConversation?.firstInputAt, date)
@@ -373,7 +381,15 @@ final class WindowsAntigravityTests: XCTestCase {
             } else {
                 XCTAssertNil(guide.example)
             }
-            if index == 2 { XCTAssertNotNil(guide.steps.first { $0.state == .current }?.detail) }
+            if stage == .allowTool {
+                let step = try XCTUnwrap(guide.steps.first { $0.state == .current })
+                XCTAssertNotNil(step.detail)
+                for title in [step.title, try XCTUnwrap(guide.floatTitle)] {
+                    let choice = try XCTUnwrap(title.range(of: "Yes, and always allow"))
+                    let submit = try XCTUnwrap(title.range(of: "Submit"))
+                    XCTAssertLessThan(choice.upperBound, submit.lowerBound)
+                }
+            }
         }
         await runtime.stop()
     }
