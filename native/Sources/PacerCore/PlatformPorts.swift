@@ -2,14 +2,24 @@ import Foundation
 
 /// System facts and IO only. Callers retain limits, validation and lifecycle policy.
 public protocol PlatformFileSystem: Sendable {
+    func resolvedDirectory(_ url: URL) -> URL
     func metadata(_ url: URL, followingSymbolicLinks: Bool) -> PlatformFileMetadata?
     func read(_ url: URL, offset: UInt64, maximumBytes: Int) throws -> Data
     func replace(_ url: URL, with data: Data) -> Bool
     /// Lists non-hidden entries; callers own validation, sorting and limits.
     func entries(in directory: URL) throws -> [URL]
+    func entries(in directory: URL, maximum: Int) throws -> [URL]
 }
 
 extension PlatformFileSystem {
+    public func resolvedDirectory(_ url: URL) -> URL { url.resolvingSymlinksInPath() }
+
+    public func entries(in directory: URL, maximum: Int) throws -> [URL] {
+        let entries = try entries(in: directory)
+        guard entries.count <= maximum else { throw CocoaError(.fileReadTooLarge) }
+        return entries
+    }
+
     /// Describes the directory entry itself, including a symbolic link.
     public func metadata(_ url: URL) -> PlatformFileMetadata? {
         metadata(url, followingSymbolicLinks: false)

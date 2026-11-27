@@ -30,6 +30,7 @@ struct TaskRowView: View {
     private var status: String { presentation.status }
     private var subagents: Int { presentation.subagents }
     private var subagentText: String {
+        if activity.provider.opensApplicationForTasks { return activity.provider.taskOpenLabel }
         if activity.claudeCloud != nil { return L10n.text("claude.cloud.workers_help", subagents) }
         return L10n.text(subagents == 1 ? "activity.subagent_running" : "activity.subagents_running", subagents)
     }
@@ -42,7 +43,7 @@ struct TaskRowView: View {
         L10n.text("performance.first_output", activity.firstTokenLatency.map { String(format: "%.1f s", $0) } ?? "—")
     }
     private var performanceText: String {
-        let speed = rate.map { String(format: "%.1f t/s", $0.value) } ?? L10n.text("performance.awaiting_usage")
+        let speed = rate.map { String(format: "%.1f t/s", $0.value) } ?? (phase == .running ? L10n.text("performance.awaiting_usage") : "—")
         // A cloud run's first output is only known when its turn ends.
         return activity.claudeCloud != nil && phase == .running ? speed : speed + "  ·  " + latencyText
     }
@@ -226,12 +227,12 @@ struct TaskRowView: View {
                 Text(presentation.rateText ?? "").font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(rate.isFresh && !dimmed ? PacerPalette.primary : PacerPalette.secondary)
                 Text(" t/s").font(.system(size: 10, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
-            } else if showsRate, activity.claudeCloud == nil {
+            } else if showsRate, activity.claudeCloud == nil, phase == .running {
                 Text(L10n.text("performance.awaiting_usage")).font(.system(size: 11, weight: .medium))
                     .foregroundStyle(PacerPalette.tertiary)
             }
             if showTime, let turnTime, options.shows(.turnTime) {
-                if showsRate, rate != nil || activity.claudeCloud == nil {
+                if showsRate, rate != nil || (activity.claudeCloud == nil && phase == .running) {
                     Text(" · ").font(.system(size: 11, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
                 }
                 Text(turnTime).font(.system(size: 11, weight: .medium))

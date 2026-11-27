@@ -32,16 +32,16 @@ struct TaskPagerView: View {
         model.panelOptions.shows(.subagents) ? SubagentList.height(row.subagentLines.count, folded: row.foldedSubagents != nil) : 0
     }
 
-    var header: some View {
+    func header(on currentPage: Int) -> some View {
         IslandSectionHeader(title: L10n.text("layout.group.tasks", language: language), detail: model.taskPresentation.taskCountText) {
             if pagination.isPaginated {
                 HStack(spacing: 2) {
-                    pageButton(delta: -1, symbol: "chevron.left", title: L10n.text("activity.previous_page"))
+                    pageButton(delta: -1, enabled: currentPage > 0, symbol: "chevron.left", title: L10n.text("activity.previous_page"))
                     Text("\(currentPage + 1) / \(pagination.pageCount)")
                         .font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(PacerPalette.secondary)
                         .frame(minWidth: 30)
                         .accessibilityLabel(L10n.text("activity.page_number", currentPage + 1, pagination.pageCount))
-                    pageButton(delta: 1, symbol: "chevron.right", title: L10n.text("activity.next_page"))
+                    pageButton(delta: 1, enabled: currentPage + 1 < pagination.pageCount, symbol: "chevron.right", title: L10n.text("activity.next_page"))
                 }
                 if actions {
                     Rectangle().fill(PacerPalette.hairline).frame(width: 1, height: 14).padding(.horizontal, 4).accessibilityHidden(true)
@@ -55,7 +55,7 @@ struct TaskPagerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            header
+            header(on: currentPage)
             ForEach(model.progressGuideHints, id: \.provider) { hint in
                 ProgressGuideHint(text: hint.summary, language: language,
                                   open: { model.openSettings(for: hint.provider) },
@@ -107,8 +107,7 @@ struct TaskPagerView: View {
         }
     }
 
-    private func pageButton(delta: Int, symbol: String, title: String) -> some View {
-        let enabled = delta < 0 ? currentPage > 0 : currentPage + 1 < pagination.pageCount
+    private func pageButton(delta: Int, enabled: Bool, symbol: String, title: String) -> some View {
         return Button { changePage(delta) } label: {
             Image(systemName: symbol)
                 .font(.system(size: 10, weight: .semibold))

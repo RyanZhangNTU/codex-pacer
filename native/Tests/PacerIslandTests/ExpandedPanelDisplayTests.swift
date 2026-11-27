@@ -138,8 +138,8 @@ final class ExpandedPanelDisplayTests: XCTestCase {
         let both = try await subagentWidth("", type: wideTag, codexTask: String(repeating: "w", count: 48))
         XCTAssertEqual(both - oneTag, 120 + 4, accuracy: 1, "Each truncated tag and its gap add to the width")
 
-        let withButtons = try await measure(TaskPagerView(model: model, actions: true).header)
-        let alone = try await measure(TaskPagerView(model: model, actions: false).header)
+        let withButtons = try await measure(TaskPagerView(model: model, actions: true).header(on: 0))
+        let alone = try await measure(TaskPagerView(model: model, actions: false).header(on: 0))
         let controls = NSHostingView(rootView: IslandPanelControls(model: model).fixedSize()).fittingSize.width
         XCTAssertGreaterThanOrEqual(withButtons - alone, controls,
             "A task list below the first block keeps only its page controls")
@@ -224,14 +224,14 @@ final class ExpandedPanelDisplayTests: XCTestCase {
         let all = pane([.codex, .claude, .deepseek])
         all.toggle(.claude)
         // Services that are off keep their hidden places, so turning one on later shows its block.
-        XCTAssertEqual(saved?.blocks, [.tasks, .codex, .deepseek, .workbuddy, .workbuddyAI],
+        XCTAssertEqual(saved?.blocks, [.tasks, .codex, .deepseek, .workbuddy, .workbuddyAI, .antigravity],
                        "The first edit saves the blocks as they then appeared")
         all.shift(.deepseek, by: -1)
-        XCTAssertEqual(saved?.blocks, [.tasks, .deepseek, .codex, .workbuddy, .workbuddyAI])
+        XCTAssertEqual(saved?.blocks, [.tasks, .deepseek, .codex, .workbuddy, .workbuddyAI, .antigravity])
         all.move(.tasks, before: nil)
-        XCTAssertEqual(saved?.blocks, [.deepseek, .codex, .workbuddy, .workbuddyAI, .tasks])
+        XCTAssertEqual(saved?.blocks, [.deepseek, .codex, .workbuddy, .workbuddyAI, .antigravity, .tasks])
         all.toggle(.claude)
-        XCTAssertEqual(saved?.blocks, [.claude, .deepseek, .codex, .workbuddy, .workbuddyAI, .tasks],
+        XCTAssertEqual(saved?.blocks, [.claude, .deepseek, .codex, .workbuddy, .workbuddyAI, .antigravity, .tasks],
                        "An added block goes before the first that usually follows it")
 
         XCTAssertEqual(SettingsExpandedPanelPane.rows([.tasks, .codex, .claude, .deepseekSpend, .deepseek], arrange: .pair),

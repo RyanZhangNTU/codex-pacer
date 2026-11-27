@@ -93,7 +93,10 @@ struct ChildTaskLine: View {
                             Text(rate + " t/s").fontWeight(.semibold)
                                 .foregroundStyle(active && fresh ? PacerPalette.primary : PacerPalette.secondary)
                         }
-                        if let status { Text(status).foregroundStyle(statusInk ?? PacerPalette.secondary) }
+                        if let status {
+                            if rate != nil { Text(" · ") }
+                            Text(status).foregroundStyle(statusInk ?? PacerPalette.secondary)
+                        }
                         if showTime, let time {
                             if rate != nil || status != nil { Text(" · ") }
                             Text(time)

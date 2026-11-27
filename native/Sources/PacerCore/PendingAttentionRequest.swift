@@ -19,13 +19,15 @@ public struct PendingAttentionRequest: Equatable, Sendable, Identifiable {
     public let sourceHostID: String?
     public let sourceName: String?
     public let kind: Kind
+    /// True only for a pending call to Pacer’s own progress tool.
+    package var requestsProgressApproval = false
     public let detectedAt: Date
     /// Hashed thread/turn/call identity shared by local Codex async-question sources.
     public let questionKey: String?
     /// Lets a waiting cloud Project task open before its row has been listed.
     public let claudeCloud: ClaudeCloudContext?
     /// A question recovered from an existing cloud snapshot can show without a new alert.
-    public let suppressesNotice: Bool
+    public private(set) var suppressesNotice: Bool
     public init(id: String, threadID: String, sourceHostID: String?, sourceName: String?, kind: Kind, detectedAt: Date, provider: AgentProvider = .codex,
                 questionKey: String? = nil, claudeCloud: ClaudeCloudContext? = nil, suppressesNotice: Bool = false) {
         self.id = id; self.threadID = threadID; self.sourceHostID = sourceHostID
@@ -42,7 +44,8 @@ public struct PendingAttentionRequest: Equatable, Sendable, Identifiable {
     }
 
     func suppressingNotice() -> Self {
-        .init(id: id, threadID: threadID, sourceHostID: sourceHostID, sourceName: sourceName, kind: kind,
-              detectedAt: detectedAt, provider: provider, questionKey: questionKey, claudeCloud: claudeCloud, suppressesNotice: true)
+        var request = self
+        request.suppressesNotice = true
+        return request
     }
 }

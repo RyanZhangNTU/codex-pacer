@@ -1,7 +1,7 @@
 import Foundation
 
 package enum LocalHarnessProgressStatus: String, Codable, Sendable {
-    case settingUp, configured, missingHome, conflict, failed
+    case settingUp, configured, missingHome, conflict, failed, removalPending
 }
 
 package enum LocalHarnessProgressConnection: String, Codable, Sendable {
@@ -33,18 +33,35 @@ package enum LocalHarnessProgressSetup {
     package typealias ConnectionReader = @Sendable (URL, String, [String], any ClaudeHookStorage) -> LocalHarnessProgressConnection
 
     package struct Target: Equatable, Sendable {
-        let home: URL
+        package let pluginProfile: URL?
+        package let home: URL
         let configFile: String
         let ruleDirectory: String?
         let reporter: String
         let enabled: Bool
 
         package init(home: URL, configFile: String, reporter: String, enabled: Bool, ruleDirectory: String? = nil) {
+            self.pluginProfile = nil
             self.home = home; self.configFile = configFile; self.reporter = reporter; self.enabled = enabled; self.ruleDirectory = ruleDirectory
         }
+
+        package init(pluginProfile: URL, reporter: String, enabled: Bool) {
+            self.pluginProfile = pluginProfile
+            self.home = pluginProfile.appendingPathComponent(".gemini/config", isDirectory: true)
+            self.configFile = "mcp_config.json"
+            self.ruleDirectory = nil
+            self.reporter = reporter
+            self.enabled = enabled
+        }
+
+        var nativeCommand: CodexProgressCommand {
+            .init(executable: URL(fileURLWithPath: reporter),
+                  arguments: [TaskProgressReporter.localHarnessArgument, managedArgument, flag(home).path])
+        }
+
     }
 
-    static let on = Data("on\n".utf8)
+    package static let on = Data("on\n".utf8)
     package static let managedArgument = "--pacer-progress-flag"
     private static let limit = 256 * 1024
     private static let server = CodexProgressEvidence.server
@@ -103,10 +120,26 @@ package enum LocalHarnessProgressSetup {
     }
 
     package static func sync(_ ticket: ProgressSetupQueue<Target>.Ticket, storage: any ClaudeHookStorage,
-                             connection: ConnectionReader? = nil, inspectOnly: Bool = false,
+                             connection: ConnectionReader? = nil, inspectOnly: Bool = false, reportAt: Date? = nil,
                              prepare: (@Sendable (URL) async -> CodexProgressCommand?)? = nil,
                              owns: @Sendable (String, [String], URL) -> Bool = { _, _, _ in false }) async -> State? {
         await ticket.waitForPrevious()
+        if ticket.target.pluginProfile != nil {
+            guard let storage = storage as? any ProgressPluginStorage else { return State(.failed) }
+            let plugin = AntigravityProgressPlugin(target: ticket.target, storage: storage)
+            if ticket.target.enabled, let prepare {
+                if let problem = plugin.preflight() { return problem }
+                if inspectOnly, let current = plugin.recordedCommand, owns(current.executable, current.arguments, ticket.target.home) {
+                    return plugin.sync(command: current, reportAt: reportAt)
+                }
+                guard let command = await prepare(ticket.target.home), owns(command.executable, command.arguments, ticket.target.home) else {
+                    try? plugin.revoke()
+                    return State(.failed)
+                }
+                return plugin.sync(command: command, reportAt: reportAt)
+            }
+            return plugin.sync(command: ticket.target.nativeCommand, reportAt: reportAt)
+        }
         let setup: LocalHarnessProgressStatus? = inspectOnly ? .configured : await configure(ticket, storage: storage, prepare: prepare, owns: owns)
         guard let setup else { return nil }
         let status = setup == .configured ? connection.map { inspect(ticket.target, storage: storage, connection: $0, owns: owns) } : nil
@@ -135,6 +168,12 @@ package enum LocalHarnessProgressSetup {
                               prepared: CodexProgressCommand? = nil,
                               matchNativeReporter: Bool = false,
                               owns preparedReporter: (String, [String], URL) -> Bool = { _, _, _ in false }) -> LocalHarnessProgressStatus? {
+        if target.pluginProfile != nil {
+            guard let storage = storage as? any ProgressPluginStorage else { return .failed }
+            let plugin = AntigravityProgressPlugin(target: target, storage: storage)
+            return plugin.sync(command: prepared ?? target.nativeCommand, checkOnly: checkOnly,
+                               uninstalling: matchNativeReporter, owns: preparedReporter).map(\.setup)
+        }
         let directory = directory(target.home), flag = flag(target.home)
         guard target.enabled || storage.exists(directory) else { return nil }
         guard !target.configFile.isEmpty, !target.configFile.contains("/"), !target.configFile.contains("\\"),
@@ -142,7 +181,7 @@ package enum LocalHarnessProgressSetup {
         let config = target.home.appendingPathComponent(target.configFile)
         let rules = target.ruleDirectory.map { target.home.appendingPathComponent($0, isDirectory: true) }
         let ruleFile = rules?.appendingPathComponent("codex-pacer-progress.mdc")
-        let nativeArguments = [TaskProgressReporter.localHarnessArgument, managedArgument, flag.path]
+        let nativeArguments = target.nativeCommand.arguments
         let command = prepared?.executable ?? target.reporter, arguments = prepared?.arguments ?? nativeArguments
         let entry: [String: Any] = ["type": "stdio", "command": command, "args": arguments]
         do {

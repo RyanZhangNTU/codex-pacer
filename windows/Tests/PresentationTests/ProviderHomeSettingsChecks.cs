@@ -72,7 +72,7 @@ internal static class ProviderHomeSettingsChecks
             var progress = Find<CheckBox>(window, id + ".progress");
             Check(progress.IsEnabled && progress.IsChecked == true, "The progress ring is on by default, like the built-in services' rings");
             CheckProgressGuide(window, id);
-            await CheckGuideFloat(window, ui);
+            await CheckGuideFloat(window, ui, !dark);
             await CheckCodexHooksGuideFloat(window, ui);
             Toggle(progress);
             await PresentationWait.UntilAsync(() => progress.IsEnabled && progress.IsChecked == false
@@ -238,13 +238,12 @@ internal static class ProviderHomeSettingsChecks
     private static void Enter(Window window, TextBox field) => field.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, Key.Enter) { RoutedEvent = Keyboard.KeyDownEvent });
     /// The floating guide beside the app: the click to make, its picture and
     /// the next click, in the corner of Settings' screen, without taking focus.
-    private static async Task CheckGuideFloat(SettingsWindow settings, UiText ui)
+    internal static async Task CheckGuideFloat(SettingsWindow settings, UiText ui, bool light)
     {
         static HarnessProgressGuide Guide(string stage, string? title, string? next, string? picture) =>
-            new(stage, stage + " chip", "attention", [], null, null, null, true, "summary", true, "Why and how", Picture: picture, FloatTitle: title, FloatNext: next);
-        var drawn = new List<string>();
+            new(stage, stage + " chip", "attention", [], null, null, null, true, "summary", true, "Why and how", FloatPicture: picture, FloatTitle: title, FloatNext: next);
         var area = new System.Drawing.Rectangle(100, 80, 1600, 1000);
-        var shown = new HarnessGuideFloat("workbuddy", ui, settings.Resources, kind => { drawn.Add(kind); return new DecorativeBorder { Width = 300, Height = 40 }; }, area);
+        var shown = new HarnessGuideFloat("workbuddy", ui, settings.Resources, light, area);
         TextBlock Text(string id) => Descendants(shown).OfType<TextBlock>().First(value => AutomationProperties.GetAutomationId(value) == id);
         bool closed = false; shown.Closed += (_, _) => closed = true;
         try
@@ -256,7 +255,7 @@ internal static class ProviderHomeSettingsChecks
             Check(shown.IsVisible && shown.Topmost && !shown.IsActive && (style & 0x08000000) != 0,
                 "The guide floats above the app without taking focus");
             Check(Text("guide_float.title").Text == "Click Custom Connector" && Text("guide_float.next").Text == "Next: click Trust"
-                && drawn.SequenceEqual(["customConnector"]), "It shows the click to make, its picture and the next click");
+                && Descendants(shown).OfType<TextBlock>().Any(text => text.Text.EndsWith(ui.Text("progress_guide.trust_card.custom"), StringComparison.Ordinal)), "It shows the click to make, its picture and the next click");
             Check(Descendants(shown).OfType<TextBlock>().Any(value => value.Text == "Pacer · customConnector chip"), "Its header names Pacer and the steps left");
             var bounds = NativeBounds(handle);
             Check(Math.Abs(bounds.Right - area.Right) <= 12 && Math.Abs(bounds.Bottom - area.Bottom) <= 12 && bounds.Left >= area.Left,
@@ -264,8 +263,9 @@ internal static class ProviderHomeSettingsChecks
             shown.Present(Guide("trust", "Click Trust", "Next: start a new task", "trust"));
             await Pump();
             bounds = NativeBounds(handle);
-            Check(Text("guide_float.title").Text == "Click Trust" && drawn.SequenceEqual(["customConnector", "trust"])
-                && Math.Abs(bounds.Bottom - area.Bottom) <= 12, "The next step replaces it in place, still in the corner");
+            Check(Text("guide_float.title").Text == "Click Trust" && Descendants(shown).OfType<TextBlock>().Any(text => text.Text == ui.Text("progress_guide.trust_card.button")),
+                "The next step replaces the picture with the trust card");
+            Check(Math.Abs(bounds.Bottom - area.Bottom) <= 12, $"The resized float must stay in the corner (bottom {bounds.Bottom}, work area {area.Bottom})");
             shown.Present(Guide("firstTask", "Trusted. Start a new task.", null, null));
             await Pump();
             Check(Text("guide_float.next").Visibility == Visibility.Collapsed && !Descendants(shown).OfType<DecorativeBorder>().Any(),
@@ -277,6 +277,29 @@ internal static class ProviderHomeSettingsChecks
         finally { if (!closed) shown.Close(); }
         Check(AppWindows.MainWindow([]) == null, "Without the app's processes there is no window to bring forward");
     }
+
+    internal static async Task CheckGuideFloatExample(HarnessGuideFloat shown, UiText ui, string expectedTitle)
+    {
+        var prompt = Find<TextBlock>(shown, "progress_guide.example");
+        var button = Find<Button>(shown, "progress_guide.example.copy");
+        var title = Find<TextBlock>(shown, "guide_float.title");
+        var next = Find<TextBlock>(shown, "guide_float.next");
+        string expected = ui.Text("progress_guide.plugin.example");
+        Check(title.IsVisible && title.Text == expectedTitle && prompt.IsVisible && button.IsVisible && prompt.Text == expected
+            && AutomationProperties.GetName(button) == ui.Text("progress_guide.action.copy")
+            && prompt.TranslatePoint(new Point(), title).Y >= title.ActualHeight
+            && (!next.IsVisible || string.IsNullOrEmpty(next.Text))
+            && !Descendants(shown).Any(value => AutomationProperties.GetAutomationId(value) == "progress_approval.picture"),
+            "The conversation float must show its title, example and Copy button without a retry detail or approval picture");
+        var box = Descendants(shown).OfType<ProgressGuideExample>().Single();
+        string? written = null;
+        box.WriteClipboard = value => { written = value; return true; };
+        Invoke(button);
+        await Pump();
+        Check(written == expected && AutomationProperties.GetName(button) == ui.Text("support.share.copied") && !shown.IsActive,
+            "Invoking Copy once must copy the floating guide's prompt without activating its window");
+    }
+
     /// The guide beside Codex while the user allows Pacer's hooks: three numbered
     /// clicks and a picture of Codex's Hooks page with the pending count, then
     /// a done line once the engine sees the hooks allowed.

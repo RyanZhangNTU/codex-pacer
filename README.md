@@ -52,7 +52,7 @@ Pacer keeps an eye on every task for you, so you stay focused and get more done.
 
 ## Stop watching the terminal
 
-Codex, Claude Code, DeepSeek Harness and WorkBuddy report how much of your request is done. Each task shows it as a ring around its icon, and the collapsed bar can show the average.
+Codex, Claude Code, DeepSeek Harness, WorkBuddy and Antigravity report how much of your request is done. Each task shows it as a ring around its icon, and the collapsed bar can show the average.
 
 <img src="docs/assets/readme-rings.png" width="100%" alt="The five task states: a comet when a task has just started, an arc while it works, a moon while it waits for background work, an amber hand when it needs you, and a check when it's done">
 
@@ -76,17 +76,18 @@ Tasks on this computer, on your SSH hosts, in WSL and in Claude's cloud Projects
 <th><img src="native/Sources/PacerCore/Resources/provider-claude.png" width="32" alt=""><br>Claude&nbsp;Code</th>
 <th><img src="native/Sources/PacerCore/Resources/provider-deepseek.png" width="32" alt=""><br>DeepSeek&nbsp;Harness</th>
 <th><img src="native/Sources/PacerCore/Resources/provider-workbuddy.png" width="32" alt=""><br>WorkBuddy</th>
+<th><img src="native/Sources/PacerCore/Resources/provider-antigravity.png" width="32" alt=""><br>Antigravity</th>
 </tr>
 </thead>
 <tbody>
-<tr><td nowrap><b>Progress ring</b></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
-<tr><td nowrap><b>Alert when it needs you</b></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
-<tr><td nowrap><b>Speed and model</b></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
-<tr><td nowrap><b>Click to jump back</b></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
-<tr><td nowrap><b>Usage</b></td><td align="center">5-hour and weekly quota, pace, forecast, banked resets</td><td align="center">5-hour and weekly quota, pace, forecast</td><td align="center">Balance, today's spend by the hour, budgets</td><td align="center">Monthly and extra credits, expiry reminders</td></tr>
-<tr><td nowrap><b>Cost of each turn</b></td><td align="center">—</td><td align="center">—</td><td align="center">Estimated</td><td align="center">Credits</td></tr>
-<tr><td nowrap><b>Where tasks run</b></td><td align="center">App, CLI, SSH, WSL¹, Dot tasks</td><td align="center">App, CLI, SSH, WSL¹, cloud Projects</td><td align="center">App, CLI</td><td align="center">WorkBuddy and WorkBuddy AI</td></tr>
-<tr><td nowrap><b>Collaboration</b></td><td align="center">Called by Claude</td><td align="center">Calls Codex</td><td align="center">—</td><td align="center">—</td></tr>
+<tr><td nowrap><b>Progress ring</b></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
+<tr><td nowrap><b>Alert when it needs you</b></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
+<tr><td nowrap><b>Speed and model</b></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
+<tr><td nowrap><b>Click to jump back</b></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">Opens the app</td></tr>
+<tr><td nowrap><b>Usage</b></td><td align="center">5-hour and weekly quota, pace, forecast, banked resets</td><td align="center">5-hour and weekly quota, pace, forecast</td><td align="center">Balance, today's spend by the hour, budgets</td><td align="center">Monthly and extra credits, expiry reminders</td><td align="center">Short-term and weekly quota by model group</td></tr>
+<tr><td nowrap><b>Cost of each turn</b></td><td align="center">—</td><td align="center">—</td><td align="center">Estimated</td><td align="center">Credits</td><td align="center">—</td></tr>
+<tr><td nowrap><b>Where tasks run</b></td><td align="center">App, CLI, SSH, WSL¹, Dot tasks</td><td align="center">App, CLI, SSH, WSL¹, cloud Projects</td><td align="center">App, CLI</td><td align="center">WorkBuddy and WorkBuddy AI</td><td align="center">App</td></tr>
+<tr><td nowrap><b>Collaboration</b></td><td align="center">Called by Claude</td><td align="center">Calls Codex</td><td align="center">—</td><td align="center">—</td><td align="center">—</td></tr>
 </tbody>
 </table>
 
@@ -106,6 +107,7 @@ The welcome guide walks you through these when you first open Pacer.
 | **Claude Code** | Restart running sessions once. Sign in to Claude in Pacer's window to see quota. |
 | **DeepSeek Harness** | Sign in to the DeepSeek platform in Pacer's window, or paste an API key, to see the balance. |
 | **WorkBuddy** | Trust Pacer's progress tool in WorkBuddy; Pacer shows each click. Sign in to see credits. |
+| **Antigravity** | Allow Pacer’s progress tool in Antigravity to see task progress. |
 | **SSH hosts** | SSH without a password prompt, and Python 3 on the host. |
 
 </details>
@@ -160,7 +162,7 @@ Run the `x64` installer, or `arm64` on an ARM PC. No administrator rights needed
 > [!NOTE]
 > The Windows installer isn't code signed yet. If SmartScreen appears, choose **More info → Run anyway**.
 
-On first launch, a short guide helps you pick a layout and the agents to follow. Pacer then keeps itself up to date. You need at least one of Codex, Claude Code, DeepSeek Harness or WorkBuddy, installed and signed in. Liquid Glass needs macOS 26 or Windows 11 22H2.
+On first launch, a short guide helps you pick a layout and the agents to follow. Pacer then keeps itself up to date. You need at least one of Codex, Claude Code, DeepSeek Harness, WorkBuddy or Antigravity, installed and signed in. Liquid Glass needs macOS 26 or Windows 11 22H2.
 
 <a id="community"></a>
 

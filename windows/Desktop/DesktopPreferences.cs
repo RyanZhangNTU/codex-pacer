@@ -53,6 +53,7 @@ internal sealed record DesktopPreferences
     public string CompactSingleTask { get; init; } = "stage";
     public string CompactMetric { get; init; } = "remaining";
     public string CodexQuotaWindow { get; init; } = "auto";
+    public Dictionary<string, string> ModuleWindows { get; init; } = new();
     public string ClaudeQuotaWindow { get; init; } = "auto";
     public string QuotaRingOuter { get; init; } = "";
     public string QuotaRingInner { get; init; } = "";
@@ -192,6 +193,8 @@ internal sealed record DesktopPreferences
     public string[] DisabledHarnessProgress { get; init; } = [];
     // Modules whose task rows leave out the credits each turn used.
     public string[] HiddenTurnCredits { get; init; } = [];
+    // Selected quota bucket, keyed by the descriptor's defaults key.
+    public Dictionary<string, string> HarnessQuotaGroups { get; init; } = new();
     // Data folders chosen for local modules, by module ID.
     public Dictionary<string, string> HarnessHomes { get; init; } = new();
     // Each credits module's dial center, bar value and reminders, by module ID.
@@ -240,6 +243,7 @@ internal sealed record DesktopPreferences
         && (ExpandedPanelOptions == null || Encoding.UTF8.GetByteCount(ExpandedPanelOptions) <= PanelChoices.OptionsByteLimit)
         && BarSizes.Contains(CompactBarSize)
         && CompactSingleTask is "stage" or "count" or "percent" && CompactMetric is "remaining" or "pace"
+        && ModuleWindows is { Count: <= 128 } && ModuleWindows.All(pair => ValidProviderId(pair.Key) && pair.Value is "auto" or "5h" or "7d")
         && ValidWindow(CodexQuotaWindow) && ValidWindow(ClaudeQuotaWindow)
         && ValidRing(QuotaRingOuter) && ValidRing(QuotaRingInner)
         && DeepSeekPanelStyle is "simple" or "detailed" && DeepSeekMode is "balance" or "budget"
@@ -260,6 +264,7 @@ internal sealed record DesktopPreferences
         && SshHostsOff.Distinct(StringComparer.Ordinal).Count() == SshHostsOff.Length
         && ProviderModes.All(pair => ValidProviderId(pair.Key) && ValidProviderMode(pair.Value))
         && ValidModuleList(DisabledHarnessProgress, legacy: false) && ValidModuleList(HiddenTurnCredits, legacy: true)
+        && HarnessQuotaGroups is { Count: <= 128 } && HarnessQuotaGroups.All(pair => pair.Key.Length is > 0 and <= 128 && pair.Value is { Length: > 0 and <= 64 })
         && HarnessHomes is { Count: <= 128 } && HarnessHomes.All(pair => ValidProviderId(pair.Key) && !IsLegacyProvider(pair.Key) && ValidPath(pair.Value))
         && HarnessCredits is { Count: <= 128 } && HarnessCredits.All(pair => ValidProviderId(pair.Key) && !IsLegacyProvider(pair.Key) && pair.Value is { IsValid: true });
 
@@ -345,6 +350,7 @@ internal sealed record DesktopPreferences
             deepseekProgressRing = DeepSeekProgressRing,
             disabledHarnessProgress = DisabledHarnessProgress,
             hiddenTurnCredits = HiddenTurnCredits,
+            harnessQuotaGroups = HarnessQuotaGroups,
             harnessHomes = HarnessHomes,
             harnessCredits = HarnessCredits.ToDictionary(pair => pair.Key, pair => new
             {

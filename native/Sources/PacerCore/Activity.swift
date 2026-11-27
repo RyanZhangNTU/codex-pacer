@@ -44,6 +44,14 @@ public struct SubagentDisplay: Equatable, Sendable {
         return text.isEmpty ? nil : text
     }
 
+    init(role: String?, typeName: String?) {
+        title = Self.text(role, limit: 120)
+        let type = Self.text(typeName, limit: 48)
+        typeTag = type == "self" ? nil : type
+        nameTag = nil
+        titleFollowsState = title == nil
+    }
+
     init(claudeType: String?, description: String?) {
         let type = Self.text(claudeType, limit: 48)
         typeTag = type == "general-purpose" ? nil : type
@@ -305,6 +313,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     }
     /// When the oldest tool still running in this turn started.
     public private(set) var toolWaitStartedAt: Date?
+    mutating func observeToolStart(_ date: Date?) {
+        if phase == .running, stage == .tool { toolWaitStartedAt = date }
+    }
     mutating func applySubagentEvidence(_ evidence: SubagentEvidence) {
         guard !hasLiveEvidence, !isInternalReview, threadID != evidence.parentThreadID,
               parentThreadID == nil || parentThreadID == evidence.parentThreadID else { return }
@@ -393,7 +404,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         return OutputEstimate(value: sample.value, reportedAt: sample.reportedAt, isFresh: fresh)
     }
     /// A subagent's speed counts toward its task while fresh or while it is
-    /// writing; a finished or tool-bound one adds nothing.
+    /// writing. Callers exclude children that have finished.
     func contributesLiveRate(_ estimate: OutputEstimate) -> Bool {
         estimate.isFresh || (phase == .running && [.thinking, .responding].contains(stage))
     }

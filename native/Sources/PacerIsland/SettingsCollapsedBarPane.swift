@@ -196,6 +196,11 @@ struct SettingsCollapsedBarPane: View {
     @ViewBuilder private var windowPickers: some View {
         if providers.contains(.codex) { quotaWindowPicker(.codex, selection: $windowID) }
         if providers.contains(.claude) { quotaWindowPicker(.claude, selection: $claudeWindowID) }
+        ForEach(providers.filter { ![.codex, .claude].contains($0) && HarnessRegistry.descriptor(for: $0)?.hasQuotaWindows == true }) { provider in
+            quotaWindowPicker(provider, selection: Binding(
+                get: { model.defaults.string(forKey: QuotaWindowSelection.defaultsKey(for: provider)) ?? "auto" },
+                set: { model.setQuotaPreference($0, key: QuotaWindowSelection.defaultsKey(for: provider)) }))
+        }
     }
 
     /// Which of the provider's limits the bar shows, 5 hours or 7 days. An

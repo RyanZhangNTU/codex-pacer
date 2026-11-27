@@ -25,7 +25,7 @@ struct EngineNotificationRegistry {
     static func validReference(_ value: String) -> Bool {
         value.utf8.count == 32 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
     }
-    static func validKind(_ value: String) -> Bool { ["showIsland", "openTask", "topUp", "openHarness", "snoozeSpike", "openCodexSettings"].contains(value) }
+    static func validKind(_ value: String) -> Bool { ["showIsland", "openTask", "topUp", "openHarness", "openAntigravity", "snoozeSpike", "openCodexSettings"].contains(value) }
     private static func valid(_ value: Record, at now: Date) -> Bool {
         validReference(value.reference) && validKind(value.kind) &&
             ["local", "cloud", "quota", "wallet", DurableActivityCatalog.hostID].contains(value.scope) && value.source.utf8.count == 64 &&

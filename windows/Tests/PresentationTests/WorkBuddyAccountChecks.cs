@@ -124,8 +124,11 @@ internal static class WorkBuddyAccountChecks
         await using var engine = new EngineClient();
         var choices = new DesktopPreferences
         {
-            LastSettingsPane = "overview", MonitorSSH = false,
-            ProviderModes = new() { ["codex"] = "disabled", ["claude"] = "disabled", ["deepseek"] = "disabled", ["workbuddy"] = "enabled", ["workbuddy-ai"] = "disabled" }
+            LastSettingsPane = "overview", MonitorSSH = false, ShowInFullscreen = true,
+            CodexHome = Path.Combine(root, "codex"), ClaudeHome = Path.Combine(root, "claude"), DeepseekHome = Path.Combine(root, "deepseek"),
+            HarnessHomes = new() { ["workbuddy"] = Path.Combine(root, "workbuddy") },
+            ProviderModes = new() { ["codex"] = "disabled", ["claude"] = "disabled", ["deepseek"] = "disabled",
+                ["workbuddy"] = "enabled", ["workbuddy-ai"] = "disabled", ["antigravity"] = "disabled" }
         };
         var preferences = new PreferencesSession(choices, value => engine.SendAsync("configure", value), _ => true);
         var settings = new SettingsWindow(ui, preferences, new DemoStartupRegistration(), true, engine: engine, harnessAccounts: accounts)
@@ -137,7 +140,7 @@ internal static class WorkBuddyAccountChecks
         const string prefix = "settings.workbuddy";
         try
         {
-            settings.Show(); island.Show();
+            island.ApplyPreferences(choices); settings.Show(); island.Show();
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), false, "en",
                 configuration: choices.EngineConfiguration(), readOnlyDiagnostics: true);
             await PresentationWait.UntilAsync(() => engine.LatestSnapshot?.Modules?.Any(m => m is { Provider: "workbuddy", Enabled: true, ReportsAccountCredits: true }) == true,
@@ -262,8 +265,12 @@ internal static class WorkBuddyAccountChecks
             string[] providers = ["codex", "claude", "deepseek", "workbuddy"];
             await PresentationWait.CommandSnapshotAsync(engine, "configure", (choices with
             {
-                ProviderModes = providers.ToDictionary(id => id, _ => "enabled")
+                ProviderModes = engine.LatestSnapshot!.Modules!.ToDictionary(m => m.Provider, m => providers.Contains(m.Provider) ? "enabled" : "disabled")
             }).EngineConfiguration());
+            await PresentationWait.UntilAsync(() => engine.LatestSnapshot?.ExpandedPanel?.Sections.Any(s => s.Providers.SequenceEqual(providers)) == true,
+                "The engine must publish the four selected services");
+            ulong groupedSequence = engine.LatestSnapshot!.Sequence;
+            await PresentationWait.UntilAsync(() => island.RenderedSequence >= groupedSequence, "The island must render the four-service snapshot");
             await island.WaitForPresentationAsync();
             var section = engine.LatestSnapshot!.ExpandedPanel!.Sections.Single(s => s.Kind == "quota");
             Check(section.Providers.SequenceEqual(providers) && section.Split?.Columns == 2 && section.Classic?.Columns == 2,
@@ -277,10 +284,10 @@ internal static class WorkBuddyAccountChecks
                 var dial = Require<QuotaDial>(group, readout);
                 var images = Descendants(group).OfType<Image>().Select(image => image.Source).ToArray();
                 var dials = Descendants(group).OfType<QuotaDial>().Where(item => item.IsVisible).ToArray();
-                Check(dial.AccessibleName.Contains(monthly, StringComparison.Ordinal) && dials.Length == 4 &&
-                    providers.All(id => ProviderIcon.Source(id) is { } icon && images.Contains(icon)),
-                    "Each service in the shared section must have a dial and its official icon: " + style + ", " + dial.AccessibleName + ", " + dials.Length
-                    + " dials, no icon for " + string.Join("/", providers.Where(id => ProviderIcon.Source(id) is not { } icon || !images.Contains(icon))));
+                Check(dial.AccessibleName.Contains(monthly, StringComparison.Ordinal), $"{style}: expected {monthly} monthly credits, got {dial.AccessibleName}");
+                Check(dials.Length == providers.Length, $"{style}: expected four visible dials, got {dials.Length}; section visible={group.IsVisible}");
+                var missingIcons = providers.Where(id => ProviderIcon.Source(id) is not { } icon || !images.Contains(icon)).ToArray();
+                Check(missingIcons.Length == 0, $"{style}: missing provider artwork for {string.Join(", ", missingIcons)}");
                 var origins = dials.Select(item => item.TranslatePoint(new Point(), group)).ToArray();
                 Check(Math.Abs(origins[0].X - origins[2].X) < 1 && Math.Abs(origins[1].X - origins[3].X) < 1 &&
                     origins[2].Y > origins[0].Y && origins[3].Y > origins[1].Y,

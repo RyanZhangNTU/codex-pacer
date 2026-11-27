@@ -60,7 +60,8 @@ internal abstract class GuideFloatWindow : Window
         card.SetResourceReference(Border.BackgroundProperty, "SettingsBackground"); card.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");
         Content = card;
         SourceInitialized += (_, _) => NativeWindowBounds.MakeNonActivating(this);
-        SizeChanged += (_, _) => Place();
+        // SizeToContent applies the new HWND bounds after WPF's SizeChanged event.
+        SizeChanged += (_, _) => Dispatcher.InvokeAsync(() => { if (IsVisible) Place(); }, System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
     /// Shows the float the first time, in front without taking focus.
@@ -89,98 +90,106 @@ internal abstract class GuideFloatWindow : Window
     [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr window);
 }
 
-/// The floating guide beside a module's app while the user clicks through its
-/// connectors (Core's `floatTitle`): the click to make now, the card's picture
-/// of it, and the click after. It outlives Settings, which people often close
-/// once they're in the app, and checks the app itself while it is open.
+/// Shows Core's current instruction beside the provider app and keeps checking it after Settings closes.
 internal sealed class HarnessGuideFloat : GuideFloatWindow
 {
     private static HarnessGuideFloat? current;
     private static EngineClient? engine;
     private static PreferencesSession? session;
-    private static System.Windows.Threading.DispatcherTimer? poll;
     internal static HarnessGuideFloat? Current => current;
 
-    /// Opens the guide for the app the card just opened; it replaces any other.
-    /// It shows once the card reaches a click in the app.
-    internal static void Open(string provider, EngineClient client, PreferencesSession preferences, UiText ui, ResourceDictionary resources,
-        Func<string, UIElement> picture, System.Drawing.Rectangle area)
+    internal static ResourceDictionary StandaloneResources(bool dark, SystemAppearance? appearance, Color? accent)
     {
-        // A second click for the same app, such as the restart finishing, keeps the guide.
-        if (current is { } open && open.Provider == provider && engine == client) { Follow(); return; }
+        var resources = new ResourceDictionary { Source = new Uri("/CodexPacer;component/SettingsStyles.xaml", UriKind.Relative) };
+        SettingsPalette.Apply(resources, dark, true, appearance, main: true, accent);
+        return resources;
+    }
+
+    internal static void Open(EngineModule module, EngineClient client, PreferencesSession preferences, UiText ui, ResourceDictionary resources,
+        bool light, System.Drawing.Rectangle area)
+    {
+        if (module.ProgressGuide is not { } guide || (module.PendingFloat == null && guide.FloatTitle == null && guide.Stage != "ready")) return;
+        if (current is { } open && open.Provider == module.Provider && engine == client
+            && !(open.reachedApp && SettingsWindow.RestartingHarness(module.Provider)))
+        {
+            open.pending = module.PendingFloat ?? open.pending;
+            Follow();
+            return;
+        }
         current?.Close(); CodexHooksGuideFloat.Current?.Close();
-        var shown = new HarnessGuideFloat(provider, ui, resources, picture, area);
+        var shown = new HarnessGuideFloat(module.Provider, ui, resources, light, area, module.PendingFloat);
         var timer = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1.5) };
-        var openedAt = DateTime.UtcNow;
         timer.Tick += async (_, _) =>
         {
             if (current != shown) { timer.Stop(); return; }
-            // A guide left waiting on a click stops checking after ten minutes;
-            // the card in Settings still shows the step.
-            if (DateTime.UtcNow - openedAt > TimeSpan.FromMinutes(10)) { shown.Close(); return; }
-            await SettingsWindow.CheckHarnessAppAsync(client, preferences, provider, polling: true);
             Follow();
+            if (current == shown && client.LatestSnapshot is { Demo: false })
+                await SettingsWindow.CheckHarnessAppAsync(client, preferences, module.Provider, polling: true);
         };
         shown.Closed += (_, _) =>
         {
             timer.Stop();
-            if (current == shown) { current = null; poll = null; engine = null; session = null; }
+            if (current == shown) { current = null; engine = null; session = null; }
         };
-        current = shown; engine = client; session = preferences; poll = timer;
+        current = shown; engine = client; session = preferences;
         timer.Start();
         Follow();
     }
 
-    /// Shows the guide's current click, or closes the float once nothing is
-    /// left to do in the app. Until it first shows, the app may still be
-    /// starting or reloading.
     internal static void Follow()
     {
         if (current is not { } shown || engine is not { } client || session is not { } preferences) return;
-        var guide = client.LatestSnapshot?.Modules?.FirstOrDefault(value => value.Provider == shown.Provider) is { Enabled: true } module
-            && !preferences.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal) ? module.ProgressGuide : null;
-        if (client.IsConnectionClosed) { shown.Close(); return; }
-        if (guide is { FloatTitle: not null })
-        {
-            shown.emptySince = null; shown.reachedApp = true; shown.Present(guide);
-            // Once done, the guide says so briefly; the card keeps the line.
-            shown.doneSince = guide.Stage == "firstTask" ? shown.doneSince ?? DateTime.UtcNow : null;
-            if (DateTime.UtcNow - shown.doneSince >= TimeSpan.FromSeconds(8)) shown.Close();
-            return;
-        }
-        // Right after the click, the app restarts or starts; the guide says so
-        // until it reaches the first step in the app.
-        if (!shown.reachedApp && guide?.Stage is ("reopen" or "launch" or "openConnectors")
-            && DateTime.UtcNow - shown.OpenedAt <= TimeSpan.FromMinutes(2))
-        {
-            string name = client.LatestSnapshot?.Modules?.FirstOrDefault(value => value.Provider == shown.Provider)?.DisplayName ?? shown.Provider;
-            string title = shown.ui.Text(guide.Stage == "reopen" ? "progress_guide.float.restarting" : "progress_guide.float.opening").Replace("%@", name, StringComparison.Ordinal);
-            shown.Present(guide with { FloatTitle = title, FloatNext = shown.ui.Text("progress_guide.float.then_custom"), Picture = null });
-            return;
-        }
-        // A check can read the app while it writes its approvals; the guide
-        // closes only once nothing is left to do for two checks in a row.
-        shown.emptySince ??= DateTime.UtcNow;
-        if (DateTime.UtcNow - shown.emptySince.Value >= TimeSpan.FromSeconds(2.5)) shown.Close();
+        var module = client.LatestSnapshot?.Modules?.FirstOrDefault(value => value.Provider == shown.Provider);
+        if (client.IsConnectionClosed || module is not { Enabled: true }
+            || preferences.Current.DisabledHarnessProgress.Contains(shown.Provider, StringComparer.Ordinal))
+        { shown.Close(); return; }
+        shown.Update(module, SettingsWindow.RestartingHarness(shown.Provider), DateTime.UtcNow);
     }
-    private DateTime? emptySince, doneSince;
-    // The guide has shown a step from the app itself, past the restart or start.
-    private bool reachedApp;
 
-    private readonly Func<string, UIElement> picture;
+    internal void Update(EngineModule module, bool restarting, DateTime now)
+    {
+        var age = now - OpenedAt;
+        if (age >= TimeSpan.FromMinutes(10)) { Close(); return; }
+        var guide = module.ProgressGuide;
+        if ((!restarting || reachedApp) && guide != null && (guide.FloatTitle != null || guide.Stage == "ready"))
+        {
+            emptySince = null; reachedApp = true;
+            if (guide.FloatTitle == null)
+                guide = guide with { FloatTitle = ui.Text("progress_guide.float.done").Replace("%@", module.DisplayName ?? module.Provider, StringComparison.Ordinal) };
+            Present(guide);
+            doneSince = guide.Stage is "ready" or "firstTask" ? doneSince ?? now : null;
+            if (now - doneSince >= TimeSpan.FromSeconds(8)) Close();
+            return;
+        }
+        doneSince = null;
+        SetExample(null);
+        if (!reachedApp && pending is { } message && age <= TimeSpan.FromMinutes(2)
+            && (restarting || module.PendingFloat != null || guide == null))
+        {
+            Draw(guide?.Chip ?? "", message.Title, message.Next, null, null);
+            return;
+        }
+        // A read can catch the app between writes. Give its next snapshot time to arrive.
+        emptySince ??= now;
+        if (!reachedApp || now - emptySince >= TimeSpan.FromSeconds(2.5)) Close();
+    }
+
+    private DateTime? emptySince, doneSince;
+    private bool reachedApp;
+    private PendingGuideFloat? pending;
+    private readonly bool light;
     private readonly TextBlock title, next;
+    private readonly Border example = new();
     private readonly Border art;
-    private string key = "";
+    private (string Chip, string? Title, string? Next, string? Picture, AntigravityApprovalCard? Card)? last;
     internal string Provider { get; }
     internal DateTime OpenedAt { get; } = DateTime.UtcNow;
 
-    /// <param name="resources">Settings' palette, so the float and its pictures match it.</param>
-    /// <param name="picture">Draws the card's picture for a step.</param>
-    /// <param name="area">The work area of Settings' screen, in pixels.</param>
-    internal HarnessGuideFloat(string provider, UiText ui, ResourceDictionary resources, Func<string, UIElement> picture, System.Drawing.Rectangle area)
+    internal HarnessGuideFloat(string provider, UiText ui, ResourceDictionary resources, bool light, System.Drawing.Rectangle area,
+        PendingGuideFloat? pending = null)
         : base(ui, resources, area, "guide_float")
     {
-        Provider = provider; this.picture = picture;
+        Provider = provider; this.light = light; this.pending = pending;
         title = new TextBlock { FontSize = 14.5, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap };
         title.SetResourceReference(TextBlock.ForegroundProperty, "SettingsPrimary");
         AutomationProperties.SetAutomationId(title, "guide_float.title");
@@ -191,24 +200,36 @@ internal sealed class HarnessGuideFloat : GuideFloatWindow
         next.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
         AutomationProperties.SetAutomationId(next, "guide_float.next");
 
-        Body.Children.Add(title); Body.Children.Add(art); Body.Children.Add(next);
+        Body.Children.Add(title); Body.Children.Add(example); Body.Children.Add(art); Body.Children.Add(next);
     }
 
     /// Shows the guide's step, or updates it in place.
     internal void Present(HarnessProgressGuide guide)
     {
-        string shownKey = string.Join("\u0001", guide.Chip, guide.FloatTitle, guide.FloatNext, guide.Picture);
-        if (shownKey != key)
+        SetExample(guide.Stage is "ready" or "firstTask" ? null : guide.Example);
+        Draw(guide.Chip, guide.FloatTitle, guide.FloatNext, guide.FloatPicture, guide.ApprovalCard);
+    }
+
+    private void SetExample(string? text)
+    {
+        if ((example.Child as ProgressGuideExample)?.Text == text) return;
+        example.Child = text == null ? null : new ProgressGuideExample(text, ui, focusable: false) { Margin = new Thickness(0, 10, 0, 0) };
+    }
+
+    private void Draw(string chip, string? heading, string? following, string? kind, AntigravityApprovalCard? card)
+    {
+        var content = (chip, heading, following, kind, card);
+        if (last != content)
         {
-            key = shownKey;
-            Header.Text = "Pacer · " + guide.Chip;
-            title.Text = guide.FloatTitle ?? "";
-            art.Child = guide.Picture is string kind ? picture(kind) : null;
+            last = content;
+            Header.Text = "Pacer · " + chip;
+            title.Text = heading ?? "";
+            art.Child = ProgressGuidePicture.Draw(kind, card, Provider, ui, light);
             // The card's picture keeps its own width there; here it fills the float.
             if (art.Child is FrameworkElement drawn) { drawn.HorizontalAlignment = HorizontalAlignment.Stretch; drawn.MaxWidth = double.PositiveInfinity; }
             art.Visibility = art.Child == null ? Visibility.Collapsed : Visibility.Visible;
-            next.Text = guide.FloatNext ?? "";
-            next.Visibility = guide.FloatNext == null ? Visibility.Collapsed : Visibility.Visible;
+            next.Text = following ?? "";
+            next.Visibility = following == null ? Visibility.Collapsed : Visibility.Visible;
             if (Presented) UIElementAutomationPeer.FromElement(title)?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
         }
         ShowFloat();
@@ -286,7 +307,7 @@ internal static class AppWindows
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsWindowVisible(IntPtr window);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetWindowRect(IntPtr window, out NativeRect rect);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr window, System.Text.StringBuilder name, int capacity);
-    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] internal static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsIconic(IntPtr window);

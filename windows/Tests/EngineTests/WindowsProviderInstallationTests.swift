@@ -99,7 +99,7 @@ final class WindowsProviderInstallationTests: XCTestCase {
         var schemes: [String] = []
         func found(_ handlers: [String: [String]]) -> Set<AgentProvider> {
             WindowsProviderInstallation.detect(userHome: home, environment: environment, applicationURLs: nil, systemBinDirectories: [],
-                packageLocations: { _ in [] }, registeredHandlers: { scheme in schemes.append(scheme); return handlers[scheme] ?? [] })
+                packageLocations: { _ in [] }, registeredHandlers: { scheme in schemes.append(scheme); return handlers[scheme] ?? [] }, antigravityApp: { _ in nil })
                 .installed.intersection([.workbuddy, .workbuddyAI])
         }
         XCTAssertEqual(found([:]), [], "Nothing in the standard folders and no handler finds nothing")

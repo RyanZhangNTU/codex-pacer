@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace CodexPacer.Windows;
 
@@ -18,7 +20,7 @@ internal sealed record EngineSnapshot(
     string? DeepSeekProgressSetup = null, EngineExpandedPanel? ExpandedPanel = null,
     string? WslAvailability = null,
     IReadOnlyList<EngineAccountCredits>? AccountCredits = null, CodexHooks? CodexHooks = null,
-    CodexDelegationStatus? CodexDelegation = null);
+    CodexDelegationStatus? CodexDelegation = null, IReadOnlyList<EngineGroupedQuota>? GroupedQuota = null);
 /// Settings → Collaboration, the Claude → Codex pair: the switch, whether its
 /// skill is in Pacer's Claude plugin, the user-level skill it replaces, and
 /// Codex's self-check: sign-in, version, model catalog and what its own
@@ -97,11 +99,60 @@ internal sealed record EngineModule(string Provider, string Mode, bool? Installe
     string? ProgressSetup = null, string? ProgressConnection = null, bool? ReportsAccountCredits = null,
     EngineModuleBrand? Brand = null, string? Website = null, string? Balance = null, bool? Prominent = null,
     bool? Local = null, DeepSeekWeekPresentation? Week = null, EngineModuleLaunch? Launch = null,
-    HarnessProgressGuide? ProgressGuide = null, EngineStatusRow? Monitoring = null, EngineStatusRow? Account = null)
+    HarnessProgressGuide? ProgressGuide = null, EngineStatusRow? Monitoring = null, EngineStatusRow? Account = null,
+    EngineQuotaGroups? QuotaGroups = null, bool? ApplicationInstalled = null,
+    IReadOnlyList<string>? ProgressApprovals = null, PendingGuideFloat? PendingFloat = null,
+    MissedProgressConversation? MissedProgressConversation = null)
 {
     /// Found on this computer or turned on explicitly. Older engines send
     /// nothing, so their modules stay listed.
     internal bool IsProminent => Prominent ?? true;
+    internal bool? HasApplication => ApplicationInstalled ?? Installed;
+
+    internal ProgressGuideFloatTrigger? GetProgressGuideFloatTrigger(IReadOnlySet<string> shownApprovals,
+        IReadOnlySet<string> shownMisses, bool active, bool ringEnabled, bool demo, bool guideDemo)
+    {
+        if (!active || !ringEnabled || (demo && !guideDemo) || !Enabled || Provider != "antigravity"
+            || ProgressGuide is not { Stage: not "ready" } guide) return null;
+        if (guide.FloatPicture == "antigravityApproval" && ProgressApprovals is { } approvals
+            && approvals.Any(id => !shownApprovals.Contains(id))) return new(approvals, null);
+        if (guide.Stage == "conversationMissedTool" && MissedProgressConversation is { } missed
+            && !shownMisses.Contains(missed.Id)) return new([], missed.Id);
+        return null;
+    }
+
+    internal string ProgressAttentionTitle(string summary)
+    {
+        string name = DisplayName ?? Provider;
+        return summary.Contains(name, StringComparison.Ordinal) ? summary : name + " · " + summary;
+    }
+}
+internal sealed record ProgressGuideFloatTrigger(IReadOnlyList<string> ApprovalIds, string? MissedConversationId)
+{
+    internal void Remember(HashSet<string> shownApprovals, HashSet<string> shownMisses)
+    {
+        if (MissedConversationId is { } id) shownMisses.Add(id);
+        else shownApprovals.UnionWith(ApprovalIds);
+    }
+}
+internal sealed record MissedProgressConversation(string Id,
+    [property: JsonConverter(typeof(SwiftDateConverter))] DateTimeOffset FirstInputAt);
+
+// Swift's default JSONEncoder writes Date as seconds since 2001-01-01 UTC.
+internal sealed class SwiftDateConverter : JsonConverter<DateTimeOffset>
+{
+    private static readonly DateTimeOffset Epoch = new(2001, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+    public override DateTimeOffset Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options)
+    {
+        if (reader.TokenType != JsonTokenType.Number || !reader.TryGetDouble(out var seconds) || !double.IsFinite(seconds))
+            throw new JsonException("Expected seconds since the Swift reference date.");
+        try { return Epoch.AddSeconds(seconds); }
+        catch (ArgumentOutOfRangeException error) { throw new JsonException("Swift date is out of range.", error); }
+    }
+
+    public override void Write(Utf8JsonWriter writer, DateTimeOffset value, JsonSerializerOptions options) =>
+        writer.WriteNumberValue((value - Epoch).TotalSeconds);
 }
 /// A row of a module page's Status card, worded by Core: state, tone
 /// (`positive`, `neutral`, `attention`), text, a line under it and one action.
@@ -109,8 +160,14 @@ internal sealed record EngineStatusRow(string State, string Tone, string Text, s
 /// The progress ring card for a module whose app must trust Pacer's tool, worded by Core.
 internal sealed record HarnessProgressGuide(string Stage, string Chip, string Tone, IReadOnlyList<HarnessProgressStep> Steps,
     string? Line, string? Action, string? ActionTitle, bool Attention, string? Summary, bool Waiting, string Info,
-    string? WaitingText = null, string? Picture = null, string? FloatTitle = null, string? FloatNext = null);
-internal sealed record HarnessProgressStep(string Title, string State);
+    string? WaitingText = null, string? Picture = null, string? FloatTitle = null, string? FloatNext = null,
+    string? FloatPicture = null, AntigravityApprovalCard? ApprovalCard = null, string? Example = null);
+internal sealed record PendingGuideFloat(string Title, string Next);
+internal sealed record AntigravityApprovalCard(string Permission, string Title, string Resource, string Once, string Conversation,
+    string Always, string Deny, string No, string NoHint, string Skip, string Submit);
+internal sealed record HarnessProgressStep(string Title, string State, string? Detail = null);
+internal sealed record EngineGroupOption(string Id, string Label);
+internal sealed record EngineQuotaGroups(string DefaultsKey, string Title, IReadOnlyList<EngineGroupOption> Options, string Selected);
 internal sealed record EngineModuleBrand(string Dark, string Light, double AccentLift, double AccentLuminance);
 internal sealed record EngineModuleLaunch(string Scheme, string Publisher, IReadOnlyList<string> Executables, string? ConnectorsPath);
 internal sealed record HarnessUsage(int? ContextUsed, int? ContextCapacity, double? SessionCredits, double MeasuredAt);
@@ -124,7 +181,8 @@ internal sealed record LegacyQuotaWindow(string Id, string Label, double? Remain
     double? PacePercent, string ValueText, string Countdown, string ResetDate, string PaceText, string AccessibilityLabel);
 internal sealed record DashboardLayout(string Kind, IReadOnlyList<DashboardSlot> Slots, int? Columns = null);
 internal sealed record DashboardSlot(string Provider, string? Period, bool IdentifiesProvider, string Id, string Title);
-internal sealed record DashboardProvider(string Provider, DashboardReading FiveHour, DashboardReading Weekly, QuotaConnectionStatus? Status = null, QuotaHistoryPresentation? History = null);
+internal sealed record DashboardProvider(string Provider, DashboardReading FiveHour, DashboardReading Weekly, QuotaConnectionStatus? Status = null, QuotaHistoryPresentation? History = null, IReadOnlyList<GroupWeek>? GroupWeeks = null);
+internal sealed record GroupWeek(string Id, string Title, string Remaining, QuotaChartPresentation? Chart);
 internal sealed record QuotaHistoryPresentation(string Title, string? SourceText, string FreshnessText, bool NotUpdated, string? ErrorText, string? Placeholder,
     QuotaChartPresentation? Chart, IReadOnlyList<LegacyQuotaBucket> Buckets, QuotaAccountPresentation? Account, string? Warning, string RefreshTitle, bool Refreshing);
 internal sealed record QuotaAccountPresentation(string Context, string ResetText, bool ExpirySoon, string ExpiryDescription,
@@ -146,6 +204,8 @@ internal sealed record DashboardReading(string Provider, string Period, string A
     string? Verdict, string? VerdictText, bool Pressing, string? ProjectionText, string? ProjectionInline, bool ProjectionWarns,
     string? OtherPeriodText, string SplitHelp, string ClassicHelp, string AccessibilityLabel, string ClassicAccessibilityLabel,
     string PaceText = "—", string? ResetAtText = null, bool ProjectionEarly = false);
+internal sealed record EngineQuotaBucket(string Id, string? Name, IReadOnlyList<QuotaWindow> Windows);
+internal sealed record EngineGroupedQuota(string Provider, double CapturedAt, string? AccountScope, IReadOnlyList<EngineQuotaBucket> Buckets);
 internal sealed record EngineQuota(string Provider, double CapturedAt, bool Stale, IReadOnlyList<QuotaWindow> Windows);
 internal sealed record QuotaWindow(string Id, string Label, double? RemainingPercent, double? RemainingTimePercent,
     double? PacePercent, int? DurationMinutes, double? ResetsAt, string? Countdown = null,

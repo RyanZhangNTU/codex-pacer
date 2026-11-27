@@ -260,7 +260,7 @@ struct SettingsView: View {
             if model.claudeConnectionNeeded { return (name + " · " + L10n.text("claude.account.signed_out"), L10n.text("main.attention.quota_waits")) }
         }
         if let summary = progressAttention(provider), let guide = model.progressGuide(provider) {
-            return (name + " · " + summary, guide.steps.first { $0.state == .current }?.title ?? guide.line ?? "")
+            return (IslandModel.progressAttentionTitle(summary, provider: provider), guide.steps.first { $0.state == .current }?.title ?? guide.line ?? "")
         }
         return nil
     }

@@ -291,13 +291,19 @@ internal sealed partial class SettingsWindow
             [("percent", "layout.option.time_style.percent"), ("countdown", "layout.option.time_style.countdown")], value => Choose("timeStyle", value))));
         compactInspectorPanels["timeRemaining"] = time; body.Children.Add(time);
         compactWindowsPanel = new StackPanel();
-        foreach (string provider in new[] { "codex", "claude" })
+        foreach (string provider in QuotaWindowModules())
         {
-            var combo = CompactChoice("window." + provider, [("5h", "settings.window_five_hour"), ("7d", "settings.window_weekly")],
-                value => Change(p => provider == "codex" ? p with { CodexQuotaWindow = value } : p with { ClaudeQuotaWindow = value }));
+            bool local = !DesktopPreferences.IsLegacyProvider(provider);
+            (string, string)[] periods = [("5h", "settings.window_five_hour"), ("7d", "settings.window_weekly")];
+            var combo = CompactChoice("window." + provider, local ? [("auto", "provider.automatic"), .. periods] : periods,
+                value => Change(p => provider switch {
+                    "codex" => p with { CodexQuotaWindow = value }, "claude" => p with { ClaudeQuotaWindow = value },
+                    _ => p with { ModuleWindows = new(p.ModuleWindows) { [provider] = value } }
+                }));
             var fixedValue = Detail(ui.Text("settings.window_weekly")); compactWindowValues[provider] = fixedValue;
             var choices = new Grid(); choices.Children.Add(combo); choices.Children.Add(fixedValue);
-            string name = provider == "codex" ? "Codex" : "Claude";
+            string name = PaneTitle(provider);
+            AutomationProperties.SetName(combo, HarnessAccountCard.Fields(ui, "provider.window_selection", name));
             var row = InfoRow(ui.Text("provider.window_selection").Replace("%@", name, StringComparison.Ordinal), choices,
                 ui.Has("provider.window_info") ? ui.Text("provider.window_info").Replace("%@", name, StringComparison.Ordinal) : null, id: "compact.window." + provider);
             var title = (TextBlock)((Panel)((StackPanel)row.Children[0]).Children[0]).Children[0]; Identify(title, "compact.window_label." + provider, title.Text);
@@ -398,7 +404,9 @@ internal sealed partial class SettingsWindow
         if (compactEditor == null) return;
         var projection = ReadCompact();
         if (projection.Components.Length == 0) { compactEditor.IsEnabled = false; return; }
-        if (compactTiles.Count == 0 || compactInspector == null) { RebuildPane("collapsed"); RefreshValues(); return; }
+        if (compactTiles.Count == 0 || compactInspector == null || projection.Windows.Any(window =>
+            !compactWindowRows.ContainsKey(window.Provider) && QuotaWindowModules().Contains(window.Provider)))
+        { RebuildPane("collapsed"); RefreshValues(); return; }
         compactProjection = projection;
         var providers = CompactProviders(); bool docked = session.Current.DisplayMode != "notch" &&
             (session.Current.IslandPlacement?.Vertical ?? session.Current.Position != "center");
@@ -472,12 +480,13 @@ internal sealed partial class SettingsWindow
             if (compactRingInfo[index] is { } button) { button.Visibility = info ? Visibility.Visible : Visibility.Collapsed; if (!info && compactRingBoxes[index] is { } ringBox) SetInfoShown(button, ringBox, false); }
         }
         compactRingsCustom!.Visibility = session.Current.QuotaRingOuter.Length > 0 || session.Current.QuotaRingInner.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        foreach (string provider in new[] { "codex", "claude" })
+        foreach (string provider in compactWindowValues.Keys)
             compactWindowRows[provider].Visibility = providers.Contains(provider) && projection.Windows.Any(value => value.Provider == provider) ? Visibility.Visible : Visibility.Collapsed;
         foreach (var window in projection.Windows)
         {
             if (!compactWindowRows.ContainsKey(window.Provider)) continue;
-            compactChoices["window." + window.Provider].SelectedValue = window.Selection;
+            compactChoices["window." + window.Provider].SelectedValue = DesktopPreferences.IsLegacyProvider(window.Provider)
+                ? window.Selection : session.Current.ModuleWindows.GetValueOrDefault(window.Provider, "auto");
             compactChoices["window." + window.Provider].Visibility = window.WeeklyOnly ? Visibility.Collapsed : Visibility.Visible;
             compactWindowValues[window.Provider].Visibility = window.WeeklyOnly ? Visibility.Visible : Visibility.Collapsed;
         }

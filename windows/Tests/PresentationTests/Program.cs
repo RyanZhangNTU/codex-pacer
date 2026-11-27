@@ -23,7 +23,7 @@ internal static class Program
     // The groups "all" runs. CI splits them across parallel jobs, and the
     // platform contract checks that each one is in exactly one of them.
     internal static readonly string[] AllGroups = ["recovery", "responsive", "quota", "web", "host", "idle", "display", "accessibility",
-        "island", "conversation", "harness", "pages", "updates", "settings", "collapsed", "panel", "connection"];
+        "island", "conversation", "harness", "antigravity", "pages", "updates", "settings", "collapsed", "panel", "connection"];
     [STAThread]
     private static int Main(string[] args)
     {
@@ -70,6 +70,28 @@ internal static class Program
             await using var projections = new EngineClient();
             try
             {
+                if (All("settings") || Has("moduleLibrary"))
+                {
+                    foreach (string language in new[] { "en", "zh-Hans" })
+                        foreach (bool dark in new[] { false, true })
+                        {
+                            scenario = language + "/dark=" + dark;
+                            await Attempt(nameof(ModuleLibraryChecks), () => ModuleLibraryChecks.Run(language, dark, output));
+                        }
+                    scenario = "common";
+                    if (groups is ["moduleLibrary"])
+                    {
+                        Check(Errors.Count == 0, "Module Library WPF errors: " + string.Join("\n", Errors));
+                        result = 0; return;
+                    }
+                }
+                if (Has("approvalGuide") && groups.Length == 1)
+                {
+                    foreach (string language in new[] { "en", "zh-Hans" })
+                        foreach (bool dark in new[] { false, true }) await AntigravityPresentationChecks.RunGuideFixtures(language, dark);
+                    Check(Errors.Count == 0, "The approval guide must not report WPF runtime errors");
+                    result = 0; return;
+                }
                 if (Has("progress") && groups.Length == 1)
                 {
                     await ProgressRingMotionChecks.Run();
@@ -119,6 +141,11 @@ internal static class Program
                     foreach (bool dark in new[] { false, true })
                     {
                         scenario = language + "/dark=" + dark;
+                        if (All("antigravity")) await Attempt(nameof(AntigravityPresentationChecks), async () =>
+                        {
+                            await AntigravityPresentationChecks.RunGuideFixtures(language, dark);
+                            await AntigravityPresentationChecks.Run(language, dark, output);
+                        });
                         if (Has("persistence"))
                         {
                             await Attempt(nameof(PersistentSettingsChecks), () => PersistentSettingsChecks.Run(language, dark, output, desktop ?? throw new ArgumentException("Supply the desktop executable for restart checks.")));

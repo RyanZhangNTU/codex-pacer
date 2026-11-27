@@ -25,7 +25,7 @@ namespace CodexPacer.Windows;
 public partial class IslandWindow : Window
 {
     private readonly EngineClient engine;
-    private readonly bool chinese, demo;
+    private readonly bool chinese, demo, demoAntigravityGuide;
     private readonly UiText ui;
     private int position;
     private int displayMode;
@@ -94,11 +94,12 @@ public partial class IslandWindow : Window
         Func<(MotionBounds Screen, MotionBounds WorkArea)>? screenGeometry = null,
         Func<IBackdropSystemSource>? backdropSystemFactory = null, Func<Window, ICompositionBackdrop>? backdropFactory = null,
         Func<IDisplayTopologySource>? displayTopologyFactory = null, ISystemAppearanceSource? appearanceSource = null,
-        DisplayPresence? presence = null, HarnessAccounts? harnessAccounts = null)
+        DisplayPresence? presence = null, HarnessAccounts? harnessAccounts = null, bool demoAntigravityGuide = false)
     {
         InitializeComponent();
         Icon = BitmapFrame.Create(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"), UriKind.Absolute));
         this.engine = engine; this.chinese = chinese; this.demo = demo; this.position = position;
+        this.demoAntigravityGuide = demoAntigravityGuide;
         if (displayMode is < 0 or > 2) throw new ArgumentOutOfRangeException(nameof(displayMode));
         this.displayMode = displayMode;
         this.desktopApplications = desktopApplications;
@@ -282,15 +283,18 @@ public partial class IslandWindow : Window
     }
     internal async Task WaitForPresentationAsync()
     {
-        await ShellProjection.WhenIdleAsync();
-        await Dispatcher.Yield(DispatcherPriority.ContextIdle);
         var timeout = Stopwatch.StartNew();
-        while (displayRefreshPending || rendering || renderCallback || !lastFrame.Finished || !VisibleSizeMatches(destination.Width, destination.Height))
+        do
         {
-            if (timeout.Elapsed > TimeSpan.FromSeconds(5)) throw new TimeoutException("The synthetic window did not settle.");
+            // Rendering a queued snapshot can request a compact projection and retarget the window.
+            await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            await ShellProjection.WhenIdleAsync();
+            await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            if (Volatile.Read(ref queuedSnapshot) == null && !displayRefreshPending && !rendering && !renderCallback &&
+                lastFrame.Finished && VisibleSizeMatches(destination.Width, destination.Height)) return;
             await Task.Delay(25);
-        }
-        await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+        } while (timeout.Elapsed < TimeSpan.FromSeconds(20));
+        throw new TimeoutException($"The synthetic window did not settle. Visible={IsVisible}, fullscreenSuppressed={FullscreenSuppressed}, {PresentationDiagnostics}");
     }
     internal bool VisibleSizeMatches(double width, double height)
     {
@@ -475,7 +479,7 @@ public partial class IslandWindow : Window
         if (e.Key == Key.Escape) { RecordInteraction("escape"); CloseAndReturnFocus(); e.Handled = true; }
         if (IsPagingInput(e.Key, e.SystemKey, Keyboard.Modifiers, IsEditing(e.OriginalSource as DependencyObject)))
         { Key key = e.Key == Key.System ? e.SystemKey : e.Key; ChangePage(key == Key.Left ? -1 : 1); e.Handled = true; }
-        if (demo && (Keyboard.Modifiers & ModifierKeys.Control) != 0 && e.Key >= Key.D1 && e.Key <= Key.D4)
+        if (demo && (Keyboard.Modifiers & ModifierKeys.Control) != 0 && e.Key >= Key.D1 && e.Key <= (demoAntigravityGuide ? Key.D5 : Key.D4))
             _ = Send("demoStage", new { demoStage = (int)e.Key - (int)Key.D1 });
     }
     private void OnPreviousPage(object sender, RoutedEventArgs e) => ChangePage(-1);
@@ -812,10 +816,10 @@ public partial class IslandWindow : Window
             if (modules.FirstOrDefault(value => value.Provider == key)?.ProgressGuide?.Stage != dismissedProgressHints[key]) dismissedProgressHints.Remove(key);
         var running = snapshot.Presentation?.Rows.Where(row => row.Phase is not ("completed" or "interrupted")).Select(row => row.Provider).ToHashSet(StringComparer.Ordinal) ?? [];
         var module = modules.FirstOrDefault(value => value.Enabled && value.ProgressGuide is { Attention: true, Summary: not null } guide
-            && running.Contains(value.Provider) && !dismissedProgressHints.ContainsKey(value.Provider));
+            && (running.Contains(value.Provider) || value.ProgressApprovals is { Count: > 0 }) && !dismissedProgressHints.ContainsKey(value.Provider));
         progressHintProvider = module?.Provider;
         if (module?.ProgressGuide is not { } shown) { ProgressHint.Visibility = Visibility.Collapsed; return; }
-        string text = (module.DisplayName ?? module.Provider) + " · " + shown.Summary;
+        string text = module.ProgressAttentionTitle(shown.Summary!);
         ProgressHintText.Text = text; AutomationProperties.SetName(ProgressHint, text);
         ProgressHintOpen.Content = ui.Text("progress_guide.hint.open");
         AutomationProperties.SetName(ProgressHintOpen, ui.Text("progress_guide.hint.open"));
@@ -943,9 +947,14 @@ public partial class IslandWindow : Window
             else if (current.WebAvailable && canConnectDeepSeekWeb?.Invoke() == true) DeepSeekWebSignInRequested?.Invoke(current.Context);
         };
     }
-    private FrameworkElement? QuotaStatus(DashboardProvider? provider) => provider?.Status is QuotaConnectionStatus status
-        ? new QuotaConnectionView(provider.Provider, status, ui, provider.Provider is "codex" or "claude" ? () => RetryProviderQuota(provider.Provider) : null,
-            provider.Provider is "codex" or "claude" ? () => { DismissForSettings(); ProviderSettingsRequested?.Invoke(provider.Provider); } : null) : null;
+    private FrameworkElement? QuotaStatus(DashboardProvider? provider)
+    {
+        if (provider == null) return null;
+        var status = provider.Status is { State: not "hidden" } connection
+            ? new QuotaConnectionView(provider.Provider, connection, ui, () => RetryProviderQuota(provider.Provider),
+                () => { DismissForSettings(); ProviderSettingsRequested?.Invoke(provider.Provider); }) : null;
+        return QuotaConnectionView.WithGroup(provider, status);
+    }
     private async Task RetryProviderQuota(string provider)
     {
         try { await engine.SendAsync("retryQuota", new { provider }); }

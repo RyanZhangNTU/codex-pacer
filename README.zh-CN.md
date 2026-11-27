@@ -52,7 +52,7 @@ Pacer 替你盯着每个任务的进度，你不再分心，效率自然更高�
 
 ## 不用再守着终端
 
-Codex、Claude Code、DeepSeek Harness 和 WorkBuddy 会报告你的请求完成了多少，显示为任务图标外的一圈圆环；折叠栏还能显示平均进度。
+Codex、Claude Code、DeepSeek Harness、WorkBuddy 和 Antigravity 会报告你的请求完成了多少，显示为任务图标外的一圈圆环；折叠栏还能显示平均进度。
 
 <img src="docs/assets/readme-rings.zh-CN.png" width="100%" alt="任务的五种状态：刚开始时是绕圈的彗星，进行中是一段圆弧，等后台时是月亮，需要你时是琥珀色的手，做完了是对勾">
 
@@ -76,17 +76,18 @@ Codex、Claude Code、DeepSeek Harness 和 WorkBuddy 会报告你的请求完成
 <th><img src="native/Sources/PacerCore/Resources/provider-claude.png" width="32" alt=""><br>Claude&nbsp;Code</th>
 <th><img src="native/Sources/PacerCore/Resources/provider-deepseek.png" width="32" alt=""><br>DeepSeek&nbsp;Harness</th>
 <th><img src="native/Sources/PacerCore/Resources/provider-workbuddy.png" width="32" alt=""><br>WorkBuddy</th>
+<th><img src="native/Sources/PacerCore/Resources/provider-antigravity.png" width="32" alt=""><br>Antigravity</th>
 </tr>
 </thead>
 <tbody>
-<tr><td nowrap><b>进度圆环</b></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
-<tr><td nowrap><b>需要你时提醒</b></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
-<tr><td nowrap><b>速度与模型</b></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
-<tr><td nowrap><b>点一下就回去</b></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
-<tr><td nowrap><b>用量</b></td><td align="center">5 小时和每周额度、配速、预测、重置券</td><td align="center">5 小时和每周额度、配速、预测</td><td align="center">余额、今天每小时的花费、预算</td><td align="center">本月积分、额外积分、到期提醒</td></tr>
-<tr><td nowrap><b>每轮花费</b></td><td align="center">—</td><td align="center">—</td><td align="center">估算金额</td><td align="center">积分</td></tr>
-<tr><td nowrap><b>任务来源</b></td><td align="center">应用、CLI、SSH、WSL¹、Dot 任务</td><td align="center">应用、CLI、SSH、WSL¹、云端项目</td><td align="center">应用、CLI</td><td align="center">WorkBuddy 和 WorkBuddy AI</td></tr>
-<tr><td nowrap><b>协作</b></td><td align="center">被 Claude 调用</td><td align="center">调用 Codex</td><td align="center">—</td><td align="center">—</td></tr>
+<tr><td nowrap><b>进度圆环</b></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
+<tr><td nowrap><b>需要你时提醒</b></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
+<tr><td nowrap><b>速度与模型</b></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
+<tr><td nowrap><b>点一下就回去</b></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">打开应用</td></tr>
+<tr><td nowrap><b>用量</b></td><td align="center">5 小时和每周额度、配速、预测、重置券</td><td align="center">5 小时和每周额度、配速、预测</td><td align="center">余额、今天每小时的花费、预算</td><td align="center">本月积分、额外积分、到期提醒</td><td align="center">按模型组显示短期和每周额度</td></tr>
+<tr><td nowrap><b>每轮花费</b></td><td align="center">—</td><td align="center">—</td><td align="center">估算金额</td><td align="center">积分</td><td align="center">—</td></tr>
+<tr><td nowrap><b>任务来源</b></td><td align="center">应用、CLI、SSH、WSL¹、Dot 任务</td><td align="center">应用、CLI、SSH、WSL¹、云端项目</td><td align="center">应用、CLI</td><td align="center">WorkBuddy 和 WorkBuddy AI</td><td align="center">应用</td></tr>
+<tr><td nowrap><b>协作</b></td><td align="center">被 Claude 调用</td><td align="center">调用 Codex</td><td align="center">—</td><td align="center">—</td><td align="center">—</td></tr>
 </tbody>
 </table>
 
@@ -106,6 +107,7 @@ Codex、Claude Code、DeepSeek Harness 和 WorkBuddy 会报告你的请求完成
 | **Claude Code** | 把正在运行的会话重启一次。在 Pacer 窗口里登录 Claude 才能看额度。 |
 | **DeepSeek Harness** | 在 Pacer 窗口里登录 DeepSeek 开放平台，或填入 API key，才能看余额。 |
 | **WorkBuddy** | 在 WorkBuddy 里信任 Pacer 的进度工具，Pacer 会一步步告诉你点哪里。登录后能看积分。 |
+| **Antigravity** | 在 Antigravity 中允许 Pacer 的进度工具，即可显示任务进度。 |
 | **SSH 主机** | 能免密码连接，且主机上装有 Python 3。 |
 
 </details>
@@ -160,7 +162,7 @@ Codex 和 Claude 一个圆环同时看 5 小时和每周额度，刻度告诉你
 > [!NOTE]
 > Windows 安装包暂未做代码签名。如果出现 SmartScreen 提示，点**更多信息 → 仍要运行**。
 
-首次打开时，简短的引导会帮你选择摆放方式和要追踪的工具，之后 Pacer 会自动更新。需要已安装并登录 Codex、Claude Code、DeepSeek Harness 或 WorkBuddy 中的至少一个。液态玻璃需要 macOS 26 或 Windows 11 22H2。
+首次打开时，简短的引导会帮你选择摆放方式和要追踪的工具，之后 Pacer 会自动更新。需要已安装并登录 Codex、Claude Code、DeepSeek Harness、WorkBuddy 或 Antigravity 中的至少一个。液态玻璃需要 macOS 26 或 Windows 11 22H2。
 
 <a id="community"></a>
 

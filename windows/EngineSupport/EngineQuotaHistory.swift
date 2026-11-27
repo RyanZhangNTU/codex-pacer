@@ -10,6 +10,28 @@ struct EngineQuotaHistory {
     private var history = QuotaCycleHistory()
     private var warning: String?
     private(set) var accountContext = UUID().uuidString
+    struct GroupWeek: Codable, Equatable {
+        let id: String, title: String, remaining: String
+        let chart: QuotaCycleChartPresentation?
+    }
+    private var groupCharts: [String: (QuotaChartData, String, QuotaCycleChartPresentation)] = [:]
+    mutating func groupWeeks(provider: AgentProvider, snapshot: QuotaSnapshot, at now: Date) -> [GroupWeek] {
+        guard let groups = provider.quotaGroups else { return [] }
+        let context = [L10n.language.rawValue, L10n.locale.identifier, L10n.timeZone.identifier].joined(separator: "|")
+        return snapshot.buckets.map { bucket in
+            let week = bucket.windows.first { $0.durationMinutes == 10080 }
+            if let scope = snapshot.accountScope, history.accountScope == scope, let cycle = history.currentCycle(for: week, at: now) {
+                let data = QuotaChartData(cycle: cycle, resetCredits: snapshot.resetCredits, now: now)
+                if groupCharts[bucket.id]?.0 != data || groupCharts[bucket.id]?.1 != context {
+                    groupCharts[bucket.id] = (data, context, QuotaCycleChartPresentation(data: data))
+                }
+            } else { groupCharts[bucket.id] = nil }
+            return GroupWeek(id: bucket.id, title: groups.name(bucket.id),
+                remaining: week?.remainingPercent.map { L10n.text("harness.weekly_remaining", Int($0.rounded())) } ?? "—",
+                chart: groupCharts[bucket.id]?.2)
+        }
+    }
+
     private var chartData: QuotaChartData?
     private var chart: QuotaCycleChartPresentation?
     private var formattingContext = ""
@@ -19,7 +41,7 @@ struct EngineQuotaHistory {
         guard sourceHome != home || sourcePath != customPath else { return }
         sourceHome = home; sourcePath = customPath; scope = nil
         accountContext = UUID().uuidString; history = .init(); warning = nil
-        chartData = nil; chart = nil
+        chartData = nil; chart = nil; groupCharts.removeAll()
     }
     mutating func receive(snapshot: QuotaSnapshot?, history: QuotaCycleHistory, warning: String?) {
         if scope != snapshot?.accountScope { scope = snapshot?.accountScope; accountContext = UUID().uuidString }

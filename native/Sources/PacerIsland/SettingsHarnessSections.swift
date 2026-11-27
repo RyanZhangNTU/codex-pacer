@@ -22,6 +22,22 @@ struct SettingsHarnessSections: View {
         MainCard(title: L10n.text("main.section.status")) {
             ModuleMonitoringRow(monitoring: model.harnessMonitoring(provider), help: model.localHarnessHome(provider)?.path,
                                 rescan: { model.refreshLocalHarness(provider) })
+            if descriptor.hasQuotaWindows {
+                CardRow(title: L10n.text("provider.account")) {
+                    if model.fullQuota(provider)?.accountScope != nil {
+                        Text(L10n.text("harness.account.signed_in")).font(.system(size: 12.5)).foregroundStyle(.secondary)
+                    }
+                    Button(L10n.text("activity.open_app", provider.displayName)) { model.openDesktopApplication(provider) }
+                        .buttonStyle(.main).disabled(model.desktopApplications[provider] == nil)
+                }
+                CardRow(title: L10n.text("provider.usage")) {
+                    let window = model.providerWindow(provider, period: .weekly)
+                    Text(window?.remainingPercent.map { L10n.text("harness.weekly_remaining", Int($0.rounded())) } ?? "—")
+                        .foregroundStyle(.secondary)
+                    Button(L10n.text("common.refresh")) { model.retryQuotaConnection(for: provider) }
+                        .buttonStyle(.main).disabled(model.providerRefreshing(provider))
+                }
+            }
             if let connection = model.harnessAccount(provider) {
                 HarnessAccountRow(connection: connection)
                 HarnessUsageRow(connection: connection, settings: model.creditSettings(provider), now: model.now)
@@ -31,6 +47,12 @@ struct SettingsHarnessSections: View {
         // ready or off, it is one row like any other service's ring.
         let guideOpen = descriptor.progressConnector && ProgressGuideRows.opens(ProgressGuideRows.guide(model, provider, isOn: showsProgress))
         MainCard(title: L10n.text("main.section.display")) {
+            if let groups = descriptor.quotaGroups {
+                CardPicker(title: L10n.text(groups.labelPrefix + ".group"), selection: Binding(
+                    get: { model.selectedGroup(provider, groups) },
+                    set: { model.setQuotaPreference($0, key: groups.defaultsKey) }),
+                    options: groups.ids.map { ($0, groups.name($0)) })
+            }
             if descriptor.progressConnector {
                 ProgressGuideRows(model: model, provider: provider, isOn: $showsProgress)
             } else if descriptor.hasTaskProgress {

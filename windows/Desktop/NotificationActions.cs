@@ -10,7 +10,7 @@ namespace CodexPacer.Windows;
 internal sealed class NotificationActions(Task ready, Func<bool> stopping, Action showIsland,
     Func<Task> snoozeSpike, Func<Uri, bool> openLink, CancellationToken lifetime = default, Func<bool>? openHarness = null,
     Func<string, string, Task<EngineNotificationActivation>>? resolve = null, Func<EngineActivityLink, Task<bool>>? openTask = null,
-    Func<string, bool>? openSettings = null)
+    Func<string, bool>? openSettings = null, Func<Task<bool>>? openAntigravity = null)
 {
     internal static readonly Uri TopUpUri = new("https://platform.deepseek.com/top_up");
     private readonly System.Collections.Generic.HashSet<string> received = [];
@@ -25,6 +25,7 @@ internal sealed class NotificationActions(Task ready, Func<bool> stopping, Actio
             if (stopping() || lifetime.IsCancellationRequested) return false;
             var action = await resolve(kind, reference).WaitAsync(lifetime);
             if (action.Kind != kind || stopping() || lifetime.IsCancellationRequested) return false;
+            if (kind == "openAntigravity") return openAntigravity != null && await openAntigravity();
             if (kind == "openTask") return action.Link != null && openTask != null && await openTask(action.Link);
             // The engine applies snooze while consuming its source-bound ref.
             return kind == "snoozeSpike" || await HandleAsync(kind);

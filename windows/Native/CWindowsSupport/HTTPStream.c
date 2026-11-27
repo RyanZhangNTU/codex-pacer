@@ -15,6 +15,7 @@ typedef struct {
     volatile LONG error;
     volatile DWORD bytes, socket_type;
     DWORD status_code;
+    uint64_t deadline_ms; /* Absolute GetTickCount64 deadline for a local POST. */
     int failed, observed, socket_observed;
     BYTE buffer[16384];
 } PacerHTTPStream;
@@ -38,7 +39,9 @@ static void CALLBACK pacer_http_callback(HINTERNET handle, DWORD_PTR context, DW
         } else stream->bytes = length;
         SetEvent(stream->completed); break;
     case WINHTTP_CALLBACK_STATUS_REQUEST_ERROR:
-        stream->error = 1; SetEvent(stream->completed); break;
+        stream->error = information && length == sizeof(WINHTTP_ASYNC_RESULT) &&
+            ((WINHTTP_ASYNC_RESULT *)information)->dwError == ERROR_WINHTTP_TIMEOUT ? ERROR_WINHTTP_TIMEOUT : 1;
+        SetEvent(stream->completed); break;
     case WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING:
         // The last callback for the request; WinHTTP no longer uses the context.
         SetEvent(stream->closing); break;
@@ -47,14 +50,26 @@ static void CALLBACK pacer_http_callback(HINTERNET handle, DWORD_PTR context, DW
 }
 
 static int pacer_http_wait(PacerHTTPStream *stream, uint32_t timeout_ms) {
+    if (stream->deadline_ms) {
+        uint64_t now = GetTickCount64();
+        if (now >= stream->deadline_ms) { stream->failed = 1; return -2; }
+        uint64_t remaining = stream->deadline_ms - now;
+        if (remaining < timeout_ms) timeout_ms = (DWORD)remaining;
+    }
     HANDLE events[2] = {stream->completed, stream->cancelled};
     DWORD result = WaitForMultipleObjects(2, events, FALSE, timeout_ms);
     if (result == WAIT_OBJECT_0 && stream->error == 0) return 0;
     // An unfinished operation may still complete; only close may follow it.
     stream->failed = 1;
     if (result == WAIT_OBJECT_0 + 1) return -3;
-    if (result == WAIT_TIMEOUT) return -2;
+    if (result == WAIT_TIMEOUT || (result == WAIT_OBJECT_0 && stream->error == ERROR_WINHTTP_TIMEOUT)) return -2;
     return -1;
+}
+
+static int request_error(PacerHTTPStream *stream) {
+    DWORD error = GetLastError();
+    stream->failed = 1;
+    return error == ERROR_WINHTTP_TIMEOUT ? -2 : -1;
 }
 
 static int pacer_http_begin(PacerHTTPStream *stream) {
@@ -78,9 +93,9 @@ void *pacer_http_stream_create(void) {
     return stream;
 }
 
-int pacer_http_stream_open(void *value, const uint16_t *host, uint16_t port, int secure, const uint16_t *path,
+static int open_request(void *value, const uint16_t *host, uint16_t port, int secure, const uint16_t *path,
                            const uint16_t *headers, const uint16_t *agent, const uint16_t *proxy,
-                           uint32_t timeout_ms, uint32_t *status, int websocket) {
+                           uint32_t timeout_ms, uint32_t *status, int websocket, const uint8_t *body, DWORD body_size) {
     PacerHTTPStream *stream = value;
     if (status != NULL) *status = 0;
     if (stream == NULL || host == NULL || path == NULL || agent == NULL || status == NULL || port == 0 ||
@@ -94,7 +109,7 @@ int pacer_http_stream_open(void *value, const uint16_t *host, uint16_t port, int
     if (!WinHttpSetTimeouts(stream->session, (int)timeout_ms, (int)timeout_ms, (int)timeout_ms, (int)timeout_ms)) return -1;
     stream->connection = WinHttpConnect(stream->session, (LPCWSTR)host, port, 0);
     if (stream->connection == NULL) return -1;
-    stream->request = WinHttpOpenRequest(stream->connection, L"GET", (LPCWSTR)path, NULL, WINHTTP_NO_REFERER,
+    stream->request = WinHttpOpenRequest(stream->connection, body ? L"POST" : L"GET", (LPCWSTR)path, NULL, WINHTTP_NO_REFERER,
         WINHTTP_DEFAULT_ACCEPT_TYPES, secure ? WINHTTP_FLAG_SECURE : 0);
     if (stream->request == NULL) return -1;
     if (WinHttpSetStatusCallback(stream->request, pacer_http_callback,
@@ -107,19 +122,21 @@ int pacer_http_stream_open(void *value, const uint16_t *host, uint16_t port, int
     DWORD redirects = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
     DWORD disabled = WINHTTP_DISABLE_COOKIES | WINHTTP_DISABLE_REDIRECTS | WINHTTP_DISABLE_AUTHENTICATION;
     DWORD logon = WINHTTP_AUTOLOGON_SECURITY_LEVEL_HIGH;
-    DWORD decompression = WINHTTP_DECOMPRESSION_FLAG_ALL;
+    DWORD decompression = body ? 0 : WINHTTP_DECOMPRESSION_FLAG_ALL;
     if (!WinHttpSetOption(stream->request, WINHTTP_OPTION_REDIRECT_POLICY, &redirects, sizeof(redirects)) ||
         !WinHttpSetOption(stream->request, WINHTTP_OPTION_DISABLE_FEATURE, &disabled, sizeof(disabled)) ||
         !WinHttpSetOption(stream->request, WINHTTP_OPTION_AUTOLOGON_POLICY, &logon, sizeof(logon)) ||
         !WinHttpSetOption(stream->request, WINHTTP_OPTION_DECOMPRESSION, &decompression, sizeof(decompression)) ||
         (websocket && !WinHttpSetOption(stream->request, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, NULL, 0))) return -1;
     stream->failed = 0;
+    // WinHTTP may retain the body until the final request callback.
+    if (body_size) memcpy(stream->buffer, body, body_size);
     if (!WinHttpSendRequest(stream->request, headers != NULL ? (LPCWSTR)headers : WINHTTP_NO_ADDITIONAL_HEADERS,
-            headers != NULL ? (DWORD)-1L : 0, WINHTTP_NO_REQUEST_DATA, 0, 0, context)) { stream->failed = 1; return -1; }
+            headers != NULL ? (DWORD)-1L : 0, body_size ? stream->buffer : WINHTTP_NO_REQUEST_DATA, body_size, body_size, context)) return request_error(stream);
     int result = pacer_http_wait(stream, timeout_ms);
     if (result != 0) return result;
     if ((result = pacer_http_begin(stream)) != 0) return result;
-    if (!WinHttpReceiveResponse(stream->request, NULL)) { stream->failed = 1; return -1; }
+    if (!WinHttpReceiveResponse(stream->request, NULL)) return request_error(stream);
     if ((result = pacer_http_wait(stream, timeout_ms)) != 0) return result;
     DWORD code = 0, size = sizeof(code);
     if (!WinHttpQueryHeaders(stream->request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
@@ -137,6 +154,22 @@ int pacer_http_stream_open(void *value, const uint16_t *host, uint16_t port, int
         stream->failed = 0;
     }
     return 0;
+}
+
+int pacer_http_stream_open(void *value, const uint16_t *host, uint16_t port, int secure, const uint16_t *path,
+                           const uint16_t *headers, const uint16_t *agent, const uint16_t *proxy,
+                           uint32_t timeout_ms, uint32_t *status, int websocket) {
+    return open_request(value, host, port, secure, path, headers, agent, proxy, timeout_ms, status, websocket, NULL, 0);
+}
+
+int pacer_http_local_post(void *value, uint16_t port, const uint16_t *path, const uint16_t *headers,
+                          const uint8_t *body, size_t length, uint64_t deadline_ms, uint32_t *status) {
+    PacerHTTPStream *stream = value;
+    if (!stream || !body || length > sizeof(stream->buffer)) return -1;
+    if (GetTickCount64() >= deadline_ms) return -2;
+    stream->deadline_ms = deadline_ms;
+    return open_request(value, (const uint16_t *)L"127.0.0.1", port, 0, path, headers, (const uint16_t *)L"CodexPacer",
+                        NULL, 2000, status, 0, body, (DWORD)length);
 }
 
 int pacer_http_stream_header(void *value, const uint16_t *name, uint16_t *output, size_t capacity) {
@@ -197,7 +230,7 @@ int64_t pacer_http_stream_read(void *value, uint8_t *bytes, size_t capacity, uin
     // A read waits to fill its whole buffer, so first wait for any data and
     // then read only what has arrived: a partial line is delivered at once.
     stream->bytes = 0;
-    if (!WinHttpQueryDataAvailable(stream->request, NULL)) { stream->failed = 1; return -1; }
+    if (!WinHttpQueryDataAvailable(stream->request, NULL)) return request_error(stream);
     if ((result = pacer_http_wait(stream, timeout_ms)) != 0) return result;
     DWORD available = stream->bytes;
     if ((result = pacer_http_begin(stream)) != 0) return result;
@@ -207,7 +240,7 @@ int64_t pacer_http_stream_read(void *value, uint8_t *bytes, size_t capacity, uin
     DWORD chunk = capacity < sizeof(stream->buffer) ? (DWORD)capacity : (DWORD)sizeof(stream->buffer);
     if (available > 0 && available < chunk) chunk = available;
     stream->bytes = 0;
-    if (!WinHttpReadData(stream->request, stream->buffer, chunk, NULL)) { stream->failed = 1; return -1; }
+    if (!WinHttpReadData(stream->request, stream->buffer, chunk, NULL)) return request_error(stream);
     if ((result = pacer_http_wait(stream, timeout_ms)) != 0) return result;
     DWORD count = stream->bytes;
     if (count > chunk) { stream->failed = 1; return -1; }

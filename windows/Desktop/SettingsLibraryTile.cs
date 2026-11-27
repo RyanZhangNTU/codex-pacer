@@ -40,16 +40,23 @@ internal sealed partial class SettingsWindow
         Button? button = null;
         if (toggle != null)
         {
-            button = new Button { Style = (Style)FindResource("SettingsLibraryToggle") };
-            Identify(button, id + ".toggle", label); editors.Add(button);
-            button.Click += async (_, _) =>
-            {
-                if (synchronizing || busy || !button.IsVisible || !button.IsEnabled || Equals(button.Tag, "locked")) return;
-                await toggle();
-            };
+            button = LibraryToggle(id, label, toggle);
             root.Children.Add(button);
         }
         return new LibraryTile(root, body, button, icon, name, label);
+    }
+
+    private Button LibraryToggle(string id, string label, Func<Task> toggle)
+    {
+        var button = new Button { Style = (Style)FindResource("SettingsLibraryToggle") };
+        Identify(button, id + ".toggle", label);
+        editors.Add(button);
+        button.Click += async (_, _) =>
+        {
+            if (synchronizing || busy || !button.IsVisible || !button.IsEnabled || Equals(button.Tag, "locked")) return;
+            await toggle();
+        };
+        return button;
     }
 
     /// Paints a tile for its state. A tile that is not added stays plain and
@@ -66,10 +73,14 @@ internal sealed partial class SettingsWindow
         // A service that is off keeps its tile, faded, so its settings stay reachable.
         tile.Root.Opacity = available ? 1 : 0.55;
         AutomationProperties.SetItemStatus(tile.Body, selected ? ui.Text("main.panel.selected") : "");
-        if (tile.Toggle is not { } button) return;
+        if (tile.Toggle is { } button) PaintLibraryToggle(button, tile.Label, added, locked, addKey, removeKey);
+    }
+
+    private void PaintLibraryToggle(Button button, string label, bool added, bool locked, string addKey, string removeKey)
+    {
         button.Tag = locked ? "locked" : added ? "added" : "add";
         string name = locked ? ui.Text("main.panel.last").TrimEnd('.', '。')
-            : ui.Text(added ? removeKey : addKey).Replace("%@", tile.Label, StringComparison.Ordinal);
+            : ui.Text(added ? removeKey : addKey).Replace("%@", label, StringComparison.Ordinal);
         AutomationProperties.SetName(button, name); button.ToolTip = name;
     }
 

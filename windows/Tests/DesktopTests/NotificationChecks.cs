@@ -92,6 +92,41 @@ internal static class NotificationChecks
             Check(deniedSystem.Delivered.Count == 1 && denied.Availability == NotificationAvailability.Available, "An OS permission change is recognized on the next new notice without reopening settings");
         }
 
+        var antigravity = new Fake();
+        using (var delivery = new NotificationSession(new PreferencesSession(new() { SystemNotifications = true },
+            _ => Task.CompletedTask, _ => true), antigravity, queue.Enqueue, _ => { }, false))
+        {
+            await delivery.RefreshAsync();
+            var action = new EngineNoticeAction("openAntigravity", "Open Antigravity", new string('c', 32));
+            var approval = new EngineNotice("approval", "waitingForInput", "Approval", "Antigravity", DefaultAction: action, Actions: [action]);
+            var question = approval with { Id = "question", Title = "Question" };
+            var frame = Frame(1, approval) with { Notices = [approval, question] };
+            delivery.Receive(frame); Pump(); delivery.Receive(frame); Pump();
+            Check(antigravity.Delivered.Count == 2 && antigravity.Delivered.All(n => n.DefaultAction == action),
+                "Approval and question each deliver once with the application action");
+            int launches = 0;
+            var activation = new NotificationActions(Task.CompletedTask, () => false, () => { }, () => Task.CompletedTask, _ => false,
+                resolve: (kind, _) => Task.FromResult(new EngineNotificationActivation(kind, null)),
+                openAntigravity: () => Task.FromResult(++launches == 1));
+            string launch = XElement.Parse(NotificationPayload.Xml(antigravity.Delivered[0])).Attribute("launch")!.Value;
+            Check(await activation.HandleReferenceAsync(launch) && launches == 1 && !await activation.HandleAsync("openAntigravity"),
+                "An opaque notification reference must open only the app");
+
+            // An ending names its task, so its notice opens that task the way a row click does, which clears the card.
+            var task = new EngineNoticeAction("openTask", "Open Antigravity", new string('d', 32));
+            var ended = new EngineNotice("ended", "completed", "Done", "Antigravity", DefaultAction: task, Actions: [task]);
+            delivery.Receive(Frame(2, ended)); Pump();
+            Check(antigravity.Delivered.Count == 3 && antigravity.Delivered[2].DefaultAction == task, "A completion delivers its task action");
+            var link = new EngineActivityLink("antigravity:ended", "antigravity", Guid.NewGuid().ToString());
+            EngineActivityLink? opened = null;
+            var taskActivation = new NotificationActions(Task.CompletedTask, () => false, () => { }, () => Task.CompletedTask, _ => false,
+                resolve: (kind, _) => Task.FromResult(new EngineNotificationActivation(kind, kind == "openTask" ? link : null)),
+                openTask: value => { opened = value; return Task.FromResult(true); },
+                openAntigravity: () => Task.FromResult(++launches > 0));
+            string ending = XElement.Parse(NotificationPayload.Xml(antigravity.Delivered[2])).Attribute("launch")!.Value;
+            Check(await taskActivation.HandleReferenceAsync(ending) && opened == link && launches == 1,
+                "A completion opens its task through the task route, not the app-only action");
+        }
         var payload = new NotificationContent("secret/task/path", "A < B", "Reply & approve <tag>", [new("topUp", "Top <Up>", new string('a', 32)), new("malicious&action=topUp", "Bad", new string('b', 32))]);
         XElement xml = XElement.Parse(NotificationPayload.Xml(payload));
         Check(xml.Descendants("text").Select(value => value.Value).SequenceEqual(new[] { "A < B", "Reply & approve <tag>" })

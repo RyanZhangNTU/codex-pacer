@@ -36,6 +36,8 @@ The Composition bridge (`windows/Native/CompositionBackdrop`) builds with the Vi
 ```
 
 - Repeat with `--language zh-Hans` and `--theme dark` (a demo-only override). Check hover expansion, click to pin, Esc and opening Settings.
+- Add `--demo-antigravity` to an isolated demo to show Antigravity as installed, with a parent task, a subagent, a pending approval, a completed task and both quota groups.
+- Use `--demo-antigravity-guide` to try setup. Both Antigravity flags start demo mode on their own. With the island focused, press Ctrl+1 for adding, Ctrl+2 for a new conversation, Ctrl+3 for the permission card and its float, or Ctrl+4 for ready. Ctrl+5 shows a conversation that missed the progress tool and opens its float once. For screenshots, `--stage 0` through `--stage 4` select those five stages at launch. The ordinary Antigravity demo keeps the float closed until you open it.
 - `--demo-subagents` (with `--demo`) gives the Codex task three subagents, as on the Mac, to check the dots and the lines under the task.
 - `--demo --reference-fixture --activation-qa <unique-guid>` isolates a run from an existing instance. Close only the instance you started.
 - `--demo-preferences <absolute path>` (with `--reference-fixture` and a preview capture or an `--activation-qa` scope) keeps a synthetic preference file across demo launches; the production path is refused.
@@ -63,6 +65,35 @@ Settings is the main window, as on the Mac. Windows-specific points:
 - The update banner remembers a closed version in `PacerUpdateBannerDismissed`, in the updater's state file.
 
 Opaque WPF windows (Settings, sign-in windows, dialogs and non-layered popups) use `RenderMode.SoftwareOnly`, because hardware rendering showed an empty client area on a machine with several physical and virtual display adapters. The layered island keeps hardware rendering. This costs CPU only for mostly static windows; measure before extending it to animated surfaces.
+
+### Module Library
+
+Use the same layout in WPF and on the Mac. Read supported modules in Core registry order. Keep the sidebar’s existing `main.pane.modules · modules.sidebar_more` treatment and count the modules omitted from the sidebar.
+
+1. Show the page title `main.pane.modules` (“Module Library” / “模块库”).
+2. Always show `modules.on_this_computer` (“On This Computer” / “这台电脑上的服务”) with every detected module. When empty, show `modules.empty` (“No services found on this computer yet.” / “这台电脑上还没有找到服务。”) in secondary text.
+3. Show `modules.not_found` (“Not Found on This Computer” / “未在这台电脑上找到”) only when there are undetected modules. Show all of them immediately, including any turned on manually. Use the engine’s module detection field (`installed`) to group tiles. Both headings are plain section titles. There is no expander or Show/Hide row.
+4. Append exactly one `modules.more_coming` (“More coming” / “更多服务即将推出”) to the last visible grid. If the host supports zero modules, it follows the first group’s empty message.
+
+Each group uses a leading-aligned adaptive grid with a minimum tile width of 280 and an 8-point gap in both directions (DIPs on Windows). At the normal Settings width it has two equal columns. Fill rows left to right in registry order, with tiles aligned at the top.
+
+A closed tile is about 54 high. Give every module the same neutral card fill and thin border, with a 10-point corner radius. The main row contains these elements in order:
+
+| Element | Layout and behavior |
+| --- | --- |
+| App icon | 28 × 28, inset 12 from the leading edge. Use 55% opacity only when undetected and off. |
+| Name and ⓘ | Leave 10 after the icon. Use the Settings name (`module.<id>.title` when available, otherwise the descriptor name) in 13-point medium type. Allow long names to wrap. Place the 20 × 20 ⓘ control 3 after the name. |
+| Flexible space | Push the state and round control to the trailing edge. |
+| State | 11.5-point text. When enabled, use `modules.state.on` (“On” / “已开启”) in monitoring-status green (`SettingsSuccess`). Otherwise use `modules.state.off` (“Off” / “已关闭”) if detected or `modules.state.not_found` (“Not found” / “未找到”) if undetected, both in secondary text. |
+| Round button | Use the shared library control, with a 24-point accent-filled check when on and an outlined plus when off. Use `modules.turn_off` or `modules.turn_on` with the Settings name as the accessible button label. |
+
+The tile body opens the module page. Its accessible name is the Settings name and its value is the state. The ⓘ, Get link and round button have independent hit targets, keyboard actions and accessible names. Activating them stays on the library page.
+
+- The ⓘ starts closed. Activating it reveals `module.<id>.summary` inside that tile, below and aligned with the name. A second activation hides it. Give the sentence space to wrap and the tile room to grow. Use secondary 11.5-point text. Each summary describes what Pacer shows for that app. The ⓘ uses `main.info` with the Settings name and reports `main.info_shown` or `main.info_hidden`. It has no hover tooltip or popover.
+- An undetected module with a website shows `modules.get` (“Get %@” / “获取 %@”) only while its ⓘ is open, on the line under the summary, in the summary’s secondary color with a small ↗ glyph (not an accent-colored link). The closed tile never shows it. Open the descriptor’s website on activation.
+- The final placeholder occupies a regular grid slot, 54 high, with the same corner radius. Draw a thin dashed outline (4 on, 4 off), a neutral sparkles glyph in the icon slot and the title in secondary text. Leave the interior unfilled. Expose the title as static text, with no interactive target, state or controls.
+
+Run `./scripts/windows/test-presentation.ps1 -Group moduleLibrary` to check the page in English and Simplified Chinese in both themes. The checks use synthetic engine snapshots and a fake website launcher. They also run in the `settings` group.
 
 ## Island
 
@@ -233,6 +264,22 @@ A Claude task without a live host opens through Desktop's `claude://code/continu
 - Desktop 4.23118 and later keep this data in `%LOCALAPPDATA%\Claude-Data\claude_pzs8sxrjxfjjc`, named for the package family. When that folder has a `config.json`, it is the only folder read.
 - Older builds use `%APPDATA%\Claude` or the package's `LocalCache\Roaming\Claude` and `RoamingState\Claude`. A folder containing Desktop's `.user-data-left.claude_pzs8sxrjxfjjc` marker is skipped, so leftover files from another account cannot break every mapping.
 - Without a verified mapping the card falls back to its host or reports that the starting app is unknown.
+
+## Antigravity progress guide
+
+Core supplies the steps, each step’s optional `detail` and the attention summary in `HarnessProgressGuide`. On Windows, both `newConversation` and `conversationMissedTool` occupy the step after Restart. Settings and the float show the current instruction followed by Core’s localized `example`. **Copy** copies the displayed text and briefly changes to **Copied**. The ordinary instruction has no retry detail. If the conversation missed Pacer’s progress tool, the instruction asks the user to start one more conversation and paste the same sentence. Other stages omit the example and its button. At approval, Settings shows Core’s localized step and the float its `floatTitle`; both tell the user to select option 3, “Yes, and always allow”, then click “Submit” or press Enter, and keep Core’s scope explanation.
+
+Settings draws `picture` under the current step’s detail, or under the status line when there are no steps. Adding can show just the picture. Ready and removal have no picture. WPF must draw the docked approval card in Settings and the float using Core’s English `approvalCard` labels in both languages, as Antigravity shows it above the input box: a rounded grey panel; a lock beside the bold `title` (“Allow using this MCP tool?”); `resource` in a monospaced rounded field underneath; then the `once`, `conversation`, `always` and `no` rows numbered 1 to 4 with plain grey digits (no badges) and no separators. Row 3 is drawn selected — a light grey rounded fill, primary text — with a pulsing ring; the other rows use secondary text. Row 4 shows “No”, then `noHint` (“(tell the agent what to do instead)”) in muted text, and on the same line at the right a microphone glyph, plain `skip` (“Skip”) and a blue capsule `submit` (“Submit”) with the ↵ symbol, marked by a second ring. Both rings stay still when animations are off. The illustration is decorative; the user selects and submits in Antigravity.
+
+Open and Restart show the float without taking focus. The float can also open automatically on the foreground window’s screen while Settings is closed. This requires an active Pacer session with Antigravity and its progress ring enabled. A new ID in `progressApprovals` takes priority when `floatPicture` is `antigravityApproval`. Otherwise, at `conversationMissedTool`, the float opens for a new `missedProgressConversation.id`. The host remembers approval IDs and missed conversation IDs separately until Pacer exits, even if the user closes the float or an ID disappears between polls.
+
+Core clears the retry instruction when it sees an approval or a progress report. At Ready, neither trigger opens a float, and an open float shows Ready for eight seconds. The ordinary demo suppresses both automatic opens. During a restart the float displays Core’s `pendingFloat`, then follows `floatTitle` and any `floatNext` or `floatPicture` the guide supplies.
+
+While the float is waiting on the app, it requests a connection check every 1.5 seconds. The engine also inspects the plugin when an approval ID disappears. If a setup or inspection is already running, it checks again after that operation finishes.
+
+Core reads `%USERPROFILE%\.gemini\config\config.json` through the same bounded, regular-file, link-rejecting path as the plugin switch. The profile folder itself may belong to Administrators. In `userSettings.globalPermissionGrants`, an exact match for `mcp(codex-pacer_pacer_progress/report_progress)`, `mcp(codex-pacer_pacer_progress/*)` or `mcp(*)` in `allow` makes a configured, enabled plugin ready immediately. Any of those entries in `deny` takes precedence. An edited target falls back to readiness from a completed progress report. Only the effective permission is retained. Antigravity owns the config and keeps the grant when either Pacer switch is turned off.
+
+The `approvalGuide` presentation group exercises both WPF surfaces with an in-memory module. The `antigravity` group also checks the guide supplied by the demo engine.
 
 ## Codex hooks
 
