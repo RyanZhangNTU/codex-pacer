@@ -715,7 +715,8 @@ actor EngineRuntime {
                    !(await services.validate(profile, provider: target.provider)) { throw ActivityNavigationError.unavailable }
                 let plan: EngineNavigationPlan
                 if target.provider == .antigravity {
-                    plan = .init(applicationContext: context, provider: target.provider)
+                    // A demo shows its own chat window; opening the real app could record private conversations.
+                    plan = demo ? try await navigationServices.resolve(input) : .init(applicationContext: context, provider: target.provider)
                 } else if localHarnesses.definition(for: target.provider) != nil {
                     guard let url = harnessActivities[target.provider]?.conversationURLs[target.id] else {
                         throw ActivityNavigationError.unavailable
@@ -3415,13 +3416,18 @@ actor EngineRuntime {
                 reason: state.error?.localizedDescription))
         }
         var groupedQuota: [EngineGroupedQuota] = []
+        var fullQuotas: [AgentProvider: QuotaSnapshot] = [:]
         for definition in localHarnesses.definitions where enabled.contains(definition.descriptor.id) {
             let provider = definition.descriptor.id
             guard let groups = definition.descriptor.quotaGroups, let full = localQuota[provider]?.snapshot else { continue }
             snapshots[provider] = groups.selected(full, saved: harnessQuotaGroups[groups.defaultsKey])
+            fullQuotas[provider] = full
             groupedQuota.append(EngineGroupedQuota(full, provider: provider, at: date))
         }
         snapshots = snapshots.filter { enabled.contains($0.key) }
+        // As on the Mac, dials follow the selected group but warnings read every group,
+        // so an empty group still warns while the island shows the other one.
+        let warningSnapshots = snapshots.merging(fullQuotas) { _, full in full }
         var presentationOptions = TaskPresentationOptions(hideProjects: hideProjects,
                 hostApplications: hostTracking.labels(for: visibleActivities, activities: activities, inbox: inbox) {
                     .init(name: $0.name, isClaudeDesktop: $0.isClaudeDesktop)
@@ -3453,7 +3459,7 @@ actor EngineRuntime {
                 allowsRemoteSource($0, provider: $1)
             }
         let compactWarnings = CompactWarningPresentation.items(enabled: enabled,
-            warnings: Set(reminderSettings.warnings.compactMap(CompactIslandLayout.Warning.init(rawValue:))), snapshots: snapshots,
+            warnings: Set(reminderSettings.warnings.compactMap(CompactIslandLayout.Warning.init(rawValue:))), snapshots: warningSnapshots,
             failed: failedProviders, sshIssue: sshIssue, codexHooksNeedUser: !demo && codexHooksNeedUser, wallet: wallet?.alert,
             credits: credits, creditSettings: creditSettings,
             resetLeadDays: ResetExpiryReminder.leadDays(reminderSettings.resetDays), now: date)
@@ -3808,6 +3814,16 @@ actor EngineRuntime {
             : entry?.target.claudeCloud != nil ? "cloud" : deepseek ? "wallet" : notice.kind == .lowQuota ? "quota" : "local"
         guard let source = notificationSource(provider, scope: scope) else { value.actions = []; return value }
         if provider == .antigravity {
+            // An ending names its task: open it like a row click, which clears the ended card.
+            // A notice whose task has already left the island, or a request, just opens the app.
+            if let activityID = notice.taskActivityID,
+               let taskEntry = notificationNavigation.entries.values.first(where: { $0.members.contains { $0.id == activityID } }) {
+                let target = EngineNotificationRegistry.target(taskEntry)
+                let action = EngineNotice.Action(kind: "openTask", title: provider.taskOpenLabel,
+                    reference: notificationRegistry.issue(kind: "openTask", provider: provider, source: source, scope: scope, target: target, now: date))
+                value.defaultAction = action; value.actions = [action]
+                return value
+            }
             let kind = "openAntigravity"
             let action = EngineNotice.Action(kind: kind, title: L10n.text("activity.open_app", provider.displayName),
                 reference: notificationRegistry.issue(kind: kind, provider: provider, source: source, scope: scope, target: nil, now: date))

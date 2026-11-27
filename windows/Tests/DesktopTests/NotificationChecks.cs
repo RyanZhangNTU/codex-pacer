@@ -111,6 +111,21 @@ internal static class NotificationChecks
             string launch = XElement.Parse(NotificationPayload.Xml(antigravity.Delivered[0])).Attribute("launch")!.Value;
             Check(await activation.HandleReferenceAsync(launch) && launches == 1 && !await activation.HandleAsync("openAntigravity"),
                 "An opaque notification reference must open only the app");
+
+            // An ending names its task, so its notice opens that task the way a row click does, which clears the card.
+            var task = new EngineNoticeAction("openTask", "Open Antigravity", new string('d', 32));
+            var ended = new EngineNotice("ended", "completed", "Done", "Antigravity", DefaultAction: task, Actions: [task]);
+            delivery.Receive(Frame(2, ended)); Pump();
+            Check(antigravity.Delivered.Count == 3 && antigravity.Delivered[2].DefaultAction == task, "A completion delivers its task action");
+            var link = new EngineActivityLink("antigravity:ended", "antigravity", Guid.NewGuid().ToString());
+            EngineActivityLink? opened = null;
+            var taskActivation = new NotificationActions(Task.CompletedTask, () => false, () => { }, () => Task.CompletedTask, _ => false,
+                resolve: (kind, _) => Task.FromResult(new EngineNotificationActivation(kind, kind == "openTask" ? link : null)),
+                openTask: value => { opened = value; return Task.FromResult(true); },
+                openAntigravity: () => Task.FromResult(++launches > 0));
+            string ending = XElement.Parse(NotificationPayload.Xml(antigravity.Delivered[2])).Attribute("launch")!.Value;
+            Check(await taskActivation.HandleReferenceAsync(ending) && opened == link && launches == 1,
+                "A completion opens its task through the task route, not the app-only action");
         }
         var payload = new NotificationContent("secret/task/path", "A < B", "Reply & approve <tag>", [new("topUp", "Top <Up>", new string('a', 32)), new("malicious&action=topUp", "Bad", new string('b', 32))]);
         XElement xml = XElement.Parse(NotificationPayload.Xml(payload));

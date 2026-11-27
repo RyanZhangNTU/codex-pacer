@@ -211,8 +211,9 @@ final class WindowsAntigravityTests: XCTestCase {
             func release() { waiter?.resume(); waiter = nil }
         }
         let gate = Gate()
-        private var low = false
-        func lowerBothGroups() { lock.withLock { low = true } }
+        private var fractions = [0.8, 0.4]
+        func lowerBothGroups() { lock.withLock { fractions = [0.1, 0.05] } }
+        func setFractions(gemini: Double, thirdParty: Double) { lock.withLock { fractions = [gemini, thirdParty] } }
         func replace(_ value: Int?) { lock.withLock { started = value } }
         func serverIdentity(hub: URL, pid: Int32, httpPort: UInt16) -> String? {
             processIdentity(pid: pid)
@@ -227,7 +228,7 @@ final class WindowsAntigravityTests: XCTestCase {
             }
             guard request.path.hasSuffix("/RetrieveUserQuotaSummary") else { return (404, Data()) }
             await gate.pauseIfArmed()
-            let fractions = lock.withLock { low ? [0.1, 0.05] : [0.8, 0.4] }
+            let fractions = lock.withLock { self.fractions }
             let buckets: [[String: Any]] = zip(["gemini-5h", "3p-5h"], fractions).map { id, fraction in
                 ["bucketId": id, "remainingFraction": fraction, "window": "5h", "resetTime": reset]
             }
@@ -261,6 +262,33 @@ final class WindowsAntigravityTests: XCTestCase {
                 lock.withLock { latest = value; notices += value.notices }
             }
         }
+    }
+
+    /// The island's dial follows the selected group, but the bar still warns when the other group runs out.
+    func testCompactWarningReadsTheUnselectedGroup() async throws {
+        let root = try directory(), home = root.appendingPathComponent("activity")
+        _ = try hub(home, pid: 42, port: 34343)
+        let capture = Capture(), session = Session()
+        session.setFractions(gemini: 0.8, thirdParty: 0)
+        let definition = try XCTUnwrap(HarnessRegistry.localHarnesses.first { $0.descriptor.id == .antigravity })
+        let runtime = EngineRuntime(demo: false, dismissalStore: nil, antigravityHost: session, localQuotaDirectory: root.appendingPathComponent("history"),
+            allowsStorageRecovery: false, localHarnessDefinitions: [definition], installationDetection: { .init(installed: [.antigravity]) },
+            output: { capture.receive($0) })
+        let initialize = try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": "initialize", "method": "initialize",
+            "supportsHarnessModules": true, "params": ["codexHome": root.appendingPathComponent("codex").path, "claudeHome": root.appendingPathComponent("claude").path,
+            "deepseekHome": root.appendingPathComponent("deepseek").path, "harnessHomes": ["antigravity": home.path],
+            "enabledProviders": ["antigravity"], "monitorSSH": false, "monitorWSL": false]])
+        _ = await runtime.receive(initialize)
+        let loaded = try await TestWait.until { capture.snapshot?.groupedQuota?.first?.buckets.count == 2 }
+        XCTAssertTrue(loaded)
+        XCTAssertEqual(capture.snapshot?.quota.first { $0.provider == "antigravity" }?.windows.map(\.id), ["antigravity:gemini-5h"],
+                       "Gemini stays the selected group on the dial")
+        let warning = try XCTUnwrap(capture.snapshot?.compactWarnings?.first { $0.kind == .fiveHour && $0.provider == "antigravity" },
+                                    "An empty Claude/GPT group warns while Gemini is selected")
+        XCTAssertTrue(warning.solid)
+        XCTAssertTrue(warning.help.contains(AntigravityQuotaGroup.thirdParty.name))
+        XCTAssertFalse(warning.help.contains(AntigravityQuotaGroup.gemini.name))
+        await runtime.stop()
     }
 
     func testEngineProjectsSelectedBucketAndRetiresQuotaOnHubLoss() async throws {

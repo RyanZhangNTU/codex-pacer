@@ -126,6 +126,18 @@ final class ActivityNavigationTests: XCTestCase {
         _ = await runtime.receive(try command("completeActivityOpen", ["context": link.context]))
         XCTAssertEqual(frames.error, "staleActivityOpen"); await runtime.stop()
     }
+    /// Recording a demo must never open the user's real Antigravity and its private conversations.
+    func testDemoAntigravityTaskOpensTheDemoChatInsteadOfTheApp() async throws {
+        let frames = NavigationFrames(), clock = date
+        let runtime = EngineRuntime(demo: true, now: { clock }, output: { frames.append($0) }, demoAntigravity: true)
+        _ = await runtime.receive(try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": "initialize", "method": "initialize",
+            "supportsHarnessModules": true, "params": ["providerModes": ["antigravity": "enabled"]]]))
+        let link = try XCTUnwrap(frames.snapshot?.activityLinks?.first { $0.provider == "antigravity" })
+        _ = await runtime.receive(try command("prepareActivityOpen", ["context": link.context]))
+        let plan = try frames.plan()
+        XCTAssertEqual(plan.kind, "demo"); XCTAssertEqual(plan.provider, "antigravity")
+        await runtime.stop()
+    }
     func testSourceSwitchDuringPreparationCannotReturnAnOldDestination() async throws {
         let frames = NavigationFrames(), gate = NavigationGate()
         let runtime = EngineRuntime(demo: true, navigationServices: .init(resolve: { await gate.resolve($0) }), output: { frames.append($0) })
