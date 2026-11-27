@@ -19,7 +19,7 @@ The first time you open Codex Pacer, a short guide walks you through it:
 
 1. What each part of the collapsed bar means.
 2. **Island**, which sits at the top center of the screen around the notch, or **Free Move**, which you drag anywhere.
-3. Which services to follow: Codex, Claude, DeepSeek, Antigravity on Mac, and WorkBuddy (and WorkBuddy AI, the international version, if you have it). Pacer turns on the ones it finds on this computer; the others wait under **more not found on this computer**.
+3. Which services to follow: Codex, Claude, DeepSeek, Antigravity and WorkBuddy (and WorkBuddy AI, the international version, if you have it). Pacer turns on the ones it finds on this computer; the others wait under **more not found on this computer**.
 4. Progress rings, notifications and opening at login.
 
 You can open the guide again from **Help & Updates**. After each update, a short **What's New** note shows the highlights once.
@@ -107,7 +107,7 @@ Turn on **Dot Tasks** on the Codex page to see Dot Durable tasks. It is off by d
 
 Spend made elsewhere on your account, such as web searches or another device, is included in today's total and budgets.
 
-**Antigravity on Mac.** Gemini has its own quota, and Claude and GPT share another pool. On the Antigravity settings page, choose which pool supplies the island’s short-term and weekly readings. An unused pool can show its full quota with no reset date. History shows both pools and plots weekly usage when a reset date is available.
+**Antigravity.** Gemini has its own quota, and Claude and GPT share another pool. On the Antigravity settings page, choose which pool supplies the island’s short-term and weekly readings. An unused pool can show its full quota with no reset date. History shows both pools and plots weekly usage when a reset date is available.
 
 **WorkBuddy.** WorkBuddy uses account credits. Once you sign in, its ring shows what is left of this month's credits, which refresh every plan cycle. Above the figure, the ring counts down to the refresh, or shows extra credits about to expire. Rewards and top-ups never refresh, so the ring's gap shows them as an amount, such as **+1,300**. When you have none, it says **This month**. The figure in the middle can show this month's share, this month's credits or everything available; choose it on the **Expanded Panel** page. The bar shows everything available by default. Each WorkBuddy task shows the credits its turn used.
 
@@ -123,7 +123,7 @@ The Collaboration page lists the pairs, each with its switch; Claude calls Codex
 
 **DeepSeek Harness.** Pacer follows local Harness sessions, their speed and cost.
 
-**Antigravity on Mac.** Each task shows its stage, time to first output, and the roles and states of its subagents. The island tells you when a task is waiting for a child, an answer or an approval. An ended task keeps its last measured response speed. Click a task or its notification to open Antigravity and select the conversation there; clicking also clears an ended task.
+**Antigravity.** Each task shows its stage, time to first output, and the roles and states of its subagents. The island tells you when a task is waiting for a child, an answer or an approval. An ended task keeps its last measured response speed. Click a task or its notification to open Antigravity and select the conversation there; clicking also clears an ended task.
 
 **WorkBuddy.** Pacer follows WorkBuddy's tasks on this computer: running work, questions waiting for you and finished turns. Click a task to return to its conversation. To see your credits, click **Sign In** on the WorkBuddy page; the window closes by itself once you're signed in. The page lists this month's credits, extra credits and the total, then what each kind has left and when it refreshes or expires. The **⋯** menu next to the account refreshes, switches account or signs out. History shows the credits you used each day of the last week. WorkBuddy AI, the international version, works the same way on its own page and account.
 
