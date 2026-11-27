@@ -66,9 +66,6 @@ struct SettingsHarnessSections: View {
         if let connection = model.harnessAccount(provider) {
             HarnessCreditsCard(connection: connection, settings: model.creditSettings(provider), now: model.now)
         }
-        if descriptor.hasQuotaWindows, let website = descriptor.website {
-            Link(website.host ?? provider.displayName, destination: website)
-        }
         MainCard {
             CardDisclosure(title: L10n.text("provider.custom_locations"),
                 summary: dataFolder.isEmpty ? L10n.text("settings.auto_discovery") : L10n.text("main.location.custom"),
