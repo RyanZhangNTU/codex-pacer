@@ -1864,12 +1864,15 @@
 "antigravity.quota.group" = "岛上显示的额度";
 "antigravity.quota.unavailable" = "Pacer 暂时无法读取你的 Antigravity 额度。";
 
-"progress_guide.plugin.add" = "Pacer 会自动添加进度工具。";
-"progress_guide.plugin.conversation" = "在 Antigravity 中新建对话，如果没有看到进度工具，就再开一个对话。";
-"progress_guide.plugin.restart" = "重启 Antigravity，然后新建对话。";
-"progress_guide.plugin.allow" = "出现提示时选择“Yes, always allow”，也可以在“设置 → 权限 → MCP 工具”中允许 %@。";
-"progress_guide.plugin.report" = "Antigravity 报告进度后，进度环就会显示完成比例。";
-"progress_guide.plugin.copy" = "复制服务器名称";
+"progress_guide.plugin.conversation" = "在 Antigravity 中新建对话，让它修改文件或运行命令。";
+"progress_guide.plugin.conversation_again" = "如果刚设置好时没有出现提示，就再新建一个对话，让它重试。";
+"progress_guide.plugin.restart" = "重启 Antigravity，载入进度工具。";
+"progress_guide.plugin.restarting" = "正在重启 %@…";
+"progress_guide.plugin.allow" = "当 Antigravity 针对 Pacer 的进度工具询问“%1$@”时，点击第 3 项“%2$@”。";
+"progress_guide.plugin.choose" = "点击第 3 项“%@”。";
+"progress_guide.plugin.reason" = "Antigravity 用外部工具前会先问你。";
+"progress_guide.plugin.scopes" = "只有第 3 项一直有效：选第 1 项下次还会问，选第 2 项换个对话还会问。";
+"progress_guide.plugin.report" = "现在，进度环会显示每个任务完成了多少。";
 "progress_guide.plugin.off" = "请在 Antigravity 中开启 codex-pacer 插件。";
 "progress_guide.plugin.setup" = "设置进度环";
 "progress_guide.plugin.removing" = "等待移除";
@@ -1882,8 +1885,8 @@
 "help.antigravity.quota.detail" = "你可以选择在岛上显示哪组模型的额度，并在“历史”中查看两组额度。";
 "demo.antigravity_reviewer" = "设计审阅员";
 "harness.weekly_remaining" = "本周额度剩余 %ld%%";
-"progress_guide.plugin.allow_hint" = "请允许 Pacer 使用进度工具。";
-"progress_guide.plugin.conversation_hint" = "请新建对话。";
+"progress_guide.plugin.allow_hint" = "在 Antigravity 中允许 Pacer 的进度工具。";
+"progress_guide.plugin.conversation_hint" = "在 Antigravity 中开始新任务。";
 "antigravity.quota.low" = "%@ 的短期额度快用完了。";
 "antigravity.quota.week_low" = "%@ 的本周额度快用完了。";
 "antigravity.quota.empty" = "%@ 的短期额度已用完。";

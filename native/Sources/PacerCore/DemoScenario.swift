@@ -143,7 +143,7 @@ public enum DemoScenario {
         return state.activities[0]
     }
 
-    package static func antigravityTasks(at now: Date) -> HarnessActivity {
+    package static func antigravityTasks(at now: Date, requestsProgressApproval: Bool = true) -> HarnessActivity {
         let start = now.addingTimeInterval(-65)
         func task(_ index: Int, title: String, state: SessionActivity.ObservedTurnState) -> SessionActivity {
             let session = String(format: "00000000-0000-4000-8000-%012d", 200 + index)
@@ -162,11 +162,10 @@ public enum DemoScenario {
             startedAt: start, completedAt: start.addingTimeInterval(50), source: .requestUsage)
         SessionPerformanceUpdate(id: ended.id, turnID: "demo-turn", response: response, firstTokenLatency: 3,
                                  firstTokenReportedAt: start.addingTimeInterval(3))?.apply(to: &ended)
-        let approval = PendingAttentionRequest(id: "demo-progress-approval", threadID: waiting.threadID!, sourceHostID: nil,
+        var approval = PendingAttentionRequest(id: "demo-progress-approval", threadID: waiting.threadID!, sourceHostID: nil,
             sourceName: nil, kind: .approval, detectedAt: now, provider: .antigravity)
-        var result = HarnessActivity(activities: [parent, child, waiting, ended], requests: [approval], status: .ready)
-        result.requestsProgressApproval = true
-        return result
+        approval.requestsProgressApproval = requestsProgressApproval
+        return HarnessActivity(activities: [parent, child, waiting, ended], requests: [approval], status: .ready)
     }
 
     package static func antigravityQuota(at now: Date) -> LocalHarnessQuotaState {

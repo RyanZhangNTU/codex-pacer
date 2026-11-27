@@ -5,7 +5,7 @@ public struct HarnessActivity: Equatable, Sendable {
     public var activities: [SessionActivity]
     public var requests: [PendingAttentionRequest]
     public var status: HarnessSourceStatus?
-    package var requestsProgressApproval = false
+    package var requestsProgressApproval: Bool { requests.contains(where: \.requestsProgressApproval) }
     package var scope: String?
     package var conversationURLs: [String: URL] = [:]
     package var usage: HarnessUsage?
@@ -208,7 +208,7 @@ package struct HarnessActivityFeed: Sendable {
                     removedActivityIDs: Set(rows.keys).subtracting(value.activities.map(\.id)),
                     requests: value.requests.filter { requests[$0.id] != $0 },
                     removedRequestIDs: Set(requests.keys).subtracting(value.requests.map(\.id)),
-                    status: value.status, requestsProgressApproval: value.requestsProgressApproval, conversationURLs: value.conversationURLs == previous.conversationURLs ? nil : value.conversationURLs,
+                    status: value.status, conversationURLs: value.conversationURLs == previous.conversationURLs ? nil : value.conversationURLs,
                     usage: value.usage == previous.usage ? .unchanged : .replace(value.usage)
                 ))
             }

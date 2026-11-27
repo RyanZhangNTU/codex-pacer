@@ -235,6 +235,16 @@ A Claude task without a live host opens through Desktop's `claude://code/continu
 - Older builds use `%APPDATA%\Claude` or the package's `LocalCache\Roaming\Claude` and `RoamingState\Claude`. A folder containing Desktop's `.user-data-left.claude_pzs8sxrjxfjjc` marker is skipped, so leftover files from another account cannot break every mapping.
 - Without a verified mapping the card falls back to its host or reports that the starting app is unknown.
 
+## Antigravity progress guide
+
+WPF should use Core’s `HarnessProgressGuide` for the same steps as the Mac. On Windows, restart Antigravity to load the plugin, start a new conversation and ask it to edit a file or run a command. When the permission card appears, click row 3, “Yes, and always allow”. The click submits the choice. Show the current step’s `detail`, including why Antigravity asks and when the temporary choices ask again. Use Core’s summary in the panel, sidebar and Overview.
+
+While the ring is switched on, Settings draws `picture == "antigravityApproval"` during adding, restart, new conversation, approval and recovery (including plugin disabled and conflict). Hide it at ready and during removal. The float draws `floatPicture` when the matching card is pending, even if Settings is still showing installation or recovery. Use the English labels from `approvalCard` in both languages. Draw a muted grey panel with roughly 20-point rounded corners and a subtle outline. Put a small grey shield-and-lock “Permission” label above the bold “Allow using this MCP tool?” title. The monospaced field contains only `codex-pacer_pacer_progress/report_progress`. Below it, draw one rounded group of four full-width rows divided by thin separators. Give each a 20×20 rounded square number badge in monospace. Label the rows “Yes, allow this time”, “Yes, and always allow in this conversation”, “Yes, and always allow” and “Deny”, in that order. All rows start unselected. Draw the guide’s pulsing ring around row 3 only.
+
+Open the nonactivating float on Open or Restart. Also open it automatically when Pacer sees a waiting MCP permission request for its exact progress target, once per conversation ID and step index while setup is pending, including with Settings closed. Closing it dismisses that card across polling gaps. Follow `floatTitle` and `floatNext` as the guide advances. Ready takes precedence over a pending card. An open float shows the result for eight seconds. The ordinary demo opens no float automatically.
+
+Core reads `%USERPROFILE%\.gemini\config\config.json` through the same bounded, regular-file, link-rejecting path as the plugin switch. The profile folder itself may belong to Administrators. In `userSettings.globalPermissionGrants`, an exact match for `mcp(codex-pacer_pacer_progress/report_progress)`, `mcp(codex-pacer_pacer_progress/*)` or `mcp(*)` in `allow` makes a configured, enabled plugin ready immediately. Any of those entries in `deny` takes precedence. An edited target falls back to readiness from a completed progress report. Only the effective permission is retained. Antigravity owns the config and keeps the grant when either Pacer switch is turned off.
+
 ## Codex hooks
 
 Local Codex reaches Pacer only through the shared [Codex hooks](development.md#codex-hooks); on Windows only the start differs.

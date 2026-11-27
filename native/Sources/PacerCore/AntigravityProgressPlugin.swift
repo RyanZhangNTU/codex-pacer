@@ -12,6 +12,7 @@ package enum ProgressPluginRemovalError: Error { case inUse }
 package struct AntigravityProgressPlugin {
     static let folder = "codex-pacer"
     package static let server = folder + "_" + CodexProgressEvidence.server
+    static let toolTarget = server + "/" + CodexProgressEvidence.tool
     static let rule = Data((ProgressPrompt.ask(tool: "`call_mcp_tool` with ServerName `" + server +
         "`, ToolName `report_progress` and Arguments `{\"percent\": N}`", deferred: false) + "\n").utf8)
     static let manifest = Data("{\"name\":\"codex-pacer\"}\n".utf8)
@@ -63,13 +64,39 @@ package struct AntigravityProgressPlugin {
         try JSONSerialization.data(withJSONObject: ["mcpServers": [CodexProgressEvidence.server:
             ["command": command.executable, "args": command.arguments] as [String: Any]]], options: [.sortedKeys, .withoutEscapingSlashes]) + Data([10])
     }
-    private func disabled() throws -> Bool {
-        guard let data = try bytes(target.home.appendingPathComponent("config.json")) else { return false }
-        let plugins = try JSONFieldView.document(data, maximumBytes: 2 * 1024 * 1024).fields(["plugins"])["plugins"]
-        let settings = try plugins?.fields([Self.folder])[Self.folder]?.fields(["enabled"])["enabled"]
-        guard let settings else { return false }
-        guard let enabled = settings.boolean() else { throw Issue.conflict }
-        return !enabled
+    /// Project the plugin switch and the effective grant from the same bounded read.
+    private func connection(old: Install?, checkOnly: Bool) throws -> LocalHarnessProgressConnection? {
+        if old == nil && storage.exists(plugin) { throw Issue.conflict }
+        guard let data = try bytes(target.home.appendingPathComponent("config.json")) else { return nil }
+        guard let fields = try? JSONFieldView.document(data, maximumBytes: 2 * 1024 * 1024).fields(["plugins", "userSettings"])
+        else { throw Issue.conflict }
+        if let setting = try fields["plugins"]?.fields([Self.folder])[Self.folder]?.fields(["enabled"])["enabled"] {
+            guard let enabled = setting.boolean() else { throw Issue.conflict }
+            if !enabled {
+                try revoke(checkOnly: checkOnly)
+                return .disabled
+            }
+        }
+        // A partial or unfamiliar grant list gives no permission evidence.
+        return try? Self.progressGrant(in: fields["userSettings"])
+    }
+
+    private static func progressGrant(in settings: JSONFieldView?) throws -> LocalHarnessProgressConnection? {
+        guard let grants = try settings?.fields(["globalPermissionGrants"])["globalPermissionGrants"]?.fields(["allow", "deny"]) else { return nil }
+        func matches(_ list: JSONFieldView?) throws -> Bool {
+            var found = false
+            try list?.forEachElement { entry in
+                guard entry.isString else { throw JSONFieldView.Failure.malformed }
+                // Each accepted literal is shorter than the decoding limit, so a longer target cannot match.
+                switch entry.string(limit: 64) {
+                case "mcp(\(toolTarget))", "mcp(\(server)/*)", "mcp(*)": found = true
+                default: break
+                }
+            }
+            return found
+        }
+        if try matches(grants["deny"]) { return .needsTrust }
+        return try matches(grants["allow"]) ? .trusted : nil
     }
 
     private func validateRoots() throws {
@@ -82,11 +109,7 @@ package struct AntigravityProgressPlugin {
     func preflight(checkOnly: Bool = false) -> LocalHarnessProgressSetup.State? {
         do {
             try validateRoots()
-            if try record() == nil && storage.exists(plugin) { return .init(.conflict) }
-            if try disabled() {
-                try revoke(checkOnly: checkOnly)
-                return .init(.configured, connection: .disabled)
-            }
+            if try connection(old: record(), checkOnly: checkOnly) == .disabled { return .init(.configured, connection: .disabled) }
             return nil
         } catch {
             if !checkOnly { try? revoke() }
@@ -115,7 +138,8 @@ package struct AntigravityProgressPlugin {
                 try revoke(checkOnly: checkOnly)
                 return try remove(old, checkOnly: checkOnly)
             }
-            if let problem = preflight(checkOnly: checkOnly) { return problem }
+            let connection = try connection(old: old, checkOnly: checkOnly)
+            if connection == .disabled { return .init(.configured, connection: .disabled) }
             guard LocalHarnessProgressSetup.validPath(command.executable) else { return .init(.failed) }
             if let existing = try bytes(flag), old == nil || existing != LocalHarnessProgressSetup.on { throw Issue.conflict }
             try directory(plugin); try directory(rules)
@@ -147,7 +171,7 @@ package struct AntigravityProgressPlugin {
             if let reportAt, reportAt > install.added { install.reported = true }
             if install != pending { try replace(journal, JSONEncoder().encode(install)) }
             if try bytes(flag) == nil { try replace(flag, LocalHarnessProgressSetup.on) }
-            return .init(.configured, reported: install.reported, addedAt: install.added)
+            return .init(.configured, connection: connection, reported: install.reported, addedAt: install.added)
         } catch Issue.conflict, ClaudeHookInstaller.Failure.unsafePath {
             if target.enabled && !checkOnly { try? revoke() }
             return .init(.conflict)

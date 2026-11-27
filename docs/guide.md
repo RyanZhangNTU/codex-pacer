@@ -85,10 +85,11 @@ Codex, Claude Code, DeepSeek Harness, WorkBuddy and Antigravity each report how 
 
 Estimates are the agent's own guess, so a ring can move back. Rings are on by default; turn them off for each service with **Progress Ring** on its page in the main window. Start a new session after turning a ring on.
 
-On the Antigravity page on Mac, turn on **Progress Ring** and start a new conversation in Antigravity.
-If the tool is missing, start another conversation.
-At the first permission prompt, choose **Yes, always allow**, or allow the server `codex-pacer_pacer_progress` in Antigravity’s **Settings → Permissions → MCP tools**.
-You can copy the server name from Pacer’s guide.
+Open **Progress Ring** on Pacer’s Antigravity page. During setup, Settings shows the permission card to look for. On Windows, restart Antigravity so it loads the tool.
+
+1. Start a new conversation in Antigravity and ask it to edit a file or run a command. If the card does not appear just after setup, try the task in one more new conversation.
+2. When Antigravity asks **“Allow using this MCP tool?”** for Pacer’s progress tool, Pacer opens a floating guide. Click row 3, **“Yes, and always allow”**. Antigravity asks before using an outside tool. With “Yes, allow this time” it asks again at the next report. With “Yes, and always allow in this conversation” it asks again in a new conversation. Only “Yes, and always allow” stops the questions.
+3. Settings shows **Ready** as soon as Antigravity saves the grant. The ring fills as each task reports progress. Antigravity remembers your choice if you turn the ring or module off and back on.
 
 Codex tasks on SSH hosts, and in WSL on Windows, report too: Pacer sets reporting up on each connected host that runs Codex, including hosts added directly in Codex Desktop. Tasks that were already running pick it up once Codex reconnects to the host.
 

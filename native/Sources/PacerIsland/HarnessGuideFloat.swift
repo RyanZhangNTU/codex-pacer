@@ -77,12 +77,12 @@ import SwiftUI
         update()
     }
 
-    private func update() {
-        guard let provider, let model, Date().timeIntervalSince(started) < Self.lifetime else { return close() }
+    func update(at now: Date = Date()) {
+        guard let provider, let model, now.timeIntervalSince(started) < Self.lifetime else { return close() }
         let guide = model.progressGuide(provider)
         // While Pacer restarts the app, the app's own steps (even "done") wait for it to return.
         if model.harnessRestartInFlight(provider), !followsApp {
-            if Date().timeIntervalSince(opened) > Self.wait { return close() }
+            if now.timeIntervalSince(opened) > Self.wait { return close() }
             return resize()
         }
         if Self.appStep(guide, provider: provider) != nil {
@@ -90,14 +90,14 @@ import SwiftUI
             if !followsApp { followsApp = true }
             // Done: it says so for a few seconds, then steps aside.
             if guide?.stage == .firstTask || guide?.stage == .ready {
-                if doneSince == nil { doneSince = Date() }
-                if let doneSince, Date().timeIntervalSince(doneSince) >= Self.doneShown { return close() }
-            }
+                if doneSince == nil { doneSince = now }
+                if let doneSince, now.timeIntervalSince(doneSince) >= Self.doneShown { return close() }
+            } else { doneSince = nil }
         } else if followsApp {
             // Nothing left to click once it followed the app, read twice in a row.
             emptyChecks += 1
             if emptyChecks >= 2 { return close() }
-        } else if pending == nil || Date().timeIntervalSince(opened) > Self.wait || !Self.keepsPending(guide, provider: provider) {
+        } else if pending == nil || now.timeIntervalSince(opened) > Self.wait || !Self.keepsPending(guide, provider: provider) {
             return close()
         }
         resize()
@@ -161,14 +161,15 @@ final class FloatPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-private struct GuideFloatContent: View {
+struct GuideFloatContent: View {
     static let width: CGFloat = 400
     @ObservedObject var model: IslandModel
     @ObservedObject var float: HarnessGuideFloat
     let provider: AgentProvider
+    var language: AppLanguage = L10n.language
 
     var body: some View {
-        let guide = model.progressGuide(provider)
+        let guide = model.progressGuide(provider, language: language)
         let step = HarnessGuideFloat.appStep(guide, provider: provider)
         // Until the app shows a step of its own, the float says what Pacer is doing.
         let waiting = !float.followsApp && (step == nil || model.harnessRestartInFlight(provider))
@@ -182,15 +183,9 @@ private struct GuideFloatContent: View {
                     Text(title).font(.system(size: 14.5, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
                 }
             }
-            if !waiting {
-                Group {
-                    switch guide?.picture {
-                    case .customConnector?: CustomConnectorPicture()
-                    case .trust?: TrustPicture(provider: provider)
-                    case nil: EmptyView()
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if !waiting, let guide, let picture = guide.floatPicture {
+                ProgressGuidePicture(picture: picture, approvalCard: guide.approvalCard, provider: provider)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             if let next {
                 Text(next).font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

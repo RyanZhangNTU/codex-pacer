@@ -5,12 +5,12 @@ import SwiftUI
 
 /// The progress ring card for a module whose app must trust Pacer's tool,
 /// as Core words it: the title with ⓘ, a chip and the switch; then the
-/// steps while setting up, or one line and its action for a problem. Ready,
-/// it is the switch row alone, like any other service's ring.
+/// steps while setting up, then the result or a recovery action.
 struct ProgressGuideRows: View {
     @ObservedObject var model: IslandModel
     let provider: AgentProvider
     @Binding var isOn: Bool
+    var language: AppLanguage = L10n.language
     /// The connectors link did not open; the app itself opened instead, if it could.
     @State private var openFailed = false
     static let anchor = "progress-guide"
@@ -22,17 +22,17 @@ struct ProgressGuideRows: View {
     }
 
     /// The card shown: nothing while the ring is off, unless removing the tool failed.
-    static func guide(_ model: IslandModel, _ provider: AgentProvider, isOn: Bool) -> HarnessProgressGuide? {
-        let guide = model.progressGuide(provider)
+    static func guide(_ model: IslandModel, _ provider: AgentProvider, isOn: Bool, language: AppLanguage? = nil) -> HarnessProgressGuide? {
+        let guide = model.progressGuide(provider, language: language)
         return isOn || guide?.stage == .cleanupFailed || guide?.stage == .removalPending ? guide : nil
     }
     /// Steps or a problem to show under the header.
     static func opens(_ guide: HarnessProgressGuide?) -> Bool { guide.map(ProgressGuideBody.shows) == true }
 
     var body: some View {
-        let guide = Self.guide(model, provider, isOn: isOn)
+        let guide = Self.guide(model, provider, isOn: isOn, language: language)
         VStack(alignment: .leading, spacing: 0) {
-            ProgressGuideHeader(guide: guide, info: guide?.info ?? model.progressGuideInfo(provider), isOn: $isOn)
+            ProgressGuideHeader(guide: guide, info: guide?.info ?? model.progressGuideInfo(provider), isOn: $isOn, language: language)
                 .frame(minHeight: 28)
             if let guide, Self.opens(guide) {
                 Rectangle().fill(MainPalette.separator).frame(height: 1).padding(.top, 8)
@@ -58,10 +58,12 @@ struct ProgressGuideRows: View {
     }
 
     private func perform(_ action: HarnessProgressGuide.Action) {
-        if model.isDemo, action != .retry { model.openDesktopApplication(provider); return }
+        if model.isDemo, action != .retry, action != .openApp { model.openDesktopApplication(provider); return }
         switch action {
         case .retry: model.syncLocalHarnessProgress(force: provider)
-        case .openApp: Task { openFailed = !(await MacLocalHarnessApplication.openApplication(provider: provider)) }
+        case .openApp:
+            let screen = NSApp.keyWindow?.screen
+            Task { openFailed = !(await model.openHarnessGuideApp(provider, screen: screen)) }
         case .openConnectors:
             // Without the connectors link, the app itself is the next best place.
             let screen = NSApp.keyWindow?.screen
@@ -81,10 +83,11 @@ private struct ProgressGuideHeader: View {
     let guide: HarnessProgressGuide?
     let info: String
     @Binding var isOn: Bool
+    let language: AppLanguage
     @State private var showsInfo = false
 
     var body: some View {
-        let title = L10n.text("main.claude.ring")
+        let title = L10n.text("main.claude.ring", language: language)
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text(title).font(.system(size: 13, weight: ProgressGuideRows.opens(guide) ? .semibold : .regular))
@@ -144,7 +147,7 @@ struct ProgressGuideBody: View {
     var restart: IslandModel.HarnessRestart?
     let perform: (HarnessProgressGuide.Action) -> Void
 
-    static func shows(_ guide: HarnessProgressGuide) -> Bool { !guide.steps.isEmpty || guide.line != nil || guide.action != nil }
+    static func shows(_ guide: HarnessProgressGuide) -> Bool { !guide.steps.isEmpty || guide.line != nil || guide.action != nil || guide.picture != nil }
 
     var body: some View {
         if guide.steps.isEmpty {
@@ -152,6 +155,7 @@ struct ProgressGuideBody: View {
                 if let line = guide.line {
                     Text(line).font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true)
                 }
+                ProgressGuidePicture(picture: guide.picture, approvalCard: guide.approvalCard, provider: provider)
                 actionButton
             }
             .padding(.vertical, 4)
@@ -175,23 +179,12 @@ struct ProgressGuideBody: View {
                     .foregroundStyle(step.state == .done ? AnyShapeStyle(.secondary) : step.state == .pending ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(minHeight: 20)
-                if let server = step.copyText {
-                    Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(server, forType: .string)
-                    } label: {
-                        Label(server, systemImage: "doc.on.doc")
-                    }
-                    .buttonStyle(.borderless)
-                    .help(L10n.text("progress_guide.plugin.copy"))
-                    .accessibilityLabel(L10n.text("progress_guide.plugin.copy") + ", " + server)
-                }
                 if current {
-                    switch guide.picture {
-                    case .customConnector?: CustomConnectorPicture()
-                    case .trust?: TrustPicture(provider: provider)
-                    case nil: EmptyView()
+                    if let detail = step.detail {
+                        Text(detail).font(.system(size: 12.5)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
+                    ProgressGuidePicture(picture: guide.picture, approvalCard: guide.approvalCard, provider: provider)
                     if guide.action == .restartApp, restart == .confirm {
                         Text(L10n.text("progress_guide.restart.confirm", provider.displayName)).font(.system(size: 12))
                             .foregroundStyle(MainPalette.attention).fixedSize(horizontal: false, vertical: true)
@@ -257,6 +250,63 @@ private struct StepDot: View {
             }
         }
         .frame(width: 20, height: 20)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Both surfaces draw the current step from the same Core presentation.
+struct ProgressGuidePicture: View {
+    let picture: HarnessProgressGuide.Picture?
+    let approvalCard: AntigravityApprovalCard?
+    let provider: AgentProvider
+
+    var body: some View {
+        switch picture {
+        case .customConnector: CustomConnectorPicture()
+        case .trust: TrustPicture(provider: provider)
+        case .antigravityApproval:
+            if let approvalCard { AntigravityApprovalPicture(card: approvalCard) }
+        case nil: EmptyView()
+        }
+    }
+}
+
+/// A drawing of the permission prompt. Only the lasting grant is highlighted.
+struct AntigravityApprovalPicture: View {
+    let card: AntigravityApprovalCard
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(card.permission, systemImage: "lock.shield")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(card.title).font(.system(size: 14, weight: .bold))
+            Text(card.resource).font(.system(size: 11, design: .monospaced))
+                .lineLimit(1).minimumScaleFactor(0.8)
+                .padding(.horizontal, 8).padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.secondary.opacity(0.22)))
+            VStack(spacing: 0) {
+                ForEach(Array(card.choices.enumerated()), id: \.offset) { index, choice in
+                    if index > 0 { Divider() }
+                    HStack(spacing: 8) {
+                        Text(String(index + 1)).font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 20, height: 20)
+                            .background(Color.primary.opacity(0.09), in: RoundedRectangle(cornerRadius: 5))
+                        Text(choice).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .overlay { if choice == card.always { PulsingRing(cornerRadius: 6, lineWidth: 2) } }
+                }
+            }
+            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 9))
+        }
+        .padding(12)
+        .frame(maxWidth: 420, alignment: .leading)
+        .background(Color.gray.opacity(0.12), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.secondary.opacity(0.35)))
         .accessibilityHidden(true)
     }
 }

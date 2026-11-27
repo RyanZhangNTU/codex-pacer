@@ -301,7 +301,6 @@ internal sealed partial class SettingsWindow
             var line = new Grid { Margin = new Thickness(0, index == 0 ? 0 : 4, 0, index == guide.Steps.Count - 1 ? 12 : 4) };
             line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });
             line.ColumnDefinitions.Add(new ColumnDefinition());
-            line.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             var mark = new Border { Width = 20, Height = 20, CornerRadius = new CornerRadius(10), VerticalAlignment = VerticalAlignment.Top, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 1, 0, 0) };
             var number = new TextBlock { FontSize = 11, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
                 Text = step.State == "done" ? "\u2713" : (index + 1).ToString(System.Globalization.CultureInfo.CurrentCulture) };
@@ -317,21 +316,12 @@ internal sealed partial class SettingsWindow
             title.SetResourceReference(TextBlock.ForegroundProperty, step.State switch { "done" => "SettingsSecondary", "current" => "SettingsPrimary", _ => "SettingsDisabled" });
             body.Children.Add(title);
             // Only the current step shows where to click, as one large picture.
-            if (step.State == "current" && guide.Picture is string picture)
+            if (step.State == "current" && guide.Picture is "trust" or "customConnector")
             {
-                var art = picture == "trust" ? TrustPicture(provider) : CustomConnectorPicture();
+                var art = guide.Picture == "trust" ? TrustPicture(provider) : CustomConnectorPicture();
                 art.Margin = new Thickness(0, 8, 0, 0); body.Children.Add(art);
             }
             if (step.State == "current" && (guide.Action != null || waitingText != null)) body.Children.Add(ActionRow());
-            if (step.CopyText is { Length: > 0 } server)
-            {
-                string label = ui.Text("progress_guide.plugin.copy");
-                var copy = new Button { Content = label, VerticalAlignment = VerticalAlignment.Top };
-                // With string content, the button's automation name drops "_" as an access key marker; "__" keeps one.
-                Identify(copy, id + ".progress_copy", label + ", " + server.Replace("_", "__", StringComparison.Ordinal));
-                copy.Click += (_, _) => { try { Clipboard.SetText(server); } catch (System.Runtime.InteropServices.COMException) { ShowIssue("windows.progress.copy_failed"); } };
-                Grid.SetColumn(copy, 2); line.Children.Add(copy);
-            }
             line.Children.Add(body);
             Identify(line, id + ".progress_step" + index, step.Title);
             AutomationProperties.SetItemStatus(line, ui.Text("progress_guide.state." + step.State));

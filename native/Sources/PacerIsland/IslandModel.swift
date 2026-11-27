@@ -955,6 +955,7 @@ final class IslandModel: ObservableObject {
                 if !definition.installsProgressPlugin, state?.setup == .configured, self.localHarnessProgressStatuses[id]?.reported == true { state?.reported = true }
                 self.localHarnessProgressStatuses[id] = state
                 self.localHarnessProgressTasks[id] = nil
+                self.updateProgressApprovalFloat(id)
                 // A report can land while the installation is finishing.
                 if definition.installsProgressPlugin, let snapshot = self.localHarnessActivities[id],
                    snapshot.activities.compactMap({ $0.currentProgress?.reportedAt }).max() != reportAt {
@@ -1040,11 +1041,35 @@ final class IslandModel: ObservableObject {
         return true
     }
 
+    /// Open a guide that leads straight to the app (no deep link).
+    func openHarnessGuideApp(_ provider: AgentProvider, screen: NSScreen?) async -> Bool {
+        showHarnessFloat(provider, on: screen)
+        if demo { return true }
+        let opened = await MacLocalHarnessApplication.openApplication(provider: provider)
+        if !opened, harnessGuideFloat.provider == provider { harnessGuideFloat.close() }
+        return opened
+    }
+
+    /// The projection keys Pacer approvals by conversation and step, across polling gaps.
+    private var shownProgressApprovals: Set<String> = []
+
+    private func updateProgressApprovalFloat(_ provider: AgentProvider) {
+        guard provider == .antigravity, !sleeping, !stopped, !demo || demoArguments?.contains("--demo-antigravity-guide") == true,
+              let snapshot = localHarnessActivities[provider], snapshot.requestsProgressApproval,
+              progressGuide(provider)?.floatPicture == .antigravityApproval else { return }
+        let pending = snapshot.requests.lazy.filter(\.requestsProgressApproval).map(\.id)
+        guard pending.contains(where: { !shownProgressApprovals.contains($0) }) else { return }
+        shownProgressApprovals.formUnion(pending)
+        if harnessGuideFloat.provider != provider { showHarnessFloat(provider, on: nil) }
+    }
+
     /// The float comes up with the click, saying to wait while the app
     /// restarts or opens, and follows the app's steps from there.
     private func showHarnessFloat(_ provider: AgentProvider, on screen: NSScreen?) {
-        guard let stage = progressGuide(provider)?.stage, let name = HarnessRegistry.descriptor(for: provider)?.name else { return }
-        harnessGuideFloat.show(provider, on: screen, pending: HarnessProgressGuide.pendingFloat(stage: stage, name: name))
+        guard let guide = progressGuide(provider) else { return }
+        let pending = HarnessProgressGuide.pendingFloat(stage: guide.stage, name: provider.displayName)
+        guard pending != nil || guide.floatTitle != nil || guide.stage == .ready else { return }
+        harnessGuideFloat.show(provider, on: screen, pending: pending)
     }
 
     /// Quits the app the way its own Quit does, waits for it to close, then
@@ -1052,7 +1077,7 @@ final class IslandModel: ObservableObject {
     /// guide beside it. Over a running task the first click only asks to
     /// confirm. It never forces the app to quit.
     func restartHarness(_ provider: AgentProvider, screen: NSScreen? = nil) async {
-        guard localHarnesses.definition(for: provider)?.connectorsPath != nil, !harnessRestarting.contains(provider) else { return }
+        guard let definition = localHarnesses.definition(for: provider), definition.descriptor.progressConnector, !harnessRestarting.contains(provider) else { return }
         let busy = visibleActivities.contains { $0.provider == provider && [.running, .waitingForInput].contains($0.phase) }
         if busy, harnessRestarts[provider] != .confirm { harnessRestarts[provider] = .confirm; return }
         // A demo never quits a real app, and an app Pacer can't open again stays as it is.
@@ -1080,7 +1105,9 @@ final class IslandModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 250_000_000)
         }
         refreshLocalHarnessApps()
-        if !(await openHarnessConnectors(provider, screen: screen, requested: requested)) { harnessRestarts[provider] = .cannotOpen }
+        let opened = if definition.connectorsPath != nil { await openHarnessConnectors(provider, screen: screen, requested: requested) }
+                     else { await openHarnessGuideApp(provider, screen: screen) }
+        if !opened { harnessRestarts[provider] = .cannotOpen }
     }
 
     /// The app's own log tells which page it shows since the card opened its
@@ -1149,7 +1176,7 @@ final class IslandModel: ObservableObject {
 
     /// The progress ring card Core words for a module whose app must trust
     /// Pacer's tool; nil for other modules and while the ring is off.
-    func progressGuide(_ provider: AgentProvider) -> HarnessProgressGuide? {
+    func progressGuide(_ provider: AgentProvider, language: AppLanguage? = nil) -> HarnessProgressGuide? {
         guard let descriptor = HarnessRegistry.descriptor(for: provider), descriptor.progressConnector else { return nil }
         let state = localHarnessProgressStatuses[provider]
         return HarnessProgressGuide(setup: state?.setup, connection: state?.connection, reported: state?.reported ?? false,
@@ -1157,7 +1184,7 @@ final class IslandModel: ObservableObject {
                                     addedAt: state?.addedAt, removedAt: state?.removedAt, app: localHarnessApps[provider],
                                     view: harnessAppViews[provider], openedConnectors: harnessOpenedConnectors[provider] != nil,
                                     pluginPlatform: localHarnesses.definition(for: provider)?.installsProgressPlugin == true ? .macOS : nil,
-                                    requestsApproval: localHarnessActivities[provider]?.requestsProgressApproval == true)
+                                    requestsApproval: localHarnessActivities[provider]?.requestsProgressApproval == true, language: language)
     }
 
     /// The ⓘ text, also while the ring is off and there is no card to word it.
@@ -1184,10 +1211,15 @@ final class IslandModel: ObservableObject {
     var progressGuideHints: [(provider: AgentProvider, summary: String)] {
         let running = Set(visibleActivities.filter { $0.phase == .running }.map(\.provider))
         return HarnessRegistry.localHarnesses.map(\.descriptor.id).compactMap { provider in
-            guard running.contains(provider), let guide = progressGuide(provider), guide.attention, let summary = guide.summary,
+            guard running.contains(provider) || localHarnessActivities[provider]?.requestsProgressApproval == true,
+                  let guide = progressGuide(provider), guide.attention, let summary = guide.summary,
                   progressGuideHintDismissals[provider] != guide.stage else { return nil }
-            return (provider, provider.displayName + " · " + summary)
+            return (provider, Self.progressAttentionTitle(summary, provider: provider))
         }
+    }
+    /// Some guides name the app in the instruction itself.
+    static func progressAttentionTitle(_ summary: String, provider: AgentProvider) -> String {
+        summary.contains(provider.displayName) ? summary : provider.displayName + " · " + summary
     }
     func dismissProgressGuideHint(_ provider: AgentProvider) {
         guard let stage = progressGuide(provider)?.stage else { return }
@@ -2961,6 +2993,7 @@ final class IslandModel: ObservableObject {
         combineActivities()
         localHarnessRevision &+= 1
         noteLocalHarnessProgress(provider, snapshot: snapshot)
+        updateProgressApprovalFloat(provider)
     }
     private func resetLocalHarness(_ provider: AgentProvider) {
         if let store = localHistoryStores[provider] {
@@ -3293,7 +3326,6 @@ final class IslandModel: ObservableObject {
         for snapshot in DemoScenario.quota(.claude, at: now) { claudeHistory.record(snapshot); claudeQuota = snapshot }
         if demoArguments?.contains("--demo-antigravity") == true {
             localQuota[.antigravity] = DemoScenario.antigravityQuota(at: now)
-            localHarnessProgressStatuses[.antigravity] = .init(.configured)
         }
         makeDeepSeekDemo()
         configureHarnessAccounts()
@@ -3305,6 +3337,12 @@ final class IslandModel: ObservableObject {
         activityState.demoActivities = demoActivities.filter { !sshMonitoring.offIDs.contains($0.sourceHostID ?? "") }
         let update = activityState.applyDemoSnapshot(enabled: Set(enabledProviders), at: now, visibility: activityVisibility)
         applyActivityUpdate(update); present(update.notices)
+    }
+    func applyDemoAntigravityProgress(_ snapshot: HarnessActivity, setup: LocalHarnessProgressSetup.State) {
+        guard demo else { return }
+        localHarnessActivities.replace(.antigravity, with: snapshot)
+        localHarnessProgressStatuses[.antigravity] = setup
+        updateProgressApprovalFloat(.antigravity)
     }
     func setDemoStage(_ stage: DemoTaskStage) {
         guard demo else { return }
@@ -3322,10 +3360,12 @@ final class IslandModel: ObservableObject {
             demoRequests = cloud.attention
         }
         if demoArguments.contains("--demo-antigravity") {
-            let snapshot = DemoScenario.antigravityTasks(at: now)
+            let guideDemo = demoArguments.contains("--demo-antigravity-guide")
+            let snapshot = DemoScenario.antigravityTasks(at: now, requestsProgressApproval: !guideDemo || stage == .responding)
             observed += snapshot.activities
             demoRequests += snapshot.requests
-            localHarnessActivities.replace(.antigravity, with: snapshot)
+            applyDemoAntigravityProgress(snapshot, setup: .init(guideDemo && stage == .thinking ? .settingUp : .configured,
+                                                               reported: guideDemo && stage == .completed))
         }
         discoveredCodexTargets = [.init(id: ConnectionSource.sshPrefix + "demo", name: "SSH", alias: "demo", home: "~/.codex")]
         discoveredClaudeTargets = []; claudeRemoteTargets = []

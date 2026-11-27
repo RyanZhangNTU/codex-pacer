@@ -68,7 +68,7 @@ The local definition registers the app, its data folder, the Gemini and Claude/G
 
 - **Local host port.** `LocalHarnessIO` can supply an `AntigravityLocalHost` to verify the process and listener and send a bounded loopback request. Core owns the request allowlist, source generation and revocation.
 - **Local quota coordinator.** A monitor implementing `LocalHarnessQuotaSource` publishes a coordinator factory when it verifies a session and clears it on loss. The host supplies the history store and installation credential, refreshes through `LocalHarnessQuotaCoordinator`, and rejects updates from a retired owner. A descriptor’s `quotaGroups` selects the island bucket. History and quota warnings receive the full snapshot.
-- **Owned progress plugin.** A definition with `installsProgressPlugin` selects the plugin installer in `progressTarget`. Installation and cleanup use the fixed customization profile, independent of the chosen task folder. The guide can open the app and copy its server name. A completed call to the owned tool attributes progress to the calling task.
+- **Owned progress plugin.** A definition with `installsProgressPlugin` selects the plugin installer in `progressTarget`. Installation and cleanup use the fixed customization profile, independent of the chosen task folder. The guide opens the app and illustrates its approval card when a request identifies Pacer’s own progress tool. A completed call to the owned tool attributes progress to the calling task.
 
 The Windows engine uses the same monitor and quota coordinator. Its installation and listener checks are described in [Windows engine development](windows-engine.md#antigravity).
 

@@ -5,7 +5,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
-using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Media;
 using CodexPacer.Windows;
@@ -58,9 +57,9 @@ internal static class AntigravityPresentationChecks
             Click(Get<Button>(settings, Prefix + "website"));
             Check(website?.AbsoluteUri == "https://antigravity.google/", "The module's website must use its descriptor URL");
             var guide = Module()!.ProgressGuide!;
-            Check(guide.Stage == "allowTool" && guide.Steps.Count == 4 && guide.Steps[1].Title == ui.Text("progress_guide.plugin.restart")
-                && SpokenName(Get<Button>(settings, Prefix + "progress_copy")).EndsWith(", " + guide.Steps[2].CopyText!, StringComparison.Ordinal),
-                "The plugin guide must explain restarting and approving the named server");
+            Check(guide.Stage == "allowTool" && guide.Steps.Count == 4 && guide.Steps[0].Title == ui.Text("progress_guide.plugin.restart")
+                && guide.Steps[2].State == "current" && guide.Picture == "antigravityApproval",
+                "The guide must lead from restart and a new task to the permission card");
             CheckGuideStates(settings, ui, guide);
             settings.CapturePreview(Path.Combine(output, $"antigravity-settings-{language}-{(dark ? "dark" : "light")}.png"));
 
@@ -163,7 +162,7 @@ internal static class AntigravityPresentationChecks
 
     private static void CheckGuideStates(SettingsWindow settings, UiText ui, HarnessProgressGuide guide)
     {
-        foreach (var (stage, index) in new[] { ("adding", 0), ("restartForPlugin", 1), ("allowTool", 2) })
+        foreach (var (stage, index) in new[] { ("restartForPlugin", 0), ("newConversation", 1), ("allowTool", 2) })
         {
             var steps = guide.Steps.Select((step, i) => step with { State = i < index ? "done" : i == index ? "current" : "pending" }).ToArray();
             settings.RefreshHarnessProgressGuide(Provider, guide with { Stage = stage, Steps = steps }, true);
@@ -178,15 +177,18 @@ internal static class AntigravityPresentationChecks
         settings.UpdateLayout();
         Check(Get<TextBlock>(settings, Prefix + "progress_line").Text == quit && Get<Button>(settings, Prefix + "progress_action").IsVisible,
             "Pending removal must explain when to quit the app and offer a retry");
-        settings.RefreshHarnessProgressGuide(Provider, guide with { Stage = "ready", Steps = [], Line = null, Action = null }, true);
-        Check(Get<StackPanel>(settings, Prefix + "progress_guide").Visibility == Visibility.Collapsed, "A ready plugin must retire its steps");
+        foreach (var stage in new[] { "adding", "ready" })
+        {
+            string? message = stage == "ready" ? ui.Text("progress_guide.plugin.report") : null;
+            settings.RefreshHarnessProgressGuide(Provider, guide with { Stage = stage, Steps = [], Line = message, Action = null }, true);
+            if (message != null) Check(Get<TextBlock>(settings, Prefix + "progress_line").Text == message, "Ready must explain the ring");
+            else Check(Get<StackPanel>(settings, Prefix + "progress_guide").Visibility == Visibility.Collapsed, "Adding shows only the chip");
+        }
         settings.RefreshHarnessProgressGuide(Provider, guide, true);
     }
 
     private static void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
     private static string Name(DependencyObject element) => AutomationProperties.GetName(element);
-    /// What UI Automation reads, after the control's own peer rewrites the name.
-    private static string SpokenName(UIElement element) => UIElementAutomationPeer.CreatePeerForElement(element)?.GetName() ?? "";
     private static Task Wait(DependencyObject root, string id) => PresentationWait.UntilAsync(
         () => Find<FrameworkElement>(root, id)?.IsVisible == true, "Expected visible control " + id);
     private static T Get<T>(DependencyObject root, string id) where T : FrameworkElement =>

@@ -231,7 +231,6 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
         let selected = Set(hot.prefix(16).map(\.id))
         let prior = Dictionary(uniqueKeysWithValues: (previous?.activities ?? []).map { ($0.threadID ?? $0.id, $0) })
         var childEnd: [String: Date] = [:], unconfirmedParents = Set<String>()
-        var progressApprovals = Set<String>()
         var value = HarnessActivity(status: .ready)
         let scope = CompletionDismissalStore.digest(["antigravity-home", store.home.standardizedFileURL.path])
         value.scope = scope
@@ -273,7 +272,6 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
             }
             next[row.id] = item
             value.activities.append(result.activity)
-            if result.requestsProgressApproval { progressApprovals.insert(row.id) }
             if let request = result.request { value.requests.append(request) }
         }
         if let session {
@@ -290,7 +288,6 @@ actor AntigravityMonitor: LocalHarnessMonitor, LocalHarnessQuotaSource {
         let orphans = Set(family.compactMap { row, parents in parents.contains(where: { !visible.contains($0) }) ? row.id : nil })
         value.activities.removeAll { $0.threadID.map(orphans.contains) == true }
         value.requests.removeAll { orphans.contains($0.threadID) }
-        value.requestsProgressApproval = !progressApprovals.subtracting(orphans).isEmpty
         cache = next; urls = watched; watcher?.update(urls, interval: 0.15)
         if watermark == nil { watermark = io.now() }
         return value

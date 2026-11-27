@@ -47,8 +47,9 @@ private struct Step {
             meta["completedAt"] = timestamp(second + 1)
             object["metadata"] = meta
         }
-        if interaction == "pacer" {
-            object["requestedInteraction"] = ["permission": ["resource": ["action": "mcp", "target": "codex-pacer_pacer_progress/report_progress"]]]
+        if interaction == "pacer" || interaction == "other-action" {
+            let action = interaction == "pacer" ? "mcp" : "mcp-extra"
+            object["requestedInteraction"] = ["permission": ["resource": ["action": action, "target": "codex-pacer_pacer_progress/report_progress"]]]
         } else if interaction == "mcp" {
             object["requestedInteraction"] = ["permission": ["resource": ["action": "mcp", "target": "private-tool-sentinel"]]]
         } else if let interaction { object["requestedInteraction"] = [interaction: ["text": "private-question-sentinel"]] }
@@ -305,7 +306,7 @@ final class AntigravityTests: XCTestCase {
     func testProgressApprovalRemainsAnApprovalAndAdvancesGuide() async throws {
         let f = try Fixture(), m = try f.monitor(), updates = Updates()
         await m.start(home: f.home, policy: .collapsed) { await updates.receive($0) }
-        for interaction in ["mcp", "pacer"] {
+        for interaction in ["mcp", "other-action", "pacer"] {
             try f.write([input, Step("GENERIC", "WAITING", 2, interaction)], state: "RUNNING", at: 3)
             await m.refresh()
             let snapshot = await updates.last
@@ -317,21 +318,62 @@ final class AntigravityTests: XCTestCase {
             let guide = HarnessProgressGuide(setup: .configured, connection: nil, reported: false, ringOn: true, name: "Antigravity",
                                             pluginPlatform: .macOS, requestsApproval: snapshot.requestsProgressApproval)
             XCTAssertEqual(guide?.stage, interaction == "pacer" ? .allowTool : .newConversation)
-            XCTAssertEqual(guide?.steps[2].copyText, "codex-pacer_pacer_progress")
+            XCTAssertEqual(guide?.steps.map(\.state), interaction == "pacer" ? [.done, .current, .pending] : [.current, .pending, .pending])
+            XCTAssertEqual(guide?.picture, .antigravityApproval)
         }
+        let original = await updates.last.requests.first?.id
+        let waiting = Step("GENERIC", "WAITING", 4, "pacer")
+        // A corrected input timestamp changes the turn ID but these are still the same card and row.
+        try f.write([Step("USER_INPUT", "DONE", 3), waiting], state: "RUNNING", at: 5)
+        await m.refresh()
+        var snapshot = await updates.last
+        XCTAssertEqual(snapshot.requests.first?.id, original)
+        try f.write([input, waiting], state: "RUNNING", at: 6, id: childID, parent: rootID)
+        await m.refresh()
+        snapshot = await updates.last
+        let ids = snapshot.requests.filter(\.requestsProgressApproval).map(\.id)
+        XCTAssertEqual(Set(ids).count, 2, "The same step index in another conversation is a new card")
+        try f.write([input, Step("GENERIC", "DONE", 3), waiting], state: "RUNNING", at: 7)
+        await m.refresh()
+        snapshot = await updates.last
+        XCTAssertFalse(snapshot.requests.contains { $0.id == original }, "The next step has a new card ID")
         await m.stop()
     }
 
-    func testProgressGuideUsesPlatformLoadBehaviorAndOnlyAReportConfirmsSetup() {
+    func testProgressGuidePicturesAndReadinessOnBothPlatforms() throws {
         func guide(_ setup: LocalHarnessProgressStatus, _ platform: HarnessPlatform, app: HarnessProgressGuide.AppPresence? = nil,
-                   reported: Bool = false, connection: LocalHarnessProgressConnection? = nil, on: Bool = true) -> HarnessProgressGuide? {
+                   reported: Bool = false, connection: LocalHarnessProgressConnection? = nil, on: Bool = true, approval: Bool = false) -> HarnessProgressGuide? {
             HarnessProgressGuide(setup: setup, connection: connection, reported: reported, ringOn: on, name: "Antigravity",
-                                 addedAt: epoch, app: app, pluginPlatform: platform)
+                                 addedAt: epoch, app: app, pluginPlatform: platform, requestsApproval: approval)
         }
-        XCTAssertEqual(guide(.settingUp, .macOS)?.steps.first?.state, .current)
+        for platform in [HarnessPlatform.macOS, .windows] {
+            for candidate in [guide(.settingUp, platform), guide(.configured, platform), guide(.configured, platform, app: .running(since: epoch)),
+                              guide(.configured, platform, approval: true), guide(.configured, platform, connection: .disabled),
+                              guide(.conflict, platform), guide(.failed, platform), guide(.missingHome, platform)] {
+                let setup = try XCTUnwrap(candidate)
+                XCTAssertEqual(setup.picture, .antigravityApproval)
+                let card = try XCTUnwrap(setup.approvalCard)
+                XCTAssertEqual(card.permission, "Permission")
+                XCTAssertEqual(card.title, "Allow using this MCP tool?")
+                XCTAssertEqual(card.resource, "codex-pacer_pacer_progress/report_progress")
+                XCTAssertEqual(card.choices, ["Yes, allow this time", "Yes, and always allow in this conversation", "Yes, and always allow", "Deny"])
+            }
+            let ready = try XCTUnwrap(guide(.configured, platform, connection: .trusted, approval: true))
+            XCTAssertEqual(ready.stage, .ready)
+            XCTAssertNil(ready.picture)
+            XCTAssertNil(ready.approvalCard)
+            XCTAssertNotEqual(guide(.configured, platform, reported: true, connection: .needsTrust)?.stage, .ready)
+            XCTAssertNil(guide(.removalPending, platform, on: false)?.picture)
+            XCTAssertNil(guide(.conflict, platform, on: false)?.picture)
+        }
+        XCTAssertEqual(guide(.settingUp, .macOS)?.steps, [])
         XCTAssertEqual(guide(.configured, .macOS, app: .running(since: .distantPast))?.stage, .newConversation)
         XCTAssertEqual(guide(.configured, .windows, app: .running(since: .distantPast))?.action, .restartApp)
-        XCTAssertEqual(guide(.configured, .windows, app: .running(since: epoch))?.stage, .allowTool)
+        XCTAssertEqual(guide(.configured, .windows, app: .running(since: epoch))?.stage, .newConversation)
+        XCTAssertEqual(guide(.configured, .windows, app: .running(since: epoch))?.steps.map(\.state), [.done, .current, .pending, .pending])
+        XCTAssertEqual(guide(.configured, .windows, approval: true)?.steps.map(\.state), [.done, .done, .current, .pending])
+        XCTAssertEqual(guide(.configured, .macOS, reported: true, approval: true)?.stage, .ready)
+        XCTAssertNil(guide(.configured, .macOS, reported: true, approval: true)?.picture)
         XCTAssertEqual(guide(.configured, .macOS, reported: true)?.stage, .ready)
         XCTAssertEqual(guide(.configured, .macOS, reported: true, connection: .disabled)?.stage, .turnedOff)
         for status in [LocalHarnessProgressStatus.conflict, .failed] { XCTAssertEqual(guide(status, .macOS)?.action, .retry) }

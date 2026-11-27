@@ -112,7 +112,7 @@ internal sealed record EngineStatusRow(string State, string Tone, string Text, s
 internal sealed record HarnessProgressGuide(string Stage, string Chip, string Tone, IReadOnlyList<HarnessProgressStep> Steps,
     string? Line, string? Action, string? ActionTitle, bool Attention, string? Summary, bool Waiting, string Info,
     string? WaitingText = null, string? Picture = null, string? FloatTitle = null, string? FloatNext = null);
-internal sealed record HarnessProgressStep(string Title, string State, string? CopyText = null);
+internal sealed record HarnessProgressStep(string Title, string State, string? Detail = null);
 internal sealed record EngineGroupOption(string Id, string Label);
 internal sealed record EngineQuotaGroups(string DefaultsKey, string Title, IReadOnlyList<EngineGroupOption> Options, string Selected);
 internal sealed record EngineModuleBrand(string Dark, string Light, double AccentLift, double AccentLuminance);

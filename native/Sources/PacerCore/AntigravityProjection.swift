@@ -119,10 +119,11 @@ struct AntigravityProjection {
                    let json = call["argumentsJson"]?.string(limit: 128) {
                     percent = CodexProgressEvidence.percent(json)
                 }
-                if typedStatus == .waiting, wait == .approval,
+                // An omitted wire status is filled from the database before the projection selects waiting steps.
+                if typedStatus == .waiting || typedStatus == nil, wait == .approval,
                    let resource = try? interaction?["permission"]?.fields(["resource"])["resource"]?.fields(["action", "target"]) {
-                    asksForProgress = resource["action"]?.string(limit: 3) == "mcp" &&
-                        resource["target"]?.string(limit: 64) == AntigravityProgressPlugin.server + "/" + CodexProgressEvidence.tool
+                    asksForProgress = resource["action"]?.string(limit: 4) == "mcp" &&
+                        resource["target"]?.string(limit: 64) == AntigravityProgressPlugin.toolTarget
                 }
             }
             return TypedStep(index: index, type: type, status: typedStatus,
@@ -192,7 +193,6 @@ struct AntigravityProjection {
         var activity: SessionActivity
         var request: PendingAttentionRequest?
         var needsRecheck = false
-        var requestsProgressApproval = false
     }
 
     static func project(_ row: AntigravityStore.Summary, trajectory: AntigravityStore.Trajectory?,
@@ -275,9 +275,11 @@ struct AntigravityProjection {
             let waiting = waits.first(where: \.requestsProgressApproval) ?? waits.first { $0.wait != nil }
             if let waiting, let kind = waiting.wait {
                 at = waiting.transition ?? waiting.created ?? at
-                pending = PendingAttentionRequest(id: CompletionDismissalStore.digest([turn, String(waiting.index), kind.rawValue]),
+                let identity = waiting.requestsProgressApproval ? [row.id, String(waiting.index)] : [turn, String(waiting.index), kind.rawValue]
+                pending = PendingAttentionRequest(id: CompletionDismissalStore.digest(identity),
                     threadID: row.id, sourceHostID: nil, sourceName: AgentProvider.antigravity.displayName,
                     kind: kind, detectedAt: at, provider: .antigravity, suppressesNotice: watermark.map { at <= $0 } ?? true)
+                pending?.requestsProgressApproval = waiting.requestsProgressApproval
                 state = .waiting(kind)
             } else if open.contains(where: { $0.type == 132 }) {
                 state = .working(.tool)
@@ -319,7 +321,6 @@ struct AntigravityProjection {
                 }
             }
         }
-        return Result(activity: task, request: pending, requestsProgressApproval: pending != nil &&
-            open.contains { typed[$0.index]?.requestsProgressApproval == true })
+        return Result(activity: task, request: pending)
     }
 }

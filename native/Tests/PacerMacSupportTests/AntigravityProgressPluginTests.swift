@@ -136,7 +136,7 @@ final class AntigravityProgressPluginTests: XCTestCase {
     func testPluginDisabledInAntigravityRevokesReporterWithoutEditingSettings() async throws {
         _ = try await sync()
         let settings = config.appendingPathComponent("config.json")
-        let contents = Data(#"{"plugins":{"codex-pacer":{"enabled":false},"user":{"enabled":true}},"other":"unrelated"}"#.utf8)
+        let contents = Data(#"{"plugins":{"codex-pacer":{"enabled":false},"user":{"enabled":true}},"userSettings":{"globalPermissionGrants":{"allow":["mcp(*)"]}},"other":"unrelated"}"#.utf8)
         try contents.write(to: settings)
         let target = Setup.Target(pluginProfile: profile, reporter: "/fixture/Pacer", enabled: true)
         XCTAssertEqual(Setup.apply(target, storage: storage, checkOnly: true), .configured)
@@ -151,6 +151,75 @@ final class AntigravityProgressPluginTests: XCTestCase {
         value = try await sync()
         XCTAssertEqual(value?.setup, .configured)
         XCTAssertTrue(storage.exists(Setup.flag(config)))
+    }
+
+    func testSavedGrantsDriveTheGuideAndSurviveBothSwitches() async throws {
+        _ = try await sync()
+        let file = config.appendingPathComponent("config.json")
+        let rules = ["mcp(codex-pacer_pacer_progress/report_progress)", "mcp(codex-pacer_pacer_progress/*)", "mcp(*)"]
+        func write(_ allow: Any, deny: Any? = nil) throws -> Data {
+            var grants = ["allow": allow]
+            grants["deny"] = deny
+            let data = try JSONSerialization.data(withJSONObject: ["userSettings": ["globalPermissionGrants": grants]])
+            try data.write(to: file)
+            return data
+        }
+        func stage() async throws -> HarnessProgressGuide.Stage? {
+            let state = try await sync()
+            XCTAssertEqual(state?.reported, false, "A grant must never create a report")
+            return HarnessProgressGuide(setup: state?.setup, connection: state?.connection, reported: false,
+                                        ringOn: true, name: "Antigravity", pluginPlatform: .macOS)?.stage
+        }
+        for rule in rules {
+            _ = try write(["mcp(other/tool)", rule], deny: ["mcp(another/tool)"])
+            var result = try await stage()
+            XCTAssertEqual(result, .ready)
+            for deny in rules {
+                _ = try write([rule], deny: [deny])
+                result = try await stage()
+                XCTAssertEqual(result, .newConversation)
+            }
+        }
+        for allow: Any in [["mcp(codex-pacer_pacer_progress/report_progress_edited)"], ["mcp(codex-pacer_*/report_progress)"],
+                           ["mcp(*)suffix"], [rules[0], 3] as [Any], rules[0]] {
+            _ = try write(allow)
+            let result = try await stage()
+            XCTAssertEqual(result, .newConversation)
+        }
+        _ = try write(rules, deny: "malformed")
+        var result = try await stage()
+        XCTAssertEqual(result, .newConversation)
+        try Data(#"{"userSettings":{"globalPermissionGrants":{"allow":["mcp(*)"]}}"#.utf8).write(to: file)
+        result = try await stage()
+        XCTAssertNotEqual(result, .ready)
+        let saved = try write([rules[0]])
+        for (module, ring) in [(true, false), (false, true)] {
+            _ = try await sync(module: module, ring: ring)
+            XCTAssertEqual(try Data(contentsOf: file), saved)
+            result = try await stage()
+            XCTAssertEqual(result, .ready)
+            XCTAssertEqual(try Data(contentsOf: file), saved)
+        }
+    }
+
+    func testGrantReadRejectsLinkedAndOversizedConfig() async throws {
+        _ = try await sync()
+        let file = config.appendingPathComponent("config.json")
+        let original = profile.appendingPathComponent("original")
+        let grant = Data(#"{"userSettings":{"globalPermissionGrants":{"allow":["mcp(*)"]}}}"#.utf8)
+        try grant.write(to: original)
+        try FileManager.default.createSymbolicLink(at: file, withDestinationURL: original)
+        var state = try await sync()
+        XCTAssertEqual(state?.setup, .conflict)
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.linkItem(at: original, to: file)
+        state = try await sync()
+        XCTAssertEqual(state?.setup, .conflict)
+        try FileManager.default.removeItem(at: file)
+        try (grant + Data(repeating: 32, count: 2 * 1024 * 1024)).write(to: file)
+        state = try await sync()
+        XCTAssertEqual(state?.setup, .conflict)
+        XCTAssertEqual(try Data(contentsOf: original), grant)
     }
 
     func testPreparedReporterOwnershipAndStandaloneUninstall() async throws {
