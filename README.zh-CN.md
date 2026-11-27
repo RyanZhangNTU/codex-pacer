@@ -25,11 +25,11 @@ Pacer 替你盯着每个任务的进度，你不再分心，效率自然更高�
 &nbsp;
 <a href="https://github.com/RyanZhangNTU/codex-pacer/releases/latest"><img src="docs/assets/download-windows.zh-CN.png" height="56" alt="免费下载 Windows 版"></a>
 
-[![最新版本](https://img.shields.io/github/v/release/RyanZhangNTU/codex-pacer?style=flat-square&label=release&color=2f9e8f)](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)
-[![下载量](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FRyanZhangNTU%2Fcodex-pacer%2Fbadges%2Fdownloads.json&style=flat-square)](https://github.com/RyanZhangNTU/codex-pacer/releases)
-![macOS 14 及以上](https://img.shields.io/badge/macOS-14%2B-111111?style=flat-square&logo=apple&logoColor=white)
-![Windows 10 及以上](https://img.shields.io/badge/Windows-10%2B-0078D4?style=flat-square&logo=windows&logoColor=white)
-[![MIT 许可证](https://img.shields.io/github/license/RyanZhangNTU/codex-pacer?style=flat-square&color=555555)](LICENSE)
+[![最新版本](https://raw.githubusercontent.com/RyanZhangNTU/codex-pacer/badges/release.svg)](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)
+[![下载量](https://raw.githubusercontent.com/RyanZhangNTU/codex-pacer/badges/downloads.svg)](https://github.com/RyanZhangNTU/codex-pacer/releases)
+![macOS 14 及以上](docs/assets/badge-macos.svg)
+![Windows 10 及以上](docs/assets/badge-windows.svg)
+[![MIT 许可证](docs/assets/badge-license.svg)](LICENSE)
 
 [功能](#features) · [支持的工具](#supported-agents) · [安装](#install) · [使用指南](docs/guide.zh-CN.md) · [交流群](#community) · [English](README.md)
 

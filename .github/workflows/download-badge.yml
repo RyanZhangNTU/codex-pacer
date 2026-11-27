@@ -1,11 +1,14 @@
-name: Download badge
+name: README badges
 
-# The README shows the downloads of every release as a full number. Shields'
-# own GitHub downloads badge rounds it (16k), so this adds up the counts and
-# publishes them in Shields' endpoint format as downloads.json on the `badges`
-# branch, which holds only that file in a single commit. It runs when it lands
-# on main, after each release, every six hours and on demand, and pushes only
-# when the number changed.
+# The README's release and downloads badges are ready-made SVG files on the
+# `badges` branch, not live Shields badges. GitHub's image proxy gives up on a
+# slow Shields render and the page shows a broken image, often on phones. This
+# adds up the downloads of every release (Shields' own GitHub downloads badge
+# rounds them, 16k), reads the latest release, renders both as Shields static
+# badges and keeps release.svg, downloads.svg and downloads.json (the same
+# count in Shields' endpoint format) on `badges`, a branch holding only those
+# files in a single commit. It runs when it lands on main, after each release,
+# every six hours and on demand, and pushes only when a file changed.
 on:
   push:
     branches: [main]
@@ -25,7 +28,7 @@ concurrency:
 
 jobs:
   badge:
-    name: Count downloads
+    name: Publish badges
     if: github.repository == 'RyanZhangNTU/codex-pacer'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -34,24 +37,38 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Count and publish
+      - name: Render and publish
         run: |
           set -euo pipefail
           total=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
             --jq '[.[].assets[].download_count] | add // 0' | awk '{ s += $1 } END { print s + 0 }')
-          message=$(python3 -c 'import sys; print(f"{int(sys.argv[1]):,}")' "$total")
-          printf '{"schemaVersion":1,"label":"downloads","message":"%s","color":"3fb950","cacheSeconds":3600}\n' "$message" > "$RUNNER_TEMP/downloads.json"
-          current=$(gh api "repos/$GITHUB_REPOSITORY/contents/downloads.json?ref=badges" \
-            -H 'Accept: application/vnd.github.raw' 2>/dev/null || true)
-          if [ "$current" = "$(cat "$RUNNER_TEMP/downloads.json")" ]; then
-            echo "Unchanged: $message"
+          downloads=$(python3 -c 'import sys; print(f"{int(sys.argv[1]):,}")' "$total")
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          out="$RUNNER_TEMP/badges"
+          mkdir "$out"
+          badge() { # file label message color
+            curl -fsS --retry 5 --retry-all-errors --max-time 30 -G 'https://img.shields.io/static/v1' \
+              --data-urlencode "label=$2" --data-urlencode "message=$3" \
+              --data-urlencode "color=$4" --data-urlencode 'style=flat-square' -o "$out/$1"
+            grep -qF ">$3</text>" "$out/$1"
+          }
+          badge release.svg release "$release" 2f9e8f
+          badge downloads.svg downloads "$downloads" 3fb950
+          printf '{"schemaVersion":1,"label":"downloads","message":"%s","color":"3fb950","cacheSeconds":3600}\n' "$downloads" > "$out/downloads.json"
+          changed=false
+          for file in release.svg downloads.svg downloads.json; do
+            current=$(gh api "repos/$GITHUB_REPOSITORY/contents/$file?ref=badges" \
+              -H 'Accept: application/vnd.github.raw' 2>/dev/null || true)
+            [ "$current" = "$(cat "$out/$file")" ] || changed=true
+          done
+          if [ "$changed" = false ]; then
+            echo "Unchanged: $release, $downloads downloads"
             exit 0
           fi
-          mkdir "$RUNNER_TEMP/badges" && cd "$RUNNER_TEMP/badges"
+          cd "$out"
           git init -q -b badges
-          cp "$RUNNER_TEMP/downloads.json" .
-          git add downloads.json
+          git add release.svg downloads.svg downloads.json
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            commit -q -m "Downloads: $message"
+            commit -q -m "Badges: $release, $downloads downloads"
           git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:badges
-          echo "Published: $message"
+          echo "Published: $release, $downloads downloads"
