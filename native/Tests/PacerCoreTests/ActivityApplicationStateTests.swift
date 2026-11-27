@@ -128,6 +128,15 @@ final class ActivityApplicationStateTests: XCTestCase {
         XCTAssertTrue(activities.isEmpty)
     }
 
+    func testEndingNoticeNamesItsTaskSoAClickCanClearTheCard() {
+        var policy = AttentionPolicy()
+        XCTAssertTrue(policy.activityNotices([task(4)], at: now).isEmpty)
+        let ended = task(4, ended: true)
+        let notice = policy.activityNotices([ended], at: now.addingTimeInterval(1)).first
+        XCTAssertEqual(notice?.kind, .completed)
+        XCTAssertEqual(notice?.taskActivityID, ended.id)
+    }
+
     func testClearedUnconfirmedRowsExpireIndividuallyAndStayInTheirProfile() {
         var state = ActivityApplicationState()
         state.localActivities = (1...257).map { number in

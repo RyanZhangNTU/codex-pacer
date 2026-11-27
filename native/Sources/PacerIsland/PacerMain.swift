@@ -489,12 +489,19 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
         let action = response.actionIdentifier, identifier = response.notification.request.identifier
         let appID = response.notification.request.content.userInfo["taskApplication"] as? String
+        let activityID = response.notification.request.content.userInfo["taskActivity"] as? String
         Task { @MainActor [weak self] in
             guard let self else { return }
             if action == UNNotificationDefaultActionIdentifier, let provider = appID.flatMap(AgentProvider.init(rawValue:)),
                provider.opensApplicationForTasks, self.model.isModuleEnabled(provider),
                self.model.desktopApplications[provider] != nil {
-                self.model.openDesktopApplication(provider)
+                // A notice about a task still on the island opens it as a row click does,
+                // which also clears an ended card; otherwise just open the app.
+                if let activityID, let activity = self.model.activities.first(where: { $0.id == activityID }), self.model.canOpen(activity) {
+                    self.model.open(activity)
+                } else {
+                    self.model.openDesktopApplication(provider)
+                }
                 return
             }
             switch action {
