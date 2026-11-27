@@ -35,5 +35,5 @@ Only the release table and the text around the image live in the body. Read the 
 
 - Only notable, user-facing work. Leave out small settings and toggles, internal or performance work, and items the owner has not agreed to.
 - Plain wording about what users get, no implementation details, no version labels like "Pacer 5.0", no dates.
-- The body invites people to comment in this issue. Don't add subscribe prompts, 👍 voting or a text version of the table.
+- The note under the image is a short, warm paragraph in the owner's voice inviting comments here. Don't add tip boxes, prompt questions telling people how to comment, subscribe prompts, 👍 voting or a text version of the table.
 - Never put these files on the `badges` branch: its workflow force-pushes it with only `downloads.json`.
