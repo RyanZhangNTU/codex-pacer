@@ -34,6 +34,58 @@ final class SharedHookInstallerTests: XCTestCase {
     private func object(_ url: URL, _ storage: Storage) throws -> [String: Any] {
         try XCTUnwrap(JSONSerialization.jsonObject(with: storage.read(url)) as? [String: Any])
     }
+    func testCodexUsesTheInstalledCacheAndWritesNineOnlyWhenSupported() throws {
+        struct Launcher: CodexHookLauncher {
+            func command(home: URL) -> String? { "fixture-hook" }
+            func commandWindows(home: URL) -> String? { nil }
+            func prepare(home: URL) throws {}
+            func remove(home: URL) throws {}
+        }
+        let (home, storage, _) = fixture(), layout = CodexHookPlugin.Layout(home: home)
+        func write(_ support: Bool?, update: Bool = false) throws -> (set: CodexHookSet, cacheMatches: Bool) {
+            try CodexHookSetup.writePlugin(home: home, launcher: Launcher(), storage: storage, supportsCompaction: support, update: update)
+        }
+        func writtenSet() throws -> CodexHookSet { try CodexHookSet(installed: storage.read(layout.hooks)) }
+
+        XCTAssertEqual(try write(false).set, .legacy)
+        let legacy = try storage.read(layout.hooks)
+        storage.files[layout.cachedHooks] = legacy
+        XCTAssertTrue(try write(true).cacheMatches)
+        XCTAssertEqual(try storage.read(layout.hooks), legacy)
+        XCTAssertEqual(try write(false, update: true).set, .legacy)
+
+        XCTAssertFalse(try write(true, update: true).cacheMatches)
+        XCTAssertEqual(try writtenSet(), .full)
+        let full = try storage.read(layout.hooks)
+        // A failed reinstall leaves the marketplace at nine but Codex still at seven.
+        XCTAssertEqual(try write(true).set, .legacy)
+        storage.files[layout.cachedHooks] = full
+        XCTAssertTrue(try write(true).cacheMatches)
+        XCTAssertThrowsError(try write(nil))
+        XCTAssertEqual(try writtenSet(), .full)
+        XCTAssertEqual(try write(false).set, .legacy)
+        // Turning the module off removes the installed copy. Fresh setup uses all nine.
+        storage.files.removeValue(forKey: layout.cachedHooks)
+        XCTAssertEqual(try write(true).set, .full)
+        XCTAssertEqual(try writtenSet(), .full)
+        XCTAssertEqual(try write(nil).set, .legacy)
+        storage.files[layout.cachedHooks] = Data("{broken".utf8)
+        XCTAssertEqual(try write(true).set, .legacy, "Repair keeps a damaged installation on the smaller set")
+    }
+
+    func testCodexOffersTheUpdateOnlyForHealthySupportedLegacyTracking() {
+        for installed in [false, true] {
+            for supports in [false, true] {
+                for set in [CodexHookSet.legacy, .full] {
+                    let result = CodexHookSetupResult(supportsHooks: true, installed: installed, trust: nil, hookSet: set, supportsCompaction: supports)
+                    for status in [CodexHookStatus.running, .notRunning, .needsApproval(count: 7), .notInstalled, .installFailed, .needsCodexUpdate, .off] {
+                        XCTAssertEqual(result.updateAvailable(status: status), installed && supports && set == .legacy && status == .running)
+                    }
+                }
+            }
+        }
+    }
+
     func testClaudeInstallsBothCompactionHooks() throws {
         let (home, storage, installer) = fixture()
         _ = try installer.install(home: home)

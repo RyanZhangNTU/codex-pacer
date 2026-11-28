@@ -22,7 +22,7 @@ let package = Package(
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]),
         // Shared test helpers; never linked into the app.
         .target(name: "PacerTestSupport", path: "Tests/PacerTestSupport"),
-        .testTarget(name: "PacerCoreTests", dependencies: ["PacerCore", "PacerMacSupport", "PacerTestSupport"]),
+        .testTarget(name: "PacerCoreTests", dependencies: ["PacerCore", "PacerMacSupport", "PacerTestSupport"], resources: [.copy("CodexHookFixtures")]),
         .testTarget(name: "PacerMacSupportTests", dependencies: ["PacerCore", "PacerMacSupport"]),
         .testTarget(name: "PacerIslandTests", dependencies: ["PacerIsland", "PacerCore", "PacerMacSupport", "PacerTestSupport"])
     ]

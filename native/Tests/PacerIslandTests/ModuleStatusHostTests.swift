@@ -51,8 +51,8 @@ final class ModuleStatusHostTests: XCTestCase {
 
     func testRemoteCountsOnlyHostsAndTheHooksAreCodexsOwn() async throws {
         let model = try model(), count = CodexHookEvent.Kind.coreEvents.count
-        model.codexHookSetupOverride = { _, _, enabled in
-            .init(supportsHooks: true, installed: enabled, trust: CodexHookEvent.Kind.allCases.map { CodexHookTrust(event: $0, state: "untrusted") })
+        model.codexHookSetupOverride = { _, _, enabled, _ in
+            .init(supportsHooks: true, installed: enabled, trust: CodexHookEvent.Kind.coreEvents.map { CodexHookTrust(event: $0, state: "untrusted") })
         }
         model.syncCodexHooks()
         try await TestWait.until { model.codexHookStatus == .needsApproval(count: count) }

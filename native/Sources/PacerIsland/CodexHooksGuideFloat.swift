@@ -15,7 +15,6 @@ import SwiftUI
     private var timer: Timer?
     private var screen: NSScreen?
     private var started = Date()
-    private var compactionOnly = false
     @Published private(set) var doneSince: Date?
     static let check: TimeInterval = 1
     static let doneShown: TimeInterval = 8
@@ -25,10 +24,9 @@ import SwiftUI
 
     var isShowing: Bool { panel.isVisible }
 
-    func show(on screen: NSScreen?, compactionOnly: Bool = false) {
+    func show(on screen: NSScreen?) {
         guard let model else { return }
         close()
-        self.compactionOnly = compactionOnly
         self.screen = screen ?? NSScreen.main
         started = Date(); doneSince = nil
         let host = NSHostingController(rootView: AnyView(CodexHooksGuideContent(model: model, float: self)
@@ -51,8 +49,8 @@ import SwiftUI
     }
 
     private func update() {
-        guard Date().timeIntervalSince(started) < Self.lifetime else { return close() }
-        switch phase {
+        guard let model, Date().timeIntervalSince(started) < Self.lifetime else { return close() }
+        switch Self.phase(model.codexHookStatus) {
         case .steps: doneSince = nil
         case .done:
             if doneSince == nil { doneSince = Date() }
@@ -62,23 +60,15 @@ import SwiftUI
         panel.resize(to: measured())
     }
 
-    enum Phase: Equatable { case steps(pending: Int), done, gone }
-
-    var phase: Phase {
-        guard let model else { return .gone }
-        return Self.phase(model.codexHookStatus, optionalPending: compactionOnly ? model.codexOptionalPending : nil)
-    }
+    enum Phase: Equatable { case steps, done, gone }
 
     /// Allowed hooks are done; a status the guide doesn't describe closes it,
     /// and Settings says what to do.
-    static func phase(_ status: CodexHookStatus, optionalPending: Int? = nil) -> Phase {
+    static func phase(_ status: CodexHookStatus) -> Phase {
         switch status {
-        case .notInstalled: return .steps(pending: optionalPending ?? CodexHookEvent.Kind.coreEvents.count)
-        case .off, .needsCodexUpdate, .installFailed: return .gone
-        case .needsApproval, .running, .notRunning:
-            if let optionalPending { return optionalPending > 0 ? .steps(pending: optionalPending) : .done }
-            if case .needsApproval(let count) = status { return .steps(pending: count) }
-            return .done
+        case .needsApproval, .notInstalled: .steps
+        case .running, .notRunning: .done
+        case .off, .needsCodexUpdate, .installFailed: .gone
         }
     }
 
@@ -109,7 +99,7 @@ private struct CodexHooksGuideContent: View {
                     }
                 }
                 .accessibilityElement(children: .combine)
-                if case .steps(let pending) = float.phase { CodexHooksPicture(pending: pending) }
+                CodexHooksPicture(pending: pending, total: model.codexInstalledHookCount)
                 Text(L10n.text("codex.hooks.guide.alternative")).font(.system(size: 12)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -122,6 +112,10 @@ private struct CodexHooksGuideContent: View {
          L10n.text("codex.hooks.guide.step_trust")]
     }
 
+    private var pending: Int {
+        if case .needsApproval(let count) = model.codexHookStatus { return count }
+        return model.codexInstalledHookCount
+    }
 }
 
 /// A step's number, as the picture marks the place to click.
@@ -141,6 +135,7 @@ private struct NumberBadge: View {
 /// a ring around it. Numbers mark the steps.
 private struct CodexHooksPicture: View {
     let pending: Int
+    let total: Int
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -164,7 +159,7 @@ private struct CodexHooksPicture: View {
                     Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 18, height: 18)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(CodexHookPlugin.displayName).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
-                        Text(L10n.text("codex.hooks.guide.picture.count", CodexHookEvent.Kind.allCases.count))
+                        Text(L10n.text("codex.hooks.guide.picture.count", total))
                             .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 4)

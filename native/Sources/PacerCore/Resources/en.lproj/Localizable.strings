@@ -1672,6 +1672,8 @@
 "codex.hooks.notice_title" = "Allow Pacer in Codex";
 "codex.hooks.notice_body" = "Codex now needs your approval before Pacer can track its tasks.";
 "codex.hooks.open" = "Open Codex";
+"codex.hooks.update_hint" = "Update Pacer's hooks in Codex to show when it compacts a conversation.";
+"codex.hooks.update" = "Update";
 "codex.hooks.compaction_hint" = "Allow %d new items in Codex to show when it compacts a conversation.";
 "codex.hooks.guide.title" = "Allow Pacer in Codex's settings";
 "codex.hooks.guide.step_hooks" = "Click Hooks in the sidebar.";

@@ -128,8 +128,8 @@ final class HarnessAccountAndGuideTests: XCTestCase {
     }
 
     func testCodexHooksGuideFollowsTheHooksStatus() throws {
-        XCTAssertEqual(CodexHooksGuideFloat.phase(.needsApproval(count: 7)), .steps(pending: 7))
-        XCTAssertEqual(CodexHooksGuideFloat.phase(.notInstalled), .steps(pending: 7), "A setup pass in flight keeps the steps")
+        XCTAssertEqual(CodexHooksGuideFloat.phase(.needsApproval(count: 7)), .steps)
+        XCTAssertEqual(CodexHooksGuideFloat.phase(.notInstalled), .steps, "A setup pass in flight keeps the steps")
         XCTAssertEqual(CodexHooksGuideFloat.phase(.running), .done)
         XCTAssertEqual(CodexHooksGuideFloat.phase(.notRunning), .done, "Allowed is done; Settings reports a silent hook")
         for status in [CodexHookStatus.off, .needsCodexUpdate, .installFailed] {

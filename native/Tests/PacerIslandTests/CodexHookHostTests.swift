@@ -1,10 +1,11 @@
+import SwiftUI
 import XCTest
 @testable import PacerCore
 @testable import PacerIsland
 import PacerMacSupport
 import PacerTestSupport
 
-private let trustedCodexHooks = CodexHookEvent.Kind.allCases.map { CodexHookTrust(event: $0, state: "trusted") }
+private let trustedCodexHooks = CodexHookSet.legacy.events.map { CodexHookTrust(event: $0, state: "trusted") }
 
 /// A Dot poll the test drives: it records each start and stop, and reports
 /// whatever catalog and turns the test hands it.
@@ -249,7 +250,7 @@ final class CodexHookHostTests: XCTestCase {
         }
         let installer = Installer()
         let model = try model(home: homes[0])
-        model.codexHookSetupOverride = { home, _, enabled in await installer.apply(home, enabled) }
+        model.codexHookSetupOverride = { home, _, enabled, _ in await installer.apply(home, enabled) }
 
         model.syncCodexHooks()
         try await TestWait.until { installer.homes == [homes[0].path] }
@@ -291,7 +292,7 @@ final class CodexHookHostTests: XCTestCase {
         }
         let first = try temporaryHome("codex-uninstall"), second = try temporaryHome("codex-destination")
         let model = try model(home: first), installer = Installer()
-        model.codexHookSetupOverride = { home, _, enabled in await installer.apply(home, enabled) }
+        model.codexHookSetupOverride = { home, _, enabled, _ in await installer.apply(home, enabled) }
         model.syncCodexHooks()
         let ready = try await TestWait.until { model.codexHookStatus == .running }
         XCTAssertTrue(ready)
@@ -309,7 +310,7 @@ final class CodexHookHostTests: XCTestCase {
     func testAfterApprovalTheStatusFollowsActivityAndASilentHookNoticeClearsItself() async throws {
         let home = try temporaryHome("codex-status")
         let model = try model(home: home)
-        model.codexHookSetupOverride = { _, _, enabled in
+        model.codexHookSetupOverride = { _, _, enabled, _ in
             .init(supportsHooks: true, installed: enabled, trust: trustedCodexHooks)
         }
         model.syncCodexHooks()
@@ -356,7 +357,7 @@ final class CodexHookHostTests: XCTestCase {
         let home = try temporaryHome("codex-trust")
         let model = try model(home: home)
         let reads = Reads()
-        model.codexHookSetupOverride = { _, _, enabled in .init(supportsHooks: true, installed: enabled, trust: nil) }
+        model.codexHookSetupOverride = { _, _, enabled, _ in .init(supportsHooks: true, installed: enabled, trust: nil) }
         // Setup could not read the trust; the watch's first check asks again at once.
         model.codexHookTrustOverride = { _, _ in _ = reads.next(); return trustedCodexHooks }
         model.syncCodexHooks()
@@ -385,7 +386,7 @@ final class CodexHookHostTests: XCTestCase {
         let home = try temporaryHome("codex-update")
         let model = try model(home: home)
         let codex = Codex()
-        model.codexHookSetupOverride = { _, _, enabled in codex.apply(enabled) }
+        model.codexHookSetupOverride = { _, _, enabled, _ in codex.apply(enabled) }
         model.syncCodexHooks()
         try await TestWait.until { model.codexHookStatus == .needsCodexUpdate }
 
@@ -403,48 +404,56 @@ final class CodexHookHostTests: XCTestCase {
         XCTAssertEqual(codex.count, 2, "A Codex that has hooks starting again sets nothing up")
     }
 
-    func testOptionalApprovalsStayInSettingsAndTheOpenedGuideFollowsTrust() async throws {
-        let home = try temporaryHome("compaction-trust"), model = try model(home: home)
+    func testSettingsUpdateButtonStartsNormalApprovalAndGuideFollowsTrust() async throws {
+        let home = try temporaryHome("compaction-update"), model = try model(home: home)
         let file = CodexHookTrustWatch.trustFile(home: home)
-        model.codexHookSetupOverride = { _, _, enabled in
-            .init(supportsHooks: true, installed: enabled, trust: CodexHookEvent.Kind.allCases.map {
-                CodexHookTrust(event: $0, state: $0.isCompaction ? "untrusted" : "trusted")
-            })
+        model.codexHookSetupOverride = { _, _, enabled, update in
+            let set: CodexHookSet = update ? .full : .legacy
+            return .init(supportsHooks: true, installed: enabled, trust: set.events.map {
+                CodexHookTrust(event: $0, state: update ? ($0.isCompaction ? "untrusted" : "modified") : "trusted")
+            }, hookSet: set, supportsCompaction: true)
         }
-        model.codexHookTrustOverride = { _, _ in
-            let oneLeft = (try? Data(contentsOf: file)) == Data("# one left".utf8)
-            return CodexHookEvent.Kind.allCases.map { CodexHookTrust(event: $0, state: oneLeft && $0 == .postCompact ? "modified" : "trusted") }
-        }
+        model.codexHookTrustOverride = { _, _ in CodexHookSet.full.events.map { CodexHookTrust(event: $0, state: "trusted") } }
         model.syncCodexHooks()
-        let ready = try await TestWait.until { model.codexOptionalPending == 2 }
-        XCTAssertTrue(ready)
-        XCTAssertEqual(model.codexHookStatus, .running)
+        let available = try await TestWait.until { model.codexHookUpdateAvailable }
+        XCTAssertTrue(available)
+        XCTAssertEqual(model.codexInstalledHookCount, 7)
         XCTAssertFalse(model.codexHooksNeedUser)
         XCTAssertFalse(model.defaults.bool(forKey: IslandModel.codexHooksApprovalNotifiedKey))
-        XCTAssertTrue(CodexSetupSteps(status: model.codexHookStatus, opensSettings: true).done)
         let panes = SettingsPane.pages(services: AgentProvider.allCases)
-        XCTAssertEqual(panes.filter { CodexCompactionHint(model: model, pane: $0)?.count == 2 }, [.overview, .codex])
+        XCTAssertEqual(panes.filter { CodexCompactionHint(model: model, pane: $0) != nil }, [.overview, .codex])
         let guide = model.codexHooksGuideFloat
         XCTAssertFalse(guide.isShowing)
-        guide.show(on: nil, compactionOnly: true)
-        defer { guide.close() }
+
+        let hint = try XCTUnwrap(CodexCompactionHint(model: model, pane: .overview))
+        let host = NSHostingView(rootView: hint.frame(width: 550).environment(\.accessibilityEnabled, true))
+        let window = NSWindow(contentRect: NSRect(x: -20_000, y: -20_000, width: 550, height: 60),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderBack(nil)
+        defer { window.close(); guide.close() }
+        try await Task.sleep(for: .milliseconds(100))
+        host.layoutSubtreeIfNeeded()
+        func elements(_ root: AnyObject) -> [AnyObject] {
+            [root] + (root.accessibilityChildren?() ?? []).flatMap { elements($0 as AnyObject) }
+        }
+        let controls = elements(host)
+        let button = try XCTUnwrap(controls.first { $0.accessibilityRole?() == .button && $0.accessibilityLabel?() == L10n.text("codex.hooks.update") })
+        XCTAssertEqual(button.accessibilityPerformPress?(), true)
+        let pending = try await TestWait.until { model.codexHookStatus == .needsApproval(count: 9) }
+        XCTAssertTrue(pending)
+        XCTAssertEqual(model.codexInstalledHookCount, 9)
+        XCTAssertTrue(model.codexHooksNeedUser)
+        XCTAssertFalse(panes.contains { CodexCompactionHint(model: model, pane: $0) != nil })
+        XCTAssertFalse(guide.isShowing)
+        guide.show(on: nil)
         XCTAssertTrue(guide.isShowing)
-        XCTAssertEqual(guide.phase, .steps(pending: 2))
-        XCTAssertNil(guide.doneSince)
-
-        try Data("# one left".utf8).write(to: file)
-        let partial = try await TestWait.until { model.codexOptionalPending == 1 }
-        XCTAssertTrue(partial)
-        XCTAssertEqual(CodexCompactionHint(model: model, pane: .overview)?.count, 1)
-        XCTAssertEqual(guide.phase, .steps(pending: 1))
-
         try Data("# trusted".utf8).write(to: file)
         let done = try await TestWait.until { guide.doneSince != nil }
         XCTAssertTrue(done)
-        XCTAssertEqual(guide.phase, .done)
         XCTAssertEqual(model.codexHookStatus, .running)
-        XCTAssertFalse(panes.contains { CodexCompactionHint(model: model, pane: $0) != nil })
-        XCTAssertFalse(model.defaults.bool(forKey: IslandModel.codexHooksApprovalNotifiedKey))
+        XCTAssertFalse(model.codexHookUpdateAvailable)
     }
 
     func testTheCodexSetupStepsFollowTheHookStatusAsOnWindows() {

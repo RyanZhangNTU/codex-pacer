@@ -949,6 +949,10 @@ actor EngineRuntime {
             guard claudeHookServices != nil, enabled.contains(.claude), !demo else { failure(id: command.id, code: "claudeSetupUnavailable"); return true }
             scheduleClaudeHooks(force: true)
             publish(notices: [])
+        case "updateCodexHooks":
+            guard active, !demo, codexHookUpdateAvailable else { failure(id: command.id, code: "codexHooksUnavailable"); return true }
+            scheduleCodexHooks(force: true, update: true)
+            publish(notices: [])
         case "retryCodexHooks":
             guard codexHookServices != nil, enabled.contains(.codex) else { failure(id: command.id, code: "codexHooksUnavailable"); return true }
             scheduleCodexHooks(force: true)
@@ -1787,11 +1791,12 @@ actor EngineRuntime {
     /// Installs Pacer's Codex hooks while the Codex module is on and removes
     /// them when it is off, as the Claude hooks are; a changed Codex home or CLI
     /// sets up again.
-    private func scheduleCodexHooks(force: Bool = false) {
+    private func scheduleCodexHooks(force: Bool = false, update: Bool = false) {
         guard let services = codexHookServices else { return }
         let active = enabled.contains(.codex), home = codexHome, executable = codexExecutable
-        guard force || codexHookHome != home || codexHookExecutable != executable || codexHooksEnabled != active else { return }
-        codexHookTask?.cancel()
+        let targetChanged = codexHookHome != home || codexHookExecutable != executable || codexHooksEnabled != active
+        let previousSetup = codexHookTask
+        guard targetChanged || (force && previousSetup == nil) else { return }
         let previous = codexHooksEnabled && codexHookHome != home ? codexHookHome : nil
         if codexHookHome != home { codexHooksAwaitingApproval = false; codexHooksTrustedAt = nil }
         codexHookHome = home; codexHookExecutable = executable; codexHooksEnabled = active
@@ -1804,9 +1809,12 @@ actor EngineRuntime {
         watchCodexHookTrust(false)
         codexExecutableFound = nil
         codexHookTask = Task { [weak self] in
-            if let previous { _ = await services.apply(previous, executable, false) }
+            // Let the previous writer release the plugin files before selecting from the cache.
+            await previousSetup?.value
+            guard !Task.isCancelled else { return }
+            if let previous { _ = await services.apply(previous, executable, false, false) }
             let found = !active || services.findsExecutable(executable)
-            let result = await services.apply(home, executable, active)
+            let result = await services.apply(home, executable, active, update)
             let opens = active && services.opensSettings()
             guard !Task.isCancelled else { return }
             await self?.receiveCodexHookSetup(result, opensSettings: opens, executableFound: found, request: request)
@@ -1867,8 +1875,7 @@ actor EngineRuntime {
         case .notInstalled? where awaitsTrust: break // The trust is unknown, not changed.
         default: codexHooksAwaitingApproval = false
         }
-        let pending = codexHooksAwaitingApproval || (codexHookResult?.optionalPending ?? 0) > 0
-        watchCodexHookTrust(pending || awaitsTrust, due: awaitsTrust)
+        watchCodexHookTrust(codexHooksAwaitingApproval || awaitsTrust, due: awaitsTrust)
         return notices
     }
     /// The one notice asking to allow Pacer's hooks in Codex, the first time approval is needed.
@@ -1924,20 +1931,25 @@ actor EngineRuntime {
         guard ownedWork.owns(owner), codexHookHome == home, codexHookTask == nil, let trust,
               let result = codexHookResult, result.installed == true, trust != result.trust else { return }
         let before = codexHookStatus
-        codexHookResult = .init(supportsHooks: result.supportsHooks, installed: result.installed, trust: trust)
+        codexHookResult?.trust = trust
         let notices = updateCodexHookState()
-        if initialized, codexHookStatus != before || result.optionalPending != codexHookResult?.optionalPending || !notices.isEmpty {
+        if initialized, codexHookStatus != before || !notices.isEmpty {
             publish(notices: notices)
         }
     }
     private static func modified(_ file: URL) -> Date? {
         (try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date
     }
+    private var codexHookUpdateAvailable: Bool {
+        guard let status = codexHookStatus else { return false }
+        return codexHookResult?.updateAvailable(status: status) == true
+    }
+
     private var codexHookStatus: CodexHookStatus? {
         guard codexHookServices != nil else { return nil }
         guard codexHooksEnabled else { return .off }
         guard let result = codexHookResult else { return nil }
-        return CodexHookStatus.evaluate(enabled: true, supportsHooks: result.supportsHooks, installed: result.installed, trust: result.trust,
+        return CodexHookStatus.evaluate(enabled: true, supportsHooks: result.supportsHooks, installed: result.installed, hookSet: result.hookSet, trust: result.trust,
                                         lastHookEvent: codexHookActivity.hook, lastCodexTurn: codexHookActivity.turn,
                                         trustedAt: codexHooksTrustedAt, now: now())
     }
@@ -3564,7 +3576,7 @@ actor EngineRuntime {
             hasBudget: hasBudget, at: date)
         snapshot.wslAvailability = demo ? .available : wslAvailability
         let hooks = codexHookStatus.map {
-            EngineCodexHooks($0, optionalPending: codexHookResult?.optionalPending ?? 0, opensSettings: codexHooksOpenSettings)
+            EngineCodexHooks($0, updateAvailable: codexHookResult?.updateAvailable(status: $0) == true, opensSettings: codexHooksOpenSettings)
         }
         snapshot.groupedQuota = groupedQuota.isEmpty ? nil : groupedQuota
         snapshot.codexHooks = codexHookServices == nil ? nil : hooks ?? .settingUp

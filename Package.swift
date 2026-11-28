@@ -35,7 +35,7 @@ let package = Package(name: "CodexPacerPortable", defaultLocalization: "en", pro
         resources: [.process("Resources")],
         linkerSettings: [.linkedLibrary("advapi32")]),
     .executableTarget(name: "PacerInstallerHooks", dependencies: ["WindowsInstallerSupport"], path: "windows/InstallerHooks"),
-    .testTarget(name: "PacerCoreTests", dependencies: ["PacerCore", "PacerEngineSupport", "SQLite3"], path: "native/Tests/PacerCoreTests"),
+    .testTarget(name: "PacerCoreTests", dependencies: ["PacerCore", "PacerEngineSupport", "SQLite3"], path: "native/Tests/PacerCoreTests", resources: [.copy("CodexHookFixtures")]),
     .testTarget(name: "PacerEngineTests", dependencies: ["PacerCore", "PacerEngineSupport", "WindowsInstallerSupport"], path: "windows/Tests/EngineTests")
 ])
 #else
@@ -48,7 +48,7 @@ let package = Package(name: "CodexPacerPortable", defaultLocalization: "en", pla
             resources: [.process("Resources")], linkerSettings: [.linkedLibrary("sqlite3")]),
         .target(name: "PacerMacSupport", dependencies: ["PacerCore"], path: "native/Sources/PacerMacSupport"),
         .target(name: "PacerTestSupport", path: "native/Tests/PacerTestSupport"),
-        .testTarget(name: "PacerCoreTests", dependencies: ["PacerCore", "PacerMacSupport", "PacerTestSupport"], path: "native/Tests/PacerCoreTests"),
+        .testTarget(name: "PacerCoreTests", dependencies: ["PacerCore", "PacerMacSupport", "PacerTestSupport"], path: "native/Tests/PacerCoreTests", resources: [.copy("CodexHookFixtures")]),
         .testTarget(name: "PacerMacSupportTests", dependencies: ["PacerCore", "PacerMacSupport"], path: "native/Tests/PacerMacSupportTests")
     ])
 #endif

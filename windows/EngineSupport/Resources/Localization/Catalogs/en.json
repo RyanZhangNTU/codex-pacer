@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "92abc1c9db37d6623c549acc4e14ecb7977eec280834f7c948db9e6223d60bf1",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "a81f4c0ba0ac95d78b87483f18553729230ae3dac7b5273dcb28d1f9f27e6cc7",
     "windows/EngineSupport/Resources/Localization/en.json": "9c5c3afa9978273c9160fabc0506c301ea0cb77b9090d382d0ec78e963927bff"
   },
   "strings": {
@@ -303,6 +303,8 @@
     "codex.hooks.running": "Codex task tracking is on.",
     "codex.hooks.setting_up": "Setting up Codex task tracking\u2026",
     "codex.hooks.title": "Codex task tracking",
+    "codex.hooks.update": "Update",
+    "codex.hooks.update_hint": "Update Pacer's hooks in Codex to show when it compacts a conversation.",
     "codex.progress_ring": "Show Codex Task Progress",
     "codex.progress_ring_help": "Pacer sets up progress reporting for local Codex sessions. A dashed ring means Codex has yet to report an estimate.",
     "codex.progress_setup.conflict": "The Codex MCP configuration already has an entry named pacer_progress.",

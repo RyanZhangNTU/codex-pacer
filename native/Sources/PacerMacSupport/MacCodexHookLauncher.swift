@@ -43,11 +43,11 @@ public enum MacCodexHookSetup {
     /// Installs or removes the hooks with the CLI that Codex Desktop bundles, so the
     /// plugin is registered by the same engine that runs Desktop's turns; a separately
     /// installed CLI is the fallback.
-    public static func apply(home: URL, customExecutable: String, enabled: Bool) async -> CodexHookSetupResult {
+    public static func apply(home: URL, customExecutable: String, enabled: Bool, update: Bool = false) async -> CodexHookSetupResult {
         guard let client = client(home: home, customExecutable: customExecutable) else {
             return .init(supportsHooks: nil, installed: nil, trust: nil)
         }
-        let result = await CodexHookSetup.apply(home: home, enabled: enabled, launcher: MacCodexHookLauncher(),
+        let result = await CodexHookSetup.apply(home: home, enabled: enabled, update: update, launcher: MacCodexHookLauncher(),
                                                 storage: MacClaudeHookStorage(), client: client)
         await client.shutdown()
         return result

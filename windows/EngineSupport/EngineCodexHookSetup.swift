@@ -5,16 +5,16 @@ import PacerCore
 struct EngineCodexHooks: Codable, Equatable, Sendable {
     /// `off`, `settingUp`, `notInstalled`, `needsApproval`, `running`, `notRunning`, `needsCodexUpdate` or `installFailed`.
     let state: String
-    /// For `needsApproval`: how many core hooks still need approval.
+    /// For `needsApproval`: how many installed hooks still need approval.
     var pending: Int?
-    /// Listed compaction hooks still awaiting approval, once core trust is known.
-    var optionalPending: Int?
+    /// A healthy seven-hook installation can be updated from Settings.
+    var updateAvailable = false
     /// Codex Desktop can open the settings for a pending approval or offer its own update.
     var opensSettings: Bool?
 
     static let settingUp = EngineCodexHooks(state: "settingUp")
     init(state: String, pending: Int? = nil) { self.state = state; self.pending = pending }
-    init(_ status: CodexHookStatus, optionalPending: Int, opensSettings: Bool) {
+    init(_ status: CodexHookStatus, updateAvailable: Bool, opensSettings: Bool) {
         switch status {
         case .off: self.init(state: "off")
         case .notInstalled: self.init(state: "notInstalled")
@@ -24,11 +24,8 @@ struct EngineCodexHooks: Codable, Equatable, Sendable {
         case .needsCodexUpdate: self.init(state: "needsCodexUpdate")
         case .installFailed: self.init(state: "installFailed")
         }
-        switch status {
-        case .needsApproval, .running, .notRunning: self.optionalPending = optionalPending
-        default: break
-        }
-        if opensSettings, pending != nil || status == .needsCodexUpdate || (self.optionalPending ?? 0) > 0 {
+        self.updateAvailable = updateAvailable
+        if opensSettings, pending != nil || status == .needsCodexUpdate {
             self.opensSettings = true
         }
     }
@@ -38,7 +35,7 @@ struct EngineCodexHooks: Codable, Equatable, Sendable {
 /// PacerInstallerHooks prepares the bundled Python, the wrapped program and the
 /// fixed launcher; `CodexHookSetup` installs the plugin through Codex itself.
 struct EngineCodexHookServices: Sendable {
-    var apply: @Sendable (_ home: URL, _ executable: String, _ enabled: Bool) async -> CodexHookSetupResult
+    var apply: @Sendable (_ home: URL, _ executable: String, _ enabled: Bool, _ update: Bool) async -> CodexHookSetupResult
     /// The trust state alone, while the user approves Pacer's hooks in Codex.
     var trust: @Sendable (_ home: URL, _ executable: String) async -> [CodexHookTrust]?
     /// Marks the one notice asking to allow Pacer's hooks in Codex as sent; nil sends none.
@@ -51,7 +48,7 @@ struct EngineCodexHookServices: Sendable {
     var findsExecutable: @Sendable (_ executable: String) -> Bool = { _ in true }
 
     static func live(runtimeRoot: URL) -> Self {
-        Self(apply: { home, executable, enabled in
+        Self(apply: { home, executable, enabled, update in
             let unknown = CodexHookSetupResult(supportsHooks: nil, installed: nil, trust: nil)
             if enabled {
                 guard let data = await EngineInstallerHooks.run(["--prepare-codex-hook", runtimeRoot.path, home.path], runtimeRoot: runtimeRoot),
@@ -60,7 +57,7 @@ struct EngineCodexHookServices: Sendable {
             }
             guard let cli = CodexClient.findExecutable(customPath: executable) else { return unknown }
             let client = CodexClient(executable: cli, home: home, timeout: 10)
-            let result = await CodexHookSetup.apply(home: home, enabled: enabled, launcher: WindowsCodexHookLauncher(),
+            let result = await CodexHookSetup.apply(home: home, enabled: enabled, update: update, launcher: WindowsCodexHookLauncher(),
                                                     storage: WindowsLocalProfileStorage(), client: client)
             await client.shutdown()
             return result

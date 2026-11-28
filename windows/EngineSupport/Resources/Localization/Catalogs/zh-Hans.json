@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "27296af65c497dc8b241ab7aa5ed3e45a9cec7cfff1eea6c596a59ee4f8df998",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "92fecaee2709b3915cc238d7552ee7701e73b8ef7fb141d424a2c0d6bc977d86",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "3be42c2706a73f341c7e8c9070eaa88a32b6bccef9c648f36f6fca8c0b2f6111"
   },
   "strings": {
@@ -303,6 +303,8 @@
     "codex.hooks.running": "Codex \u4efb\u52a1\u8ddf\u8e2a\u5df2\u5f00\u542f\u3002",
     "codex.hooks.setting_up": "\u6b63\u5728\u8bbe\u7f6e Codex \u4efb\u52a1\u8ddf\u8e2a\u2026",
     "codex.hooks.title": "Codex \u4efb\u52a1\u8ddf\u8e2a",
+    "codex.hooks.update": "\u66f4\u65b0",
+    "codex.hooks.update_hint": "\u66f4\u65b0 Codex \u91cc\u7684 Pacer hook\uff0c\u5373\u53ef\u663e\u793a\u538b\u7f29\u72b6\u6001\u3002",
     "codex.progress_ring": "\u663e\u793a Codex \u4efb\u52a1\u8fdb\u5ea6",
     "codex.progress_ring_help": "Pacer \u4f1a\u81ea\u52a8\u4e3a\u672c\u5730 Codex \u4f1a\u8bdd\u914d\u7f6e\u8fdb\u5ea6\u4e0a\u62a5\u3002\u865a\u7ebf\u73af\u8868\u793a\u8fd8\u5728\u7b49 Codex \u7ed9\u51fa\u4f30\u8ba1\u3002",
     "codex.progress_setup.conflict": "Codex \u7684 MCP \u914d\u7f6e\u91cc\u5df2\u6709\u540d\u4e3a pacer_progress \u7684\u6761\u76ee\u3002",

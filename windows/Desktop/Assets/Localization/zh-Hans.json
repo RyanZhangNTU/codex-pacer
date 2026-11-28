@@ -299,6 +299,8 @@
     "codex.hooks.running": "Codex 任务跟踪已开启。",
     "codex.hooks.setting_up": "正在设置 Codex 任务跟踪…",
     "codex.hooks.title": "Codex 任务跟踪",
+    "codex.hooks.update": "更新",
+    "codex.hooks.update_hint": "更新 Codex 里的 Pacer hook，即可显示压缩状态。",
     "codex.progress_ring": "显示 Codex 任务进度",
     "codex.progress_ring_help": "Pacer 会自动为本地 Codex 会话配置进度上报。虚线环表示还在等 Codex 给出估计。",
     "codex.progress_setup.conflict": "Codex 的 MCP 配置里已有名为 pacer_progress 的条目。",

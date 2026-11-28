@@ -1672,6 +1672,8 @@
 "codex.hooks.notice_title" = "在 Codex 中允许 Pacer";
 "codex.hooks.notice_body" = "Codex 现在需要你批准，Pacer 才能跟踪它的任务。";
 "codex.hooks.open" = "打开 Codex";
+"codex.hooks.update_hint" = "更新 Codex 里的 Pacer hook，即可显示压缩状态。";
+"codex.hooks.update" = "更新";
 "codex.hooks.compaction_hint" = "在 Codex 里再允许 %d 项，即可显示压缩状态。";
 "codex.hooks.guide.title" = "在 Codex 设置里允许 Pacer";
 "codex.hooks.guide.step_hooks" = "点左侧的“钩子”。";

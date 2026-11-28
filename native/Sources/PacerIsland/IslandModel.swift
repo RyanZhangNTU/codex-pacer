@@ -504,7 +504,8 @@ final class IslandModel: ObservableObject {
     private var codexProgressFlagTask: Task<Int, Never>?
     /// Whether Pacer's Codex hooks are installed, allowed in Codex and writing events.
     @Published private(set) var codexHookStatus: CodexHookStatus = .off
-    @Published private(set) var codexOptionalPending = 0
+    @Published private(set) var codexHookUpdateAvailable = false
+    var codexInstalledHookCount: Int { (codexHookResult?.hookSet ?? .legacy).events.count }
     private var codexHookResult: CodexHookSetupResult?
     /// Setup passes run one at a time; each knows the home the previous one used.
     private var codexHookQueue = ProgressSetupQueue<CodexHookTarget>()
@@ -514,7 +515,7 @@ final class IslandModel: ObservableObject {
         let executable: String
         let enabled: Bool
     }
-    typealias CodexHookSetupCall = @Sendable (_ home: URL, _ executable: String, _ enabled: Bool) async -> CodexHookSetupResult
+    typealias CodexHookSetupCall = @Sendable (_ home: URL, _ executable: String, _ enabled: Bool, _ update: Bool) async -> CodexHookSetupResult
     /// Tests replace the installer and the trust read. Without them, a model given its installation never touches a Codex home.
     var codexHookSetupOverride: CodexHookSetupCall?
     var codexHookTrustOverride: (@Sendable (_ home: URL, _ executable: String) async -> [CodexHookTrust]?)?
@@ -530,23 +531,34 @@ final class IslandModel: ObservableObject {
     /// The small floating guide beside Codex while the user allows the hooks.
     private(set) lazy var codexHooksGuideFloat = CodexHooksGuideFloat(model: self)
 
+    func updateCodexHooks() {
+        guard codexHookUpdateAvailable, codexHookQueue.target?.home == home,
+              codexHookQueue.target?.executable == (defaults.string(forKey: "codexExecutable") ?? ""),
+              isModuleEnabled(.codex), !stopped else { return }
+        syncCodexHooks(force: true, update: true)
+    }
+
     /// Installs Pacer's Codex hooks while the Codex module is on and removes them
     /// when it is off. Setup is idempotent: an unchanged plugin is not reinstalled.
     /// Moving to another Codex home first removes them from the one Pacer leaves,
     /// and passes run in order, so a quick series of switches ends with the hooks
     /// in the last home only. `force` runs an unchanged target again (Retry).
-    func syncCodexHooks(force: Bool = false) {
+    func syncCodexHooks(force: Bool = false, update: Bool = false) {
         guard !demo, installationOverride == nil || codexHookSetupOverride != nil,
               let ticket = codexHookQueue.request(.init(home: home, executable: defaults.string(forKey: "codexExecutable") ?? "",
                                                          enabled: isModuleEnabled(.codex) && !stopped), force: force) else { return }
+        codexHookResult = nil
+        codexHookUpdateAvailable = false
+        codexTrustCheck?.cancel()
+        watchCodexHookTrust(false)
         let target = ticket.target
-        let setup: CodexHookSetupCall = codexHookSetupOverride ?? { home, executable, enabled in
-            await MacCodexHookSetup.apply(home: home, customExecutable: executable, enabled: enabled)
+        let setup: CodexHookSetupCall = codexHookSetupOverride ?? { home, executable, enabled, update in
+            await MacCodexHookSetup.apply(home: home, customExecutable: executable, enabled: enabled, update: update)
         }
         let task = Task { [weak self] in
             await ticket.waitForPrevious()
             guard let self else { return }
-            let result = await self.applyCodexHooks(target, using: setup)
+            let result = await self.applyCodexHooks(target, update: update, using: setup)
             guard self.codexHookQueue.finish(ticket) else { return }
             self.codexHookResult = result
             await self.updateCodexHookStatus(force: true)
@@ -554,10 +566,10 @@ final class IslandModel: ObservableObject {
         codexHookQueue.track(task)
     }
 
-    private func applyCodexHooks(_ target: CodexHookTarget, using setup: CodexHookSetupCall) async -> CodexHookSetupResult {
+    private func applyCodexHooks(_ target: CodexHookTarget, update: Bool, using setup: CodexHookSetupCall) async -> CodexHookSetupResult {
         if let previous = defaults.dictionary(forKey: Self.codexHookHomeKey) as? [String: String],
            let path = previous["home"], path != target.home.path {
-            let removed = await setup(URL(fileURLWithPath: path, isDirectory: true), previous["executable"] ?? "", false)
+            let removed = await setup(URL(fileURLWithPath: path, isDirectory: true), previous["executable"] ?? "", false, false)
             guard removed.installed == false else { return removed }
             defaults.removeObject(forKey: Self.codexHookHomeKey)
         }
@@ -566,7 +578,7 @@ final class IslandModel: ObservableObject {
         if target.enabled {
             defaults.set(["home": target.home.path, "executable": target.executable], forKey: Self.codexHookHomeKey)
         }
-        let result = await setup(target.home, target.executable, target.enabled)
+        let result = await setup(target.home, target.executable, target.enabled, update)
         if !target.enabled, result.installed == false { defaults.removeObject(forKey: Self.codexHookHomeKey) }
         return result
     }
@@ -662,7 +674,7 @@ final class IslandModel: ObservableObject {
         codexHookEvaluatedRow = evidence.lastHookEvent
         let result = codexHookResult, awaitsTrust = result?.awaitsTrust == true
         var status = CodexHookStatus.evaluate(enabled: isModuleEnabled(.codex) && !demo, supportsHooks: result?.supportsHooks,
-            installed: result == nil ? false : result?.installed, trust: result?.trust,
+            installed: result == nil ? false : result?.installed, hookSet: result?.hookSet ?? .legacy, trust: result?.trust,
             lastHookEvent: evidence.lastHookEvent, lastCodexTurn: evidence.lastCodexTurn, trustedAt: codexHooksTrustedAt, now: now)
         let waiting: Bool
         if case .needsApproval = status { waiting = true } else { waiting = false }
@@ -675,14 +687,14 @@ final class IslandModel: ObservableObject {
         default: codexHooksAwaitingApproval = false
         }
         if codexHookStatus != status { codexHookStatus = status }
-        let optionalPending = status == .off ? 0 : result?.optionalPending ?? 0
-        if codexOptionalPending != optionalPending { codexOptionalPending = optionalPending }
+        let updateAvailable = result?.updateAvailable(status: status) == true
+        if codexHookUpdateAvailable != updateAvailable { codexHookUpdateAvailable = updateAvailable }
         if waiting, !defaults.bool(forKey: Self.codexHooksApprovalNotifiedKey) {
             defaults.set(true, forKey: Self.codexHooksApprovalNotifiedKey)
             postCodexHooksNotice()
         }
         // While the user approves, and after Codex failed to report the trust, which is asked again at once.
-        watchCodexHookTrust(waiting || optionalPending > 0 || awaitsTrust, due: awaitsTrust)
+        watchCodexHookTrust(waiting || awaitsTrust, due: awaitsTrust)
     }
     /// The hooks waited for approval; kept while a failed trust read leaves it unknown.
     private var codexHooksAwaitingApproval = false
@@ -736,8 +748,8 @@ final class IslandModel: ObservableObject {
             let trust = await Task.detached(priority: .utility) { await read(home, executable) }.value
             guard let self else { return }
             self.codexTrustCheck = nil
-            guard !Task.isCancelled, self.home == home, let trust, let result = self.codexHookResult, result.installed == true else { return }
-            self.codexHookResult = .init(supportsHooks: result.supportsHooks, installed: result.installed, trust: trust)
+            guard !Task.isCancelled, self.home == home, let trust, self.codexHookResult?.installed == true else { return }
+            self.codexHookResult?.trust = trust
             await self.updateCodexHookStatus(force: true)
         }
     }
@@ -750,8 +762,8 @@ final class IslandModel: ObservableObject {
     var canOpenCodexSettings: Bool { NSWorkspace.shared.urlForApplication(toOpen: CodexHookTrustWatch.settingsURL) != nil }
 
     /// Opens Codex's settings with the floating guide beside it on `screen`, the one Settings is on.
-    func openCodexHooksGuide(screen: NSScreen?, compactionOnly: Bool = false) {
-        codexHooksGuideFloat.show(on: screen, compactionOnly: compactionOnly)
+    func openCodexHooksGuide(screen: NSScreen?) {
+        codexHooksGuideFloat.show(on: screen)
         NSWorkspace.shared.open(CodexHookTrustWatch.settingsURL, configuration: NSWorkspace.OpenConfiguration()) { [weak float = codexHooksGuideFloat] _, error in
             guard error != nil else { return }
             DispatchQueue.main.async { float?.close() }

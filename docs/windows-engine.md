@@ -25,7 +25,7 @@ The engine speaks bounded newline-delimited JSON on stdin and stdout. Requests c
 
 - Never save live protocol bodies: they carry task display metadata. Diagnostics and acceptance records exclude credentials, account identity and private task content.
 - The optional `hello.harnessModules` lists extra module IDs supported by the engine. A host that understands them sets `supportsHarnessModules` on `initialize`. Without that exchange, both sides keep the original three modules on protocol 1.
-- Once core hook trust is known, `codexHooks.optionalPending` counts the listed compaction hooks still waiting for approval. The engine publishes changes to this count even while `codexHooks.state` stays `running`. `codexHooks.pending` counts core approvals.
+- `codexHooks.updateAvailable` is true only while a seven-hook installation is running and the installed Codex supports both compaction events. Codex trusts the whole hook file, so ordinary setup and `retryCodexHooks` preserve those seven hooks. Send `updateCodexHooks` with no parameters to install all nine. The engine rejects the command when the update is unavailable. After the update, `codexHooks.pending` counts every installed hook awaiting approval. See [Codex hooks](development.md#codex-hooks) for capability detection and first setup.
 - While configuration suspends task projection, the engine holds at most four DeepSeek browser requests. Cancellation, a new binding, sleep and shutdown clear them.
 
 ## Shared Core and platform boundaries

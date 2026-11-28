@@ -18,23 +18,28 @@ public struct CodexHookSetupResult: Equatable, Sendable {
     /// Whether Codex lists Pacer's plugin as installed; nil after a failure.
     public let installed: Bool?
     /// Codex's trust state of each of Pacer's hooks; nil when unknown.
-    public let trust: [CodexHookTrust]?
-    public init(supportsHooks: Bool?, installed: Bool?, trust: [CodexHookTrust]?) {
+    public var trust: [CodexHookTrust]?
+    public let hookSet: CodexHookSet
+    public let supportsCompaction: Bool
+    public init(supportsHooks: Bool?, installed: Bool?, trust: [CodexHookTrust]?,
+                hookSet: CodexHookSet = .legacy, supportsCompaction: Bool = false) {
+        self.hookSet = hookSet; self.supportsCompaction = supportsCompaction
         self.supportsHooks = supportsHooks; self.installed = installed; self.trust = trust
     }
     /// Installed, but `hooks/list` failed: ask Codex for the trust alone again
     /// (`CodexHookSetup.trust`), never by setting the plugin up again.
     public var awaitsTrust: Bool { supportsHooks == true && installed == true && trust == nil }
 
-    /// Older Codex versions omit compaction events entirely.
-    public var optionalPending: Int { trust?.filter { $0.event.isCompaction && $0.state != "trusted" }.count ?? 0 }
+    public func updateAvailable(status: CodexHookStatus) -> Bool {
+        installed == true && supportsCompaction && hookSet == .legacy && status == .running
+    }
 }
 
 /// Installs, refreshes or removes Pacer's Codex hooks, the same way on every
 /// platform: the platform's launcher and program, the plugin files under
 /// `CodexHookPlugin.Layout`, then Codex's own marketplace and plugin calls.
 public enum CodexHookSetup {
-    public static func apply(home: URL, enabled: Bool, launcher: any CodexHookLauncher,
+    public static func apply(home: URL, enabled: Bool, update: Bool = false, launcher: any CodexHookLauncher,
                              storage: any ClaudeHookStorage, client: CodexClient) async -> CodexHookSetupResult {
         let layout = CodexHookPlugin.Layout(home: home)
         do {
@@ -60,23 +65,13 @@ public enum CodexHookSetup {
             try? launcher.remove(home: home)
             return .init(supportsHooks: nil, installed: false, trust: nil)
         }
-        let files: [(relativePath: String, data: Data)]
+        let supportsCompaction = await client.supportsCompactionHooks()
+        guard !Task.isCancelled else { return .init(supportsHooks: nil, installed: nil, trust: nil) }
+        let hookSet: CodexHookSet, matches: Bool
         do {
-            try launcher.prepare(home: home)
-            files = try CodexHookPlugin.files(command: launcher.command(home: home), commandWindows: launcher.commandWindows(home: home))
-            if !storage.exists(layout.root) {
-                try storage.createDirectory(layout.root, permissions: 0o700)
-                try storage.replace(layout.owner, with: CodexHookPlugin.ownerMarker, permissions: 0o600)
-            }
-            for directory in layout.directories where !storage.exists(directory) { try storage.createDirectory(directory, permissions: 0o700) }
-            for file in files {
-                let path = layout.root.appendingPathComponent(file.relativePath)
-                if (try? storage.read(path)) != file.data { try storage.replace(path, with: file.data, permissions: 0o600) }
-            }
+            (hookSet, matches) = try writePlugin(home: home, launcher: launcher, storage: storage,
+                                                 supportsCompaction: supportsCompaction, update: update)
         } catch { return .init(supportsHooks: nil, installed: nil, trust: nil) }
-        // Codex copies an installed plugin into its cache; an identical copy needs no reinstall.
-        let cached = home.appendingPathComponent("plugins/cache/\(CodexHookPlugin.market)/\(CodexHookPlugin.plugin)/\(CodexHookPlugin.version)/hooks/hooks.json")
-        let matches = (try? storage.validate(cached)) != nil && (try? storage.read(cached)) == files.last?.data
         do {
             _ = try await client.setLocalPlugin(market: CodexHookPlugin.market, plugin: CodexHookPlugin.plugin, source: layout.root,
                                                 enabled: true, cachedManifestMatches: matches,
@@ -85,10 +80,37 @@ public enum CodexHookSetup {
             return .init(supportsHooks: false, installed: false, trust: nil)
         } catch { return .init(supportsHooks: nil, installed: nil, trust: nil) }
         do {
-            return .init(supportsHooks: true, installed: true, trust: try await client.pluginHookTrust(pluginID: CodexHookPlugin.id))
+            return .init(supportsHooks: true, installed: true, trust: try await client.pluginHookTrust(pluginID: CodexHookPlugin.id),
+                         hookSet: hookSet, supportsCompaction: supportsCompaction == true)
         } catch CodexClientError.server(_, -32601, _) {
             return .init(supportsHooks: false, installed: true, trust: nil)
-        } catch { return .init(supportsHooks: true, installed: true, trust: nil) }
+        } catch { return .init(supportsHooks: true, installed: true, trust: nil, hookSet: hookSet, supportsCompaction: supportsCompaction == true) }
+    }
+
+    /// Codex installs a copy in its versioned cache and removes it on uninstall.
+    /// Read it before writing the marketplace source, which can be stale after a failed refresh.
+    static func writePlugin(home: URL, launcher: any CodexHookLauncher, storage: any ClaudeHookStorage,
+                            supportsCompaction: Bool?, update: Bool) throws -> (set: CodexHookSet, cacheMatches: Bool) {
+        let layout = CodexHookPlugin.Layout(home: home)
+        try storage.validate(layout.cachedHooks)
+        let cached = storage.exists(layout.cachedHooks) ? try storage.read(layout.cachedHooks) : nil
+        // Repair a damaged installed copy conservatively. A missing cache is a fresh setup.
+        let installed = cached.map { (try? CodexHookSet(installed: $0)) ?? .legacy }
+        // A failed probe is no reason to replace a previously trusted full file.
+        if supportsCompaction == nil && installed == .full { throw CodexClientError.invalidResponse }
+        let set: CodexHookSet = supportsCompaction == true && (installed != .legacy || update) ? .full : .legacy
+        try launcher.prepare(home: home)
+        let files = try CodexHookPlugin.files(set: set, command: launcher.command(home: home), commandWindows: launcher.commandWindows(home: home))
+        if !storage.exists(layout.root) {
+            try storage.createDirectory(layout.root, permissions: 0o700)
+            try storage.replace(layout.owner, with: CodexHookPlugin.ownerMarker, permissions: 0o600)
+        }
+        for directory in layout.directories where !storage.exists(directory) { try storage.createDirectory(directory, permissions: 0o700) }
+        for file in files {
+            let path = layout.root.appendingPathComponent(file.relativePath)
+            if (try? storage.read(path)) != file.data { try storage.replace(path, with: file.data, permissions: 0o600) }
+        }
+        return (set, cached == files.last?.data)
     }
 
     /// The trust state alone, for a Settings refresh while the user approves in Codex.

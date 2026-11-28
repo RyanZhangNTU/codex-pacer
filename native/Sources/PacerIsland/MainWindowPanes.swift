@@ -2,27 +2,22 @@ import AppKit
 import PacerCore
 import SwiftUI
 
-/// Optional approvals appear only in Settings, once all core hooks are trusted.
+/// The hook update is offered only on the two Settings pages that describe Codex tracking.
 struct CodexCompactionHint: View {
     let model: IslandModel
-    let count: Int
 
     init?(model: IslandModel, pane: SettingsPane) {
-        guard pane == .overview || pane == .codex, model.codexOptionalPending > 0,
-              model.codexHookStatus == .running || model.codexHookStatus == .notRunning else { return nil }
+        guard pane == .overview || pane == .codex, model.codexHookUpdateAvailable else { return nil }
         self.model = model
-        count = model.codexOptionalPending
     }
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(L10n.text("codex.hooks.compaction_hint", count))
+            Text(L10n.text("codex.hooks.update_hint"))
                 .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
-            if model.canOpenCodexSettings {
-                Button(L10n.text("codex.hooks.open")) { model.openCodexHooksGuide(screen: NSApp.keyWindow?.screen, compactionOnly: true) }
-                    .buttonStyle(.main).fixedSize()
-            }
+            Button(L10n.text("codex.hooks.update")) { model.updateCodexHooks() }
+                .buttonStyle(.main).fixedSize()
         }
     }
 }
