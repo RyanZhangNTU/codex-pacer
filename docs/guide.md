@@ -75,7 +75,7 @@ The panel is a column of blocks: the task list, a quota block for each service, 
 
 Codex, Claude Code, DeepSeek Harness, WorkBuddy and Antigravity each report how much of your request is done. Pacer draws it as a ring around the task's icon.
 
-On Mac, the circle inside the ring fills as the conversation uses its context window. An ended task keeps its last level. While the agent compacts the conversation, the task shows “Compacting context”. You can turn off **Context level** under **Settings → Expanded Panel → Task List**.
+The more of its context a conversation uses, the fuller the circle inside the task's ring; an ended task keeps its last reading. While the agent compacts the conversation, the task shows “Compacting context”. You can turn off **Context usage** under **Settings → Expanded Panel → Task List**.
 
 | You see | It means |
 | --- | --- |

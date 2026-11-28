@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "6233f59e76d6ce60b79687ccefff07f72b4d9ef78de463a11e2d98d4e944f2e8",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "92abc1c9db37d6623c549acc4e14ecb7977eec280834f7c948db9e6223d60bf1",
     "windows/EngineSupport/Resources/Localization/en.json": "9c5c3afa9978273c9160fabc0506c301ea0cb77b9090d382d0ec78e963927bff"
   },
   "strings": {
@@ -1179,8 +1179,8 @@
     "main.panel.budget_link": "Budgets and alerts",
     "main.panel.codex_resets": "Banked resets",
     "main.panel.codex_resets_help": "Shows the available banked resets and a countdown to the next expiry under the Codex quota.",
-    "main.panel.context_level": "Context level",
-    "main.panel.context_level_help": "The circle inside each task's ring fills up as its conversation uses its context window.",
+    "main.panel.context_level": "Context usage",
+    "main.panel.context_level_help": "The more of its context a conversation uses, the fuller the circle in its task icon.",
     "main.panel.custom": "Customized",
     "main.panel.details": "Details beside",
     "main.panel.details_help": "Pace, reset and forecast beside a service with its own row.",
@@ -1241,7 +1241,7 @@
     "main.search.collaboration": "codex claude delegate skill hand off second opinion review",
     "main.search.collapsedBar": "layout rings modules warnings bar",
     "main.search.deepseek": "balance budget spend price speed peak",
-    "main.search.expandedPanel": "panel blocks tasks rows page quota rings windows deepseek spend week buttons context level conversation",
+    "main.search.expandedPanel": "panel blocks tasks rows page quota rings windows deepseek spend week buttons context usage compact conversation",
     "main.search.general": "login startup dock icon language privacy project names",
     "main.search.history": "trend chart usage spend week",
     "main.search.local_harness": "local tasks usage progress MCP",

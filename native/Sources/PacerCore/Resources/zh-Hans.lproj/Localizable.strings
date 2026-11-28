@@ -1199,7 +1199,7 @@
 "main.collapsed.rings_custom" = "已手动选择圆环";
 "main.collapsed.warnings_choose" = "在“通知”里选择显示哪些警告";
 "settings.pane.expanded_panel" = "展开面板";
-"main.search.expandedPanel" = "面板 区块 任务 行 翻页 额度 圆环 周期 花费 去向 最近 按钮 上下文水位 对话";
+"main.search.expandedPanel" = "面板 区块 任务 行 翻页 额度 圆环 周期 花费 去向 最近 按钮 上下文 用量 压缩 对话";
 "panel.group.tasks" = "任务";
 "panel.group.quota" = "额度";
 "panel.group.deepseek" = "DeepSeek";
@@ -1246,8 +1246,8 @@
 "main.panel.restore" = "恢复自动";
 "main.panel.page_size" = "每页任务";
 "main.panel.page_size_help" = "更多任务左右翻页。";
-"main.panel.context_level" = "上下文水位";
-"main.panel.context_level_help" = "任务图标里的圆会随着对话占用的上下文增多而填满。";
+"main.panel.context_level" = "上下文用量";
+"main.panel.context_level_help" = "对话用掉的上下文越多，任务图标里的圆填得越满。";
 "main.panel.row_style" = "行样式";
 "main.panel.row_two" = "两行";
 "main.panel.row_one" = "一行";

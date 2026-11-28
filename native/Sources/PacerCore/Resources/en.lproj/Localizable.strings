@@ -1199,7 +1199,7 @@
 "main.collapsed.rings_custom" = "Rings chosen by hand";
 "main.collapsed.warnings_choose" = "Choose Warnings in Notifications";
 "settings.pane.expanded_panel" = "Expanded Panel";
-"main.search.expandedPanel" = "panel blocks tasks rows page quota rings windows deepseek spend week buttons context level conversation";
+"main.search.expandedPanel" = "panel blocks tasks rows page quota rings windows deepseek spend week buttons context usage compact conversation";
 "panel.group.tasks" = "Tasks";
 "panel.group.quota" = "Quota";
 "panel.group.deepseek" = "DeepSeek";
@@ -1246,8 +1246,8 @@
 "main.panel.restore" = "Restore Automatic";
 "main.panel.page_size" = "Tasks per page";
 "main.panel.page_size_help" = "More tasks turn pages.";
-"main.panel.context_level" = "Context level";
-"main.panel.context_level_help" = "The circle inside each task's ring fills up as its conversation uses its context window.";
+"main.panel.context_level" = "Context usage";
+"main.panel.context_level_help" = "The more of its context a conversation uses, the fuller the circle in its task icon.";
 "main.panel.row_style" = "Rows";
 "main.panel.row_two" = "Two lines";
 "main.panel.row_one" = "One line";
