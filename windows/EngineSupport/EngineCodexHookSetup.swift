@@ -9,12 +9,14 @@ struct EngineCodexHooks: Codable, Equatable, Sendable {
     var pending: Int?
     /// A healthy seven-hook installation can be updated from Settings.
     var updateAvailable = false
+    /// How many hooks the installed plugin holds (7 legacy, 9 with compaction), for the approval guide.
+    var hookCount: Int?
     /// Codex Desktop can open the settings for a pending approval or offer its own update.
     var opensSettings: Bool?
 
     static let settingUp = EngineCodexHooks(state: "settingUp")
     init(state: String, pending: Int? = nil) { self.state = state; self.pending = pending }
-    init(_ status: CodexHookStatus, updateAvailable: Bool, opensSettings: Bool) {
+    init(_ status: CodexHookStatus, updateAvailable: Bool, opensSettings: Bool, hookCount: Int? = nil) {
         switch status {
         case .off: self.init(state: "off")
         case .notInstalled: self.init(state: "notInstalled")
@@ -25,6 +27,7 @@ struct EngineCodexHooks: Codable, Equatable, Sendable {
         case .installFailed: self.init(state: "installFailed")
         }
         self.updateAvailable = updateAvailable
+        self.hookCount = hookCount
         if opensSettings, pending != nil || status == .needsCodexUpdate {
             self.opensSettings = true
         }

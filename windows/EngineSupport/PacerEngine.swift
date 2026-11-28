@@ -3576,7 +3576,8 @@ actor EngineRuntime {
             hasBudget: hasBudget, at: date)
         snapshot.wslAvailability = demo ? .available : wslAvailability
         let hooks = codexHookStatus.map {
-            EngineCodexHooks($0, updateAvailable: codexHookResult?.updateAvailable(status: $0) == true, opensSettings: codexHooksOpenSettings)
+            EngineCodexHooks($0, updateAvailable: codexHookResult?.updateAvailable(status: $0) == true, opensSettings: codexHooksOpenSettings,
+                             hookCount: codexHookResult?.hookSet.events.count)
         }
         snapshot.groupedQuota = groupedQuota.isEmpty ? nil : groupedQuota
         snapshot.codexHooks = codexHookServices == nil ? nil : hooks ?? .settingUp

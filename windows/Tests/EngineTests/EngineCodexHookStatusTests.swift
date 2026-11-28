@@ -109,6 +109,7 @@ final class EngineCodexHookStatusTests: XCTestCase {
         XCTAssertEqual(hooks.state, "running")
         let wire = try XCTUnwrap(frames.wireHooks())
         XCTAssertEqual(wire["updateAvailable"] as? Bool, true)
+        XCTAssertEqual(wire["hookCount"] as? Int, 7, "The guide shows how many hooks the installed plugin holds")
         XCTAssertNil(wire["optionalPending"])
         XCTAssertNil(hooks.opensSettings)
         XCTAssertFalse(frames.all().contains { $0.compactWarnings?.contains { $0.kind == .codexHooks } == true })
@@ -118,6 +119,7 @@ final class EngineCodexHookStatusTests: XCTestCase {
         let pending = try await TestWait.until { frames.all().last?.codexHooks?.pending == 9 }
         XCTAssertTrue(pending)
         XCTAssertEqual(frames.all().last?.codexHooks?.state, "needsApproval")
+        XCTAssertEqual(frames.all().last?.codexHooks?.hookCount, 9)
         XCTAssertEqual(frames.all().last?.codexHooks?.updateAvailable, false)
         XCTAssertEqual(frames.all().last?.codexHooks?.opensSettings, true)
         XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
