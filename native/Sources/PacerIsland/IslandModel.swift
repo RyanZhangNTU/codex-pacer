@@ -504,6 +504,7 @@ final class IslandModel: ObservableObject {
     private var codexProgressFlagTask: Task<Int, Never>?
     /// Whether Pacer's Codex hooks are installed, allowed in Codex and writing events.
     @Published private(set) var codexHookStatus: CodexHookStatus = .off
+    @Published private(set) var codexOptionalPending = 0
     private var codexHookResult: CodexHookSetupResult?
     /// Setup passes run one at a time; each knows the home the previous one used.
     private var codexHookQueue = ProgressSetupQueue<CodexHookTarget>()
@@ -516,7 +517,7 @@ final class IslandModel: ObservableObject {
     typealias CodexHookSetupCall = @Sendable (_ home: URL, _ executable: String, _ enabled: Bool) async -> CodexHookSetupResult
     /// Tests replace the installer and the trust read. Without them, a model given its installation never touches a Codex home.
     var codexHookSetupOverride: CodexHookSetupCall?
-    var codexHookTrustOverride: (@Sendable (_ home: URL, _ executable: String) async -> [String]?)?
+    var codexHookTrustOverride: (@Sendable (_ home: URL, _ executable: String) async -> [CodexHookTrust]?)?
     private var codexHookStatusCheckedAt = Date.distantPast
     /// The rollout folders are listed at most this often for the status.
     static let codexHookStatusInterval: TimeInterval = 60
@@ -674,12 +675,14 @@ final class IslandModel: ObservableObject {
         default: codexHooksAwaitingApproval = false
         }
         if codexHookStatus != status { codexHookStatus = status }
+        let optionalPending = status == .off ? 0 : result?.optionalPending ?? 0
+        if codexOptionalPending != optionalPending { codexOptionalPending = optionalPending }
         if waiting, !defaults.bool(forKey: Self.codexHooksApprovalNotifiedKey) {
             defaults.set(true, forKey: Self.codexHooksApprovalNotifiedKey)
             postCodexHooksNotice()
         }
         // While the user approves, and after Codex failed to report the trust, which is asked again at once.
-        if waiting { watchCodexHookTrust(true) } else { watchCodexHookTrust(awaitsTrust, due: true) }
+        watchCodexHookTrust(waiting || optionalPending > 0 || awaitsTrust, due: awaitsTrust)
     }
     /// The hooks waited for approval; kept while a failed trust read leaves it unknown.
     private var codexHooksAwaitingApproval = false
@@ -747,8 +750,8 @@ final class IslandModel: ObservableObject {
     var canOpenCodexSettings: Bool { NSWorkspace.shared.urlForApplication(toOpen: CodexHookTrustWatch.settingsURL) != nil }
 
     /// Opens Codex's settings with the floating guide beside it on `screen`, the one Settings is on.
-    func openCodexHooksGuide(screen: NSScreen?) {
-        codexHooksGuideFloat.show(on: screen)
+    func openCodexHooksGuide(screen: NSScreen?, compactionOnly: Bool = false) {
+        codexHooksGuideFloat.show(on: screen, compactionOnly: compactionOnly)
         NSWorkspace.shared.open(CodexHookTrustWatch.settingsURL, configuration: NSWorkspace.OpenConfiguration()) { [weak float = codexHooksGuideFloat] _, error in
             guard error != nil else { return }
             DispatchQueue.main.async { float?.close() }

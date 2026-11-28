@@ -95,9 +95,25 @@ final class CodexHookTests: XCTestCase {
         XCTAssertNotNil(CodexHookProgram.source)
     }
 
-    func testStatusNeedsEveryHookTrustedAndNoticesASilentHook() {
-        let now = Date(), all = Array(repeating: "trusted", count: CodexHookEvent.Kind.allCases.count)
-        func status(enabled: Bool = true, supports: Bool? = true, installed: Bool? = true, trust: [String]? = all,
+    func testHooksListReadsEventNameAndEffectiveTrustForPacersPlugin() throws {
+        let plugin = CodexHookPlugin.id
+        let hooks: [[String: Any]] = [
+            ["pluginId": plugin, "eventName": "postCompact", "trustStatus": "modified"],
+            ["pluginId": "other", "eventName": "stop", "trustStatus": "untrusted"],
+            ["pluginId": plugin, "eventName": "userPromptSubmit", "trustStatus": "trusted", "enabled": true],
+            ["pluginId": plugin, "eventName": "preCompact", "trustStatus": "trusted", "enabled": false],
+            ["pluginId": plugin, "eventName": "stop"]
+        ]
+        let bytes = try line(["data": [["hooks": hooks], ["hooks": hooks]]])
+        XCTAssertEqual(try CodexClient.decodeHookTrust(bytes, pluginID: plugin), [
+            .init(event: .postCompact, state: "modified"), .init(event: .userPromptSubmit, state: "trusted"),
+            .init(event: .preCompact, state: "disabled"), .init(event: .stop, state: "unknown")
+        ])
+    }
+
+    func testStatusNeedsEveryCoreHookTrustedAndNoticesASilentHook() {
+        let now = Date(), all = CodexHookEvent.Kind.allCases.map { CodexHookTrust(event: $0, state: "trusted") }
+        func status(enabled: Bool = true, supports: Bool? = true, installed: Bool? = true, trust: [CodexHookTrust]? = all,
                     hook: Date? = nil, turn: Date? = nil) -> CodexHookStatus {
             CodexHookStatus.evaluate(enabled: enabled, supportsHooks: supports, installed: installed, trust: trust,
                                      lastHookEvent: hook, lastCodexTurn: turn, now: now)
@@ -106,8 +122,26 @@ final class CodexHookTests: XCTestCase {
         XCTAssertEqual(status(supports: false), .needsCodexUpdate)
         XCTAssertEqual(status(installed: nil), .installFailed)
         XCTAssertEqual(status(installed: false), .notInstalled)
-        XCTAssertEqual(status(trust: ["untrusted", "modified"] + all.dropFirst(2)), .needsApproval(count: 2))
-        XCTAssertEqual(status(trust: ["trusted"]), .installFailed, "Missing definitions mean the plugin did not load as written")
+        func optionalPending(_ trust: [CodexHookTrust]) -> Int {
+            CodexHookSetupResult(supportsHooks: true, installed: true, trust: trust).optionalPending
+        }
+        let core = all.filter { $0.event != .preCompact && $0.event != .postCompact }
+        let optional = [CodexHookTrust(event: .postCompact, state: "modified"), .init(event: .preCompact, state: "untrusted")]
+        XCTAssertEqual(all.count, 9)
+        XCTAssertEqual(optionalPending(all), 0)
+        XCTAssertEqual(status(trust: optional + core), .running)
+        XCTAssertEqual(optionalPending(optional + core), 2)
+        XCTAssertEqual(status(trust: optional + core, turn: now), .notRunning)
+        let mixed = optional + core.dropFirst() + [.init(event: core[0].event, state: "disabled")]
+        XCTAssertEqual(status(trust: mixed), .needsApproval(count: 1))
+        XCTAssertEqual(optionalPending(mixed), 2)
+        XCTAssertEqual(status(trust: [.init(event: core[0].event, state: "untrusted"), .init(event: core[1].event, state: "modified")]
+                              + core.dropFirst(2)), .needsApproval(count: 2))
+        XCTAssertEqual(core.count, 7)
+        XCTAssertEqual(status(trust: core), .running)
+        XCTAssertEqual(optionalPending(core), 0)
+        XCTAssertEqual(status(trust: Array(mixed.dropLast())), .installFailed, "Optional events cannot stand in for a missing core event")
+        XCTAssertEqual(status(trust: core.dropFirst() + [core[1]]), .installFailed, "A duplicate cannot stand in for a missing event")
         XCTAssertEqual(status(trust: nil), .notInstalled, "Installed hooks whose trust Codex did not report are not running yet")
         XCTAssertTrue(CodexHookSetupResult(supportsHooks: true, installed: true, trust: nil).awaitsTrust)
         XCTAssertFalse(CodexHookSetupResult(supportsHooks: true, installed: true, trust: all).awaitsTrust)
@@ -453,7 +487,7 @@ final class CodexHookReaderTests: XCTestCase {
     func testALongTurnIsNoSilentHookButATurnWithoutItsHookIs() async throws {
         let now = Date(), formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy/MM/dd"
-        let day = formatter.string(from: now), all = Array(repeating: "trusted", count: CodexHookEvent.Kind.allCases.count)
+        let day = formatter.string(from: now), all = CodexHookEvent.Kind.allCases.map { CodexHookTrust(event: $0, state: "trusted") }
         func touch(_ file: URL) throws { try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-10)], ofItemAtPath: file.path) }
         func status(_ reader: LocalActivityReader, _ home: URL, trustedAt: Date? = nil) async -> CodexHookStatus {
             let evidence = await reader.hookEvidence(home: home, now: now)

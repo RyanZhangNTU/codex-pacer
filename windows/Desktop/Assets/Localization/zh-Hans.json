@@ -275,6 +275,7 @@
     "codex.dot_tasks": "Dot 任务",
     "codex.embedded_sessions": "显示其他应用中的 Codex 会话",
     "codex.embedded_sessions_help": "Zotero 插件等内嵌 Codex 的应用中的会话，会标出应用名称，点击即可切换过去。关闭后不再显示这些会话及其提醒；Codex 应用、终端和 VS Code 的会话不受影响。",
+    "codex.hooks.compaction_hint": "在 Codex 里再允许 %d 项，即可显示压缩状态。",
     "codex.hooks.failed": "未能设置 Codex 任务跟踪。",
     "codex.hooks.guide.alternative": "也可以在任意对话的输入框旁点“审查钩子”，再点“全部允许”。",
     "codex.hooks.guide.done": "完成了，Codex 的任务会显示在 Pacer 里。",

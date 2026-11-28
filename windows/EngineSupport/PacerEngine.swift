@@ -1867,7 +1867,8 @@ actor EngineRuntime {
         case .notInstalled? where awaitsTrust: break // The trust is unknown, not changed.
         default: codexHooksAwaitingApproval = false
         }
-        if case .needsApproval? = codexHookStatus { watchCodexHookTrust(true) } else { watchCodexHookTrust(awaitsTrust, due: true) }
+        let pending = codexHooksAwaitingApproval || (codexHookResult?.optionalPending ?? 0) > 0
+        watchCodexHookTrust(pending || awaitsTrust, due: awaitsTrust)
         return notices
     }
     /// The one notice asking to allow Pacer's hooks in Codex, the first time approval is needed.
@@ -1919,13 +1920,15 @@ actor EngineRuntime {
         codexTrustWatch = watch
         return check
     }
-    private func receiveCodexHookTrust(_ trust: [String]?, home: URL, owner: ApplicationWorkRegistry.Ticket) {
+    private func receiveCodexHookTrust(_ trust: [CodexHookTrust]?, home: URL, owner: ApplicationWorkRegistry.Ticket) {
         guard ownedWork.owns(owner), codexHookHome == home, codexHookTask == nil, let trust,
               let result = codexHookResult, result.installed == true, trust != result.trust else { return }
         let before = codexHookStatus
         codexHookResult = .init(supportsHooks: result.supportsHooks, installed: result.installed, trust: trust)
         let notices = updateCodexHookState()
-        if initialized, codexHookStatus != before || !notices.isEmpty { publish(notices: notices) }
+        if initialized, codexHookStatus != before || result.optionalPending != codexHookResult?.optionalPending || !notices.isEmpty {
+            publish(notices: notices)
+        }
     }
     private static func modified(_ file: URL) -> Date? {
         (try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date
@@ -3560,13 +3563,11 @@ actor EngineRuntime {
         snapshot.expandedPanel = EngineExpandedPanel(settings: panelSettings, enabled: enabled, snapshots: snapshots,
             hasBudget: hasBudget, at: date)
         snapshot.wslAvailability = demo ? .available : wslAvailability
-        var hooks = codexHookServices == nil ? nil : codexHookStatus.map(EngineCodexHooks.init) ?? .settingUp
-        switch codexHookStatus {
-        case .needsApproval?, .needsCodexUpdate?: if codexHooksOpenSettings { hooks?.opensSettings = true }
-        default: break
+        let hooks = codexHookStatus.map {
+            EngineCodexHooks($0, optionalPending: codexHookResult?.optionalPending ?? 0, opensSettings: codexHooksOpenSettings)
         }
         snapshot.groupedQuota = groupedQuota.isEmpty ? nil : groupedQuota
-        snapshot.codexHooks = hooks
+        snapshot.codexHooks = codexHookServices == nil ? nil : hooks ?? .settingUp
         snapshot.codexDelegation = codexDelegationStatus(at: date, presentation: taskPresentation, codexQuota: snapshots[.codex])
         refreshCodexHookActivity()
         snapshot.accountCredits = credits.isEmpty ? nil : creditModules.compactMap { provider in

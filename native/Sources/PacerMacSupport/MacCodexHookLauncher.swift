@@ -54,7 +54,7 @@ public enum MacCodexHookSetup {
     }
 
     /// The hooks' trust alone, while the user allows them in Codex.
-    public static func trust(home: URL, customExecutable: String) async -> [String]? {
+    public static func trust(home: URL, customExecutable: String) async -> [CodexHookTrust]? {
         guard let client = client(home: home, customExecutable: customExecutable) else { return nil }
         let trust = await CodexHookSetup.trust(client: client)
         await client.shutdown()

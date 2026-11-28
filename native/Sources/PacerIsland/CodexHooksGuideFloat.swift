@@ -15,6 +15,7 @@ import SwiftUI
     private var timer: Timer?
     private var screen: NSScreen?
     private var started = Date()
+    private var compactionOnly = false
     @Published private(set) var doneSince: Date?
     static let check: TimeInterval = 1
     static let doneShown: TimeInterval = 8
@@ -24,9 +25,10 @@ import SwiftUI
 
     var isShowing: Bool { panel.isVisible }
 
-    func show(on screen: NSScreen?) {
+    func show(on screen: NSScreen?, compactionOnly: Bool = false) {
         guard let model else { return }
         close()
+        self.compactionOnly = compactionOnly
         self.screen = screen ?? NSScreen.main
         started = Date(); doneSince = nil
         let host = NSHostingController(rootView: AnyView(CodexHooksGuideContent(model: model, float: self)
@@ -49,8 +51,8 @@ import SwiftUI
     }
 
     private func update() {
-        guard let model, Date().timeIntervalSince(started) < Self.lifetime else { return close() }
-        switch Self.phase(model.codexHookStatus) {
+        guard Date().timeIntervalSince(started) < Self.lifetime else { return close() }
+        switch phase {
         case .steps: doneSince = nil
         case .done:
             if doneSince == nil { doneSince = Date() }
@@ -60,15 +62,23 @@ import SwiftUI
         panel.resize(to: measured())
     }
 
-    enum Phase: Equatable { case steps, done, gone }
+    enum Phase: Equatable { case steps(pending: Int), done, gone }
+
+    var phase: Phase {
+        guard let model else { return .gone }
+        return Self.phase(model.codexHookStatus, optionalPending: compactionOnly ? model.codexOptionalPending : nil)
+    }
 
     /// Allowed hooks are done; a status the guide doesn't describe closes it,
     /// and Settings says what to do.
-    static func phase(_ status: CodexHookStatus) -> Phase {
+    static func phase(_ status: CodexHookStatus, optionalPending: Int? = nil) -> Phase {
         switch status {
-        case .needsApproval, .notInstalled: .steps
-        case .running, .notRunning: .done
-        case .off, .needsCodexUpdate, .installFailed: .gone
+        case .notInstalled: return .steps(pending: optionalPending ?? CodexHookEvent.Kind.coreEvents.count)
+        case .off, .needsCodexUpdate, .installFailed: return .gone
+        case .needsApproval, .running, .notRunning:
+            if let optionalPending { return optionalPending > 0 ? .steps(pending: optionalPending) : .done }
+            if case .needsApproval(let count) = status { return .steps(pending: count) }
+            return .done
         }
     }
 
@@ -99,7 +109,7 @@ private struct CodexHooksGuideContent: View {
                     }
                 }
                 .accessibilityElement(children: .combine)
-                CodexHooksPicture(pending: pending)
+                if case .steps(let pending) = float.phase { CodexHooksPicture(pending: pending) }
                 Text(L10n.text("codex.hooks.guide.alternative")).font(.system(size: 12)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -112,10 +122,6 @@ private struct CodexHooksGuideContent: View {
          L10n.text("codex.hooks.guide.step_trust")]
     }
 
-    private var pending: Int {
-        if case .needsApproval(let count) = model.codexHookStatus { return count }
-        return CodexHookEvent.Kind.allCases.count
-    }
 }
 
 /// A step's number, as the picture marks the place to click.

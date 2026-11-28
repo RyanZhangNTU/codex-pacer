@@ -50,13 +50,15 @@ final class ModuleStatusHostTests: XCTestCase {
     }
 
     func testRemoteCountsOnlyHostsAndTheHooksAreCodexsOwn() async throws {
-        let model = try model(), count = CodexHookEvent.Kind.allCases.count
+        let model = try model(), count = CodexHookEvent.Kind.coreEvents.count
         model.codexHookSetupOverride = { _, _, enabled in
-            .init(supportsHooks: true, installed: enabled, trust: Array(repeating: "untrusted", count: count))
+            .init(supportsHooks: true, installed: enabled, trust: CodexHookEvent.Kind.allCases.map { CodexHookTrust(event: $0, state: "untrusted") })
         }
         model.syncCodexHooks()
         try await TestWait.until { model.codexHookStatus == .needsApproval(count: count) }
         XCTAssertTrue(model.codexHooksNeedUser)
+        XCTAssertNil(CodexCompactionHint(model: model, pane: .overview))
+        XCTAssertNil(CodexCompactionHint(model: model, pane: .codex))
         XCTAssertEqual(SettingsConnectionsPane.problemCount(model), 0, "Hooks waiting for approval are Codex's page's, not Remote's")
         let monitoring = ModuleMonitoring.codex(executableFound: true, hooks: model.codexHookStatus, sessions: 0, opensCodex: true)
         XCTAssertTrue(monitoring.needsUser)

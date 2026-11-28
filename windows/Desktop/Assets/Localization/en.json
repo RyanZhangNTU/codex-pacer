@@ -275,6 +275,7 @@
     "codex.dot_tasks": "Dot Tasks",
     "codex.embedded_sessions": "Show Codex Sessions from Other Apps",
     "codex.embedded_sessions_help": "Sessions in apps that embed Codex, such as a Zotero plugin, show the app’s name and switch to it when clicked. When off, these sessions and their reminders are hidden; Codex app, Terminal and VS Code sessions are unaffected.",
+    "codex.hooks.compaction_hint": "Allow %d new items in Codex to show when it compacts a conversation.",
     "codex.hooks.failed": "Codex task tracking could not be set up.",
     "codex.hooks.guide.alternative": "Or, in any chat, click Review hooks next to the message box, then Allow all.",
     "codex.hooks.guide.done": "Done. Codex tasks now show in Pacer.",

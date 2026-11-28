@@ -265,20 +265,26 @@ public actor CodexClient {
                                  cachedManifestMatches: cachedManifestMatches, checkOnly: checkOnly, pathsMatch: pathsMatch)
     }
 
-    /// The trust states (`trusted`, `untrusted`, `modified`, ...) of the hooks a
-    /// plugin brings, in Codex's display order, or an empty list when it brings none.
-    public func pluginHookTrust(pluginID: String) async throws -> [String] {
+    /// Pacer's hook events and their effective trust states in Codex's display order.
+    public func pluginHookTrust(pluginID: String) async throws -> [CodexHookTrust] {
         try await prepareReadConnection()
         let bytes = try await request("hooks/list", params: ["cwds": [home.path]])
+        return try Self.decodeHookTrust(bytes, pluginID: pluginID)
+    }
+
+    static func decodeHookTrust(_ bytes: Data, pluginID: String) throws -> [CodexHookTrust] {
         let fields = try JSONFieldView.document(bytes).fields(["data"])
         guard let data = fields["data"], data.isArray else { throw CodexClientError.invalidResponse }
-        var states: [String] = []
+        var states: [CodexHookTrust] = []
         for scope in try data.elements(maximumCount: 8) {
             guard let hooks = try scope.fields(["hooks"])["hooks"], hooks.isArray else { continue }
             for hook in try hooks.elements(maximumCount: 512) {
-                let row = try hook.fields(["pluginId", "trustStatus", "enabled"])
-                guard row["pluginId"]?.string() == pluginID else { continue }
-                states.append(row["enabled"]?.boolean() == false ? "disabled" : row["trustStatus"]?.string() ?? "unknown")
+                let row = try hook.fields(["pluginId", "eventName", "trustStatus", "enabled"])
+                // HookMetadata.eventName is lower camel case; hook inputs use the same name with an initial capital.
+                guard row["pluginId"]?.string() == pluginID, let name = row["eventName"]?.string(),
+                      let event = CodexHookEvent.Kind(rawValue: name.prefix(1).uppercased() + name.dropFirst()) else { continue }
+                let state = row["enabled"]?.boolean() == false ? "disabled" : row["trustStatus"]?.string() ?? "unknown"
+                states.append(.init(event: event, state: state))
             }
             // Plugin hooks are user-level, so every cwd lists the same ones.
             break

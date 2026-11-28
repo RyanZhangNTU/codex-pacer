@@ -136,15 +136,17 @@ public enum CodexHookStatus: Equatable, Sendable {
     ///   - lastCodexTurn: the newest rollout change no open hook turn explains
     ///     (`LocalActivityReader.hookEvidence`).
     ///   - trustedAt: when Pacer saw the user allow the hooks; turns before it ran without them.
-    public static func evaluate(enabled: Bool, supportsHooks: Bool?, installed: Bool?, trust: [String]?,
+    public static func evaluate(enabled: Bool, supportsHooks: Bool?, installed: Bool?, trust: [CodexHookTrust]?,
                                 lastHookEvent: Date?, lastCodexTurn: Date?, trustedAt: Date? = nil, now: Date,
                                 silence: TimeInterval = 300) -> CodexHookStatus {
         guard enabled else { return .off }
         if supportsHooks == false { return .needsCodexUpdate }
         guard let installed else { return .installFailed }
         guard installed, let trust else { return .notInstalled }
-        guard trust.count == CodexHookEvent.Kind.allCases.count else { return .installFailed }
-        let pending = trust.filter { $0 != "trusted" }.count
+        let core = trust.filter { !$0.event.isCompaction }
+        let required = CodexHookEvent.Kind.coreEvents
+        guard core.count == required.count, Set(core.map(\.event)) == Set(required) else { return .installFailed }
+        let pending = core.filter { $0.state != "trusted" }.count
         if pending > 0 { return .needsApproval(count: pending) }
         if let turn = lastCodexTurn, now.timeIntervalSince(turn) < silence, turn > trustedAt ?? .distantPast,
            turn.timeIntervalSince(lastHookEvent ?? .distantPast) > silence {

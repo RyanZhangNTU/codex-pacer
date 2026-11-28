@@ -1,5 +1,16 @@
 import Foundation
 
+/// A Pacer hook listed by Codex. A disabled hook waits for approval even if its definition is trusted.
+public struct CodexHookTrust: Equatable, Sendable {
+    public let event: CodexHookEvent.Kind
+    public let state: String
+
+    public init(event: CodexHookEvent.Kind, state: String) {
+        self.event = event
+        self.state = state
+    }
+}
+
 /// What one setup pass found, for `CodexHookStatus.evaluate`.
 public struct CodexHookSetupResult: Equatable, Sendable {
     /// False when this Codex has no plugin hooks; nil when it could not be asked.
@@ -7,13 +18,16 @@ public struct CodexHookSetupResult: Equatable, Sendable {
     /// Whether Codex lists Pacer's plugin as installed; nil after a failure.
     public let installed: Bool?
     /// Codex's trust state of each of Pacer's hooks; nil when unknown.
-    public let trust: [String]?
-    public init(supportsHooks: Bool?, installed: Bool?, trust: [String]?) {
+    public let trust: [CodexHookTrust]?
+    public init(supportsHooks: Bool?, installed: Bool?, trust: [CodexHookTrust]?) {
         self.supportsHooks = supportsHooks; self.installed = installed; self.trust = trust
     }
     /// Installed, but `hooks/list` failed: ask Codex for the trust alone again
     /// (`CodexHookSetup.trust`), never by setting the plugin up again.
     public var awaitsTrust: Bool { supportsHooks == true && installed == true && trust == nil }
+
+    /// Older Codex versions omit compaction events entirely.
+    public var optionalPending: Int { trust?.filter { $0.event.isCompaction && $0.state != "trusted" }.count ?? 0 }
 }
 
 /// Installs, refreshes or removes Pacer's Codex hooks, the same way on every
@@ -78,7 +92,7 @@ public enum CodexHookSetup {
     }
 
     /// The trust state alone, for a Settings refresh while the user approves in Codex.
-    public static func trust(client: CodexClient) async -> [String]? {
+    public static func trust(client: CodexClient) async -> [CodexHookTrust]? {
         try? await client.pluginHookTrust(pluginID: CodexHookPlugin.id)
     }
 }

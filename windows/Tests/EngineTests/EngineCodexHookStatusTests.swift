@@ -12,29 +12,23 @@ private final class HookStatusFrames: @unchecked Sendable {
     }
     func all() -> [EngineSnapshot] { lock.withLock { values } }
 }
-private final class HookTrust: @unchecked Sendable {
-    private let lock = NSLock()
-    private var current: [String]
-    init(_ value: [String]) { current = value }
-    var value: [String] {
-        get { lock.withLock { current } }
-        set { lock.withLock { current = newValue } }
-    }
+private func hookTrust(_ state: String, compaction: String? = nil) -> [CodexHookTrust] {
+    CodexHookEvent.Kind.allCases.map { CodexHookTrust(event: $0, state: $0.isCompaction ? compaction ?? state : state) }
 }
 
 /// Codex's answers to `hooks/list`, one per call; the last repeats.
 private final class TrustAnswers: @unchecked Sendable {
     private let lock = NSLock()
-    private var answers: [[String]?]
+    private var answers: [[CodexHookTrust]?]
     private var calls = 0
-    init(_ answers: [[String]?]) { self.answers = answers }
-    func next() -> [String]? {
+    init(_ answers: [[CodexHookTrust]?]) { self.answers = answers }
+    func next() -> [CodexHookTrust]? {
         lock.withLock {
             calls += 1
             return answers.count > 1 ? answers.removeFirst() : answers.first ?? nil
         }
     }
-    func replace(_ value: [[String]?]) { lock.withLock { answers = value } }
+    func replace(_ value: [[CodexHookTrust]?]) { lock.withLock { answers = value } }
     var count: Int { lock.withLock { calls } }
 }
 
@@ -50,14 +44,13 @@ final class EngineCodexHookStatusTests: XCTestCase {
         let home = root.appendingPathComponent("codex"), marker = root.appendingPathComponent("notices/codex-hooks-approval-v1")
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let count = CodexHookEvent.Kind.allCases.count
-        let trust = HookTrust(Array(repeating: "untrusted", count: count))
+        let trust = TrustAnswers([hookTrust("untrusted")])
         // Setup takes a moment, as Codex's own calls do: the initialization that
         // starts it also replaces Codex's source and must not cancel it.
         let services = EngineCodexHookServices(apply: { _, _, enabled in
             try? await Task.sleep(nanoseconds: 300_000_000)
-            return .init(supportsHooks: true, installed: enabled, trust: enabled ? trust.value : nil)
-        }, trust: { _, _ in trust.value }, noticeMarker: marker)
+            return .init(supportsHooks: true, installed: enabled, trust: enabled ? trust.next() : nil)
+        }, trust: { _, _ in trust.next() }, noticeMarker: marker)
         let frames = HookStatusFrames(), date = Date()
         let runtime = EngineRuntime(demo: false, now: { date }, dismissalStore: nil, codexHookServices: services, output: { frames.append($0) })
         _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "codexHome": EngineCodexSourceReport.path(home)]))
@@ -67,7 +60,8 @@ final class EngineCodexHookStatusTests: XCTestCase {
 
         let approval = try await TestWait.until { state() == "needsApproval" }
         XCTAssertTrue(approval, "Untrusted hooks must ask for approval")
-        XCTAssertEqual(frames.all().last?.codexHooks?.pending, count)
+        XCTAssertEqual(frames.all().last?.codexHooks?.pending, 7)
+        XCTAssertEqual(frames.all().last?.codexHooks?.optionalPending, 2)
         XCTAssertTrue(warned(), "The collapsed bar shows that Codex needs the user")
         XCTAssertEqual(notices(), 1); XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
 
@@ -78,11 +72,46 @@ final class EngineCodexHookStatusTests: XCTestCase {
         XCTAssertTrue(again, "A second setup pass still needs approval")
         XCTAssertEqual(notices(), 1, "The approval notice is sent once")
 
-        trust.value = Array(repeating: "trusted", count: count)
+        trust.replace([hookTrust("trusted")])
         _ = await runtime.receive(try command("retryCodexHooks"))
         let running = try await TestWait.until { state() == "running" }
         XCTAssertTrue(running, "Trusted hooks run")
         XCTAssertFalse(warned(), "Running hooks raise no warning")
+        await runtime.stop()
+    }
+
+    func testOptionalTrustChangesPublishRunningSnapshotsWithoutWarningOrNotice() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-optional-hooks-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let marker = home.appendingPathComponent("notice")
+        let setups = TrustAnswers([hookTrust("trusted", compaction: "untrusted")])
+        let oneLeft = CodexHookEvent.Kind.allCases.map { CodexHookTrust(event: $0, state: $0 == .preCompact ? "modified" : "trusted") }
+        let reads = TrustAnswers([oneLeft, hookTrust("trusted")])
+        let services = EngineCodexHookServices(apply: { _, _, enabled in
+            .init(supportsHooks: true, installed: enabled, trust: setups.next())
+        }, trust: { _, _ in reads.next() }, noticeMarker: marker, opensSettings: { true })
+        let frames = HookStatusFrames(), date = Date()
+        let runtime = EngineRuntime(demo: false, now: { date }, dismissalStore: nil, codexHookServices: services, output: { frames.append($0) })
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "codexHome": EngineCodexSourceReport.path(home)]))
+
+        let file = CodexHookTrustWatch.trustFile(home: home)
+        for count in [2, 1, 0] {
+            if count < 2 {
+                try Data("# trust changed".utf8).write(to: file)
+                try FileManager.default.setAttributes([.modificationDate: date.addingTimeInterval(Double(10 - count))], ofItemAtPath: file.path)
+            }
+            let published = try await TestWait.until { frames.all().last?.codexHooks?.optionalPending == count }
+            XCTAssertTrue(published, "A trust-only change must publish its count")
+            let hooks = frames.all().last?.codexHooks
+            XCTAssertEqual(hooks?.state, "running")
+            XCTAssertNil(hooks?.pending)
+            XCTAssertEqual(hooks?.opensSettings, count > 0 ? true : nil)
+        }
+        XCTAssertEqual(setups.count, 1)
+        XCTAssertFalse(frames.all().contains { $0.compactWarnings?.contains { $0.kind == .codexHooks } == true })
+        XCTAssertFalse(frames.all().flatMap(\.notices).contains { $0.id == "codex:hooks-approval" })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
         await runtime.stop()
     }
 
@@ -116,12 +145,10 @@ final class EngineCodexHookStatusTests: XCTestCase {
         let day = home.appendingPathComponent("sessions/" + formatter.string(from: Date()))
         try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
         try Data().write(to: day.appendingPathComponent("rollout-019a0000-0000-7000-8000-000000000041.jsonl"))
-        let count = CodexHookEvent.Kind.allCases.count
-        let trust = HookTrust(Array(repeating: "untrusted", count: count)), setups = HookTrust([])
+        let trust = TrustAnswers([hookTrust("untrusted")]), setups = TrustAnswers([hookTrust("untrusted")])
         let services = EngineCodexHookServices(apply: { _, _, enabled in
-            setups.value += ["apply"]
-            return .init(supportsHooks: true, installed: enabled, trust: enabled ? trust.value : nil)
-        }, trust: { _, _ in trust.value }, opensSettings: { true })
+            .init(supportsHooks: true, installed: enabled, trust: enabled ? setups.next() : nil)
+        }, trust: { _, _ in trust.next() }, opensSettings: { true })
         let frames = HookStatusFrames(), date = Date()
         let runtime = EngineRuntime(demo: false, now: { date }, dismissalStore: nil, codexHookServices: services, output: { frames.append($0) })
         _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "codexHome": EngineCodexSourceReport.path(home)]))
@@ -129,12 +156,12 @@ final class EngineCodexHookStatusTests: XCTestCase {
         XCTAssertTrue(approval)
         XCTAssertEqual(frames.all().last?.codexHooks?.opensSettings, true, "Settings can open Codex while approval is pending")
 
-        trust.value = Array(repeating: "trusted", count: count)
+        trust.replace([hookTrust("trusted")])
         try Data("[features]\n".utf8).write(to: CodexHookTrustWatch.trustFile(home: home))
         let running = try await TestWait.until { frames.all().last?.codexHooks?.state == "running" }
         XCTAssertTrue(running, "The config change leads to the new trust, and the earlier turn is not a silent hook")
         XCTAssertNil(frames.all().last?.codexHooks?.opensSettings)
-        XCTAssertEqual(setups.value, ["apply"], "Only the trust is read again; setup does not run")
+        XCTAssertEqual(setups.count, 1, "Only the trust is read again; setup does not run")
         await runtime.stop()
     }
 
@@ -147,12 +174,10 @@ final class EngineCodexHookStatusTests: XCTestCase {
         let home = root.appendingPathComponent("codex"), marker = root.appendingPathComponent("notices/codex-hooks-approval-v1")
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let count = CodexHookEvent.Kind.allCases.count
         // The first retry fails as well; the next answer reports the approval pending.
-        let answers = TrustAnswers([nil, Array(repeating: "untrusted", count: count)]), setups = HookTrust([])
+        let answers = TrustAnswers([nil, hookTrust("untrusted")]), setups = TrustAnswers([nil])
         let services = EngineCodexHookServices(apply: { _, _, enabled in
-            setups.value += ["apply"]
-            return .init(supportsHooks: true, installed: enabled, trust: nil)
+            .init(supportsHooks: true, installed: enabled, trust: setups.next())
         }, trust: { _, _ in answers.next() }, noticeMarker: marker, opensSettings: { true })
         let frames = HookStatusFrames(), date = Date()
         let runtime = EngineRuntime(demo: false, now: { date }, dismissalStore: nil, codexHookServices: services, output: { frames.append($0) })
@@ -171,12 +196,12 @@ final class EngineCodexHookStatusTests: XCTestCase {
         XCTAssertEqual(frames.all().last?.codexHooks?.opensSettings, true)
         XCTAssertEqual(frames.all().flatMap(\.notices).filter { $0.id == "codex:hooks-approval" }.count, 1)
 
-        answers.replace([Array(repeating: "trusted", count: count)])
+        answers.replace([hookTrust("trusted")])
         try Data("[features]\n# allowed\n".utf8).write(to: trustFile)
         try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: trustFile.path)
         let running = try await TestWait.until { state() == "running" }
         XCTAssertTrue(running, "Allowed hooks run")
-        XCTAssertEqual(setups.value, ["apply"], "A failed trust read never sets the plugin up again")
+        XCTAssertEqual(setups.count, 1, "A failed trust read never sets the plugin up again")
         await runtime.stop()
     }
 
@@ -192,7 +217,7 @@ final class EngineCodexHookStatusTests: XCTestCase {
         // Codex ran a turn and no hook row followed.
         let rollout = day.appendingPathComponent("rollout-2026-11-21T10-00-00-019a0000-0000-7000-8000-000000000051.jsonl")
         try Data().write(to: rollout)
-        let trusted = Array(repeating: "trusted", count: CodexHookEvent.Kind.allCases.count)
+        let trusted = hookTrust("trusted")
         let services = EngineCodexHookServices(apply: { _, _, enabled in
             .init(supportsHooks: true, installed: enabled, trust: enabled ? trusted : nil)
         }, trust: { _, _ in trusted })

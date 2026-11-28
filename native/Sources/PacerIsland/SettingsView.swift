@@ -406,6 +406,7 @@ struct SettingsView: View {
                     ModuleMonitoringRow(monitoring: codexMonitoring, info: L10n.text("codex.hooks.info"), help: cliReport?.selected?.url.path,
                         openCodex: { model.openCodexHooksGuide(screen: NSApp.keyWindow?.screen) },
                         retry: { model.syncCodexHooks(force: true) }, rescan: { cliScanRevision += 1 })
+                    if let hint = CodexCompactionHint(model: model, pane: pane) { hint }
                     codexAccountRow
                 } else {
                     ModuleMonitoringRow(monitoring: model.claudeMonitoring, retry: { model.retryClaudeLocalSetup() })

@@ -2,6 +2,31 @@ import AppKit
 import PacerCore
 import SwiftUI
 
+/// Optional approvals appear only in Settings, once all core hooks are trusted.
+struct CodexCompactionHint: View {
+    let model: IslandModel
+    let count: Int
+
+    init?(model: IslandModel, pane: SettingsPane) {
+        guard pane == .overview || pane == .codex, model.codexOptionalPending > 0,
+              model.codexHookStatus == .running || model.codexHookStatus == .notRunning else { return nil }
+        self.model = model
+        count = model.codexOptionalPending
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(L10n.text("codex.hooks.compaction_hint", count))
+                .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            if model.canOpenCodexSettings {
+                Button(L10n.text("codex.hooks.open")) { model.openCodexHooksGuide(screen: NSApp.keyWindow?.screen, compactionOnly: true) }
+                    .buttonStyle(.main).fixedSize()
+            }
+        }
+    }
+}
+
 /// Something on Overview that needs the user, with the one action that fixes it.
 struct OverviewAttention: Identifiable {
     let id: String
@@ -46,6 +71,7 @@ struct OverviewPane: View {
                     }
                 }
             }
+            if let hint = CodexCompactionHint(model: model, pane: .overview) { MainCard { hint } }
             tasksCard
         }
     }
