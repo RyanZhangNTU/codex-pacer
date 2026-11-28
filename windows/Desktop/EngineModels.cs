@@ -102,7 +102,7 @@ internal sealed record EngineModule(string Provider, string Mode, bool? Installe
     HarnessProgressGuide? ProgressGuide = null, EngineStatusRow? Monitoring = null, EngineStatusRow? Account = null,
     EngineQuotaGroups? QuotaGroups = null, bool? ApplicationInstalled = null,
     IReadOnlyList<string>? ProgressApprovals = null, PendingGuideFloat? PendingFloat = null,
-    MissedProgressConversation? MissedProgressConversation = null)
+    MissedProgressConversation? MissedProgressConversation = null, bool? KeepsRunningInBackground = null)
 {
     /// Found on this computer or turned on explicitly. Older engines send
     /// nothing, so their modules stay listed.

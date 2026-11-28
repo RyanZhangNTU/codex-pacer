@@ -1513,8 +1513,50 @@ extension AntigravityTests {
         }
         await coordinator.refresh(expanded: false, force: true)
         let lost = await output.state
-        XCTAssertNil(lost.snapshot)
-        XCTAssertTrue(lost.history.cycles.isEmpty)
+        XCTAssertEqual(lost.snapshot, returned.snapshot, "A server that goes away keeps the last attributed reading")
+        XCTAssertEqual(lost.history, returned.history)
         XCTAssertEqual(f.host.verificationCount, 1, "Quota cannot bind a replacement server")
+    }
+
+    /// Closing Antigravity takes its server away, not its account. The next
+    /// poll cannot even ask for the account, and still keeps the reading.
+    func testQuotaKeepsLastReadingWhenServerIsGoneBeforeThePoll() async throws {
+        let f = try Fixture(), clock = WatchClock(), output = QuotaUpdates()
+        let client = AntigravityLocalClient(home: f.home, io: f.io)
+        let session = await client.discover()
+        let coordinator = AntigravityQuotaCoordinator(client: client, session: try XCTUnwrap(session), home: f.home,
+            credential: DeepSeekHistoryCredential(loadSalt: { Data(repeating: 1, count: 32) }, saveSalt: { _ in }),
+            history: QuotaHistoryStore(directory: f.home.appendingPathComponent("history")), now: { clock.now }) { await output.receive($0, $1) }
+        f.host.respond("GetUserStatus", with: syntheticAccount("a"))
+        f.host.respond("RetrieveUserQuotaSummary", with: try quotaData(gemini: 0.4, third: 0.6))
+        await coordinator.refresh(expanded: true, force: true)
+        let read = await output.state
+        XCTAssertEqual(read.snapshot?.buckets.first?.windows.first?.remainingPercent, 40)
+        clock.setTime(600)
+        f.host.disconnect()
+        await coordinator.refresh(expanded: true, force: true)
+        let gone = await output.state
+        XCTAssertEqual(gone.snapshot, read.snapshot); XCTAssertEqual(gone.history, read.history)
+        XCTAssertNil(gone.error); XCTAssertFalse(gone.refreshing)
+    }
+
+    /// "Keep in menu bar" as Antigravity reads `app_storage.json`.
+    func testKeepInMenuBarReadsLikeAntigravity() {
+        func value(_ text: String?, default fallback: Bool = false) -> Bool? {
+            AntigravityAppSettings.keepsRunning(text.map { Data($0.utf8) }, platformDefault: fallback)
+        }
+        XCTAssertEqual(value(nil), false); XCTAssertEqual(value(nil, default: true), true)
+        XCTAssertEqual(value(#"{"theme":"dark","runInBackground":"true"}"#), true)
+        XCTAssertEqual(value(#"{"runInBackground":"false"}"#, default: true), false)
+        XCTAssertEqual(value(#"{"runInBackground":true}"#), false, "Antigravity compares with the string \"true\"")
+        XCTAssertEqual(value(#"{"runInBackground":"TRUE"}"#), false)
+        XCTAssertEqual(value(#"{"runInBackground":"false","runInBackground":"true"}"#), true, "The last of repeated keys wins, as in JSON.parse")
+        for fallback in [false, true] {
+            for text in [#"{"runInBackground":null}"#, #"{"other":"true"}"#, "", "[]", "{damaged"] {
+                XCTAssertEqual(value(text, default: fallback), fallback, text)
+            }
+        }
+        let oversized = Data(repeating: 32, count: AntigravityAppSettings.maximumBytes + 1)
+        XCTAssertNil(AntigravityAppSettings.keepsRunning(oversized, platformDefault: false))
     }
 }

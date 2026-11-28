@@ -71,6 +71,8 @@ public enum PacerEngine {
         }
         let ssh: WindowsSSHServices? = demo || readOnly ? nil : WindowsSSHServices()
         let wsl: WindowsWSLServices? = demo || readOnly ? nil : WindowsWSLServices()
+        var antigravitySettings: (@Sendable () -> URL?)?
+        if !demo { antigravitySettings = { WindowsAntigravityAppSettings.url() } }
         let runtime = EngineRuntime(demo: demo, now: clock,
             dismissalStore: readOnly ? nil : .applicationDefault,
             notificationStore: notificationStore,
@@ -88,6 +90,7 @@ public enum PacerEngine {
             managesCodexProgress: !demo && !readOnly, managesDeepSeekProgress: !demo && !readOnly, managesLocalHarnessProgress: !demo && !readOnly,
             codexProgressPaths: .init(root: progressRoot), allowsStorageRecovery: !readOnly,
             antigravityAppInstalled: { WindowsAntigravityInstallation.shared.resolve() != nil },
+            antigravityAppSettings: antigravitySettings,
             demoSubagents: demo && CommandLine.arguments.contains("--demo-subagents"),
             demoAntigravity: demoAntigravity, demoAntigravityGuide: demoAntigravityGuide)
         await runtime.hello()
@@ -319,6 +322,10 @@ actor EngineRuntime {
     private var localQuotaCoordinators: [AgentProvider: any LocalHarnessQuotaCoordinator] = [:]
     private var localQuota: [AgentProvider: LocalHarnessQuotaState] = [:]
     private var localQuotaHistory: [AgentProvider: EngineQuotaHistory] = [:]
+    /// The last reading of a local app that stopped serving its quota, such as
+    /// Antigravity after its window closed. It stays on screen and ages into
+    /// the usual delay marks until the app serves a new reading.
+    private var retainedLocalQuota: [AgentProvider: LocalHarnessQuotaState] = [:]
     private var harnessQuotaGroups: [String: String] = [:]
     private let localHarnessDefinitions: [LocalHarnessDefinition]
     private lazy var localHarnesses = LocalHarnessMonitors(platform: .windows,
@@ -362,6 +369,13 @@ actor EngineRuntime {
     private let detectInstallation: @Sendable () async -> ProviderInstallationDetection
     private let antigravityAppInstalled: (@Sendable () -> Bool)?
     private var detectedAntigravityApp: Bool?
+    /// Antigravity's settings file, and its "Keep in menu bar" while the
+    /// module is on: without it, closing the window quits Antigravity.
+    private let antigravityAppSettings: (@Sendable () -> URL?)?
+    private var antigravityKeepsRunning: Bool?
+    #if os(Windows)
+    private var antigravitySettingsWatch: ActivityLogWatcher?
+    #endif
     private var codexHome: URL
     private var usesCustomCodexHome = false
     private let defaultCodexHome: URL
@@ -553,6 +567,7 @@ actor EngineRuntime {
          },
          output: @escaping @Sendable (Data) -> Void = { try? FileHandle.standardOutput.write(contentsOf: $0) },
          antigravityAppInstalled: (@Sendable () -> Bool)? = nil,
+         antigravityAppSettings: (@Sendable () -> URL?)? = nil,
          demoSubagents: Bool = false, demoAntigravity: Bool = false, demoAntigravityGuide: Bool = false) {
         self.antigravityHost = antigravityHost; self.localQuotaDirectory = localQuotaDirectory
         self.demo = demo; self.now = now; self.output = output; self.quotaServices = quotaServices; self.desktopServices = desktopServices
@@ -579,6 +594,7 @@ actor EngineRuntime {
         self.managesLocalHarnessProgress = managesLocalHarnessProgress
         self.detectInstallation = installationDetection
         self.antigravityAppInstalled = antigravityAppInstalled
+        self.antigravityAppSettings = antigravityAppSettings
         self.activityState = ActivityApplicationState(inbox: CompletionInbox(dismissalStore: demo ? nil : dismissalStore))
         self.notificationRegistry = .init(store: notificationStore, now: now())
         #if os(Windows)
@@ -1485,6 +1501,7 @@ actor EngineRuntime {
 
     private func bindLocalHarness(_ provider: AgentProvider) async {
         guard enabled.contains(provider), let definition = localHarnesses.definition(for: provider) else { return }
+        if provider == .antigravity { watchAntigravityAppSettings() }
         let context = lifecycle.version(provider)
         let monitor = localHarnesses.monitor(for: definition)
         let home = localHarnessHome(definition)
@@ -1496,6 +1513,8 @@ actor EngineRuntime {
             await source.observeQuota { [weak self] factory in
                 await self?.bindLocalQuota(provider, factory: factory, home: home, binding: binding, version: context)
             }
+            guard active, localQuotaSources[provider] == binding, lifecycle.version(provider) == context else { return }
+            await restoreLocalQuota(provider, home: home, binding: binding, version: context)
             guard active, localQuotaSources[provider] == binding, lifecycle.version(provider) == context else { return }
         }
         await monitor.start(home: home, policy: expanded ? .expanded : .collapsed) { [weak self] snapshot in
@@ -1509,21 +1528,53 @@ actor EngineRuntime {
         ownedWork.cancel(.init(.quota, provider: provider))
         localQuota[provider] = nil
         localQuotaHistory[provider] = nil
+        retainedLocalQuota[provider] = nil
+    }
+
+    private func localQuotaStore(_ provider: AgentProvider, root: URL) -> QuotaHistoryStore {
+        if let store = localQuotaStores[provider] { return store }
+        let directory = root.appendingPathComponent(provider.rawValue.capitalized, isDirectory: true)
+        let store = QuotaHistoryStore(directory: directory, files: WindowsRecoveringHistoryFiles(kind: .quota))
+        localQuotaStores[provider] = store
+        return store
+    }
+
+    /// Shows a reading no coordinator serves now, without its refresh state.
+    private func retainLocalQuota(_ provider: AgentProvider, _ reading: LocalHarnessQuotaState?) {
+        guard let reading, let snapshot = reading.snapshot else { return }
+        var kept = LocalHarnessQuotaState()
+        kept.snapshot = snapshot; kept.history = reading.history
+        retainedLocalQuota[provider] = kept; localQuota[provider] = kept
+        localQuotaHistory[provider, default: .init()].receive(snapshot: snapshot, history: kept.history, warning: nil)
+    }
+
+    /// Until the app serves quota, such as when Pacer starts while Antigravity
+    /// is closed, the last saved reading stands in.
+    private func restoreLocalQuota(_ provider: AgentProvider, home: URL, binding: UUID, version: UInt64) async {
+        guard localQuota[provider] == nil, let root = localQuotaDirectory else { return }
+        let saved = await localQuotaStore(provider, root: root).restoreLatest(home: home, now: now())
+        guard let saved, active, enabled.contains(provider), lifecycle.version(provider) == version,
+              localQuotaSources[provider] == binding, localQuota[provider] == nil else { return }
+        var reading = LocalHarnessQuotaState()
+        reading.snapshot = saved.0; reading.history = saved.1
+        retainLocalQuota(provider, reading)
+        if projectionReady { publish(notices: []) }
     }
 
     private func bindLocalQuota(_ provider: AgentProvider, factory: LocalQuotaFactory?, home: URL, binding: UUID, version: UInt64) async {
         guard active, enabled.contains(provider), lifecycle.version(provider) == version, localQuotaSources[provider] == binding,
               let root = localQuotaDirectory else { return }
+        // The app quit or restarted: its last reading stays until a new one arrives.
+        let last = localQuota[provider]?.snapshot != nil ? localQuota[provider] : retainedLocalQuota[provider]
         retireLocalQuota(provider)
+        retainLocalQuota(provider, last)
         let owner = UUID()
         localQuotaOwners[provider] = owner
         if projectionReady { publish(notices: []) }
         if let store = localQuotaStores[provider] { _ = await store.flush() }
         guard let factory, active, enabled.contains(provider), lifecycle.version(provider) == version,
               localQuotaOwners[provider] == owner, localQuotaSources[provider] == binding else { return }
-        let directory = root.appendingPathComponent(provider.rawValue.capitalized, isDirectory: true)
-        let store = localQuotaStores[provider] ?? QuotaHistoryStore(directory: directory, files: WindowsRecoveringHistoryFiles(kind: .quota))
-        localQuotaStores[provider] = store
+        let store = localQuotaStore(provider, root: root)
         let credential = DeepSeekHistoryCredential(saltFile: root.appendingPathComponent("local-history-salt-v1.bin"), files: WindowsFileSystem())
         localQuotaCoordinators[provider] = factory(home, credential, store) { [weak self] state, notices in
             await self?.receiveLocalQuota(provider, state: state, notices: notices, owner: owner, version: version)
@@ -1533,9 +1584,43 @@ actor EngineRuntime {
 
     private func receiveLocalQuota(_ provider: AgentProvider, state: LocalHarnessQuotaState, notices: [IslandNotice], owner: UUID, version: UInt64) {
         guard active, enabled.contains(provider), lifecycle.version(provider) == version, localQuotaOwners[provider] == owner else { return }
-        localQuota[provider] = state
-        localQuotaHistory[provider, default: .init()].receive(snapshot: state.snapshot, history: state.history, warning: state.warning)
+        var shown = state
+        // A new server keeps the last reading on screen until it reads one of
+        // its own or reports an error.
+        if let kept = retainedLocalQuota[provider] {
+            if state.snapshot == nil, state.error == nil { shown.snapshot = kept.snapshot; shown.history = kept.history }
+            else { retainedLocalQuota[provider] = nil }
+        }
+        localQuota[provider] = shown
+        localQuotaHistory[provider, default: .init()].receive(snapshot: shown.snapshot, history: shown.history, warning: shown.warning)
         if projectionReady { publish(notices: notices) }
+    }
+
+    /// Follows Antigravity's settings file while its module is on, so the
+    /// Settings guide goes away as soon as "Keep in menu bar" is turned on.
+    private func watchAntigravityAppSettings() {
+        #if os(Windows)
+        guard active, !demo, enabled.contains(.antigravity), let url = antigravityAppSettings?() else {
+            antigravitySettingsWatch?.stop(); antigravitySettingsWatch = nil
+            if !demo, antigravityKeepsRunning != nil {
+                antigravityKeepsRunning = nil
+                if projectionReady { publish(notices: []) }
+            }
+            return
+        }
+        let watch = antigravitySettingsWatch ?? ActivityLogWatcher(files: WindowsFileSystem(), events: WindowsActivityLogWatcher(),
+            interval: 0.5, maximumDirectoryWatches: 1, fileExtensions: [url.pathExtension]) { [weak self] _ in
+            Task { await self?.watchAntigravityAppSettings() }
+        }
+        antigravitySettingsWatch = watch
+        // Antigravity saves by replacing the file; update watches the new one.
+        watch.update([url], interval: 0.5)
+        // An unreadable file, such as one Antigravity is writing, keeps the last value.
+        if let value = WindowsAntigravityAppSettings.keepsRunning(at: url), value != antigravityKeepsRunning {
+            antigravityKeepsRunning = value
+            if projectionReady { publish(notices: []) }
+        }
+        #endif
     }
 
     private func refreshLocalQuota(_ provider: AgentProvider, force: Bool) {
@@ -1601,7 +1686,12 @@ actor EngineRuntime {
             module.brand = .init(registered.brand); module.website = registered.website
             module.balance = registered.balance?.rawValue
         }
-        if provider == .antigravity { module.applicationInstalled = detectedAntigravityApp }
+        if provider == .antigravity {
+            module.applicationInstalled = detectedAntigravityApp
+            // The demo shows the guide as most Windows installations need it.
+            module.keepsRunningInBackground = !enabled.contains(provider) || detectedAntigravityApp == false ? nil
+                : demo ? (demoAntigravity ? false : nil) : antigravityKeepsRunning
+        }
         module.progressApprovals = EngineModule.approvalIDs(for: provider, in: harnessActivities[provider])
         module.prominent = moduleLibrary.entries.first { $0.provider == provider }?.prominent
         if let groups = descriptor?.quotaGroups {
@@ -2268,6 +2358,8 @@ actor EngineRuntime {
 
     func maintenanceRefresh() async {
         guard active else { return }
+        // A missed file event, or a folder Antigravity created since, is caught here.
+        watchAntigravityAppSettings()
         // Trusting the tool in the app, or its first report, can happen while
         // nothing polls; a waiting guide is checked each minute so its steps,
         // the Overview line and the sidebar dot clear (11/16 review).
@@ -2403,6 +2495,7 @@ actor EngineRuntime {
         case .deepseek:
             deepseekUsage = .init(); deepseekNoticePolicy = .init()
             balanceState = nil; walletSource = nil; activityState.deepseekAttention = .init()
+        case .antigravity: watchAntigravityAppSettings()
         default: break
         }
         activityState.clearFirstOutput()
@@ -3650,6 +3743,7 @@ actor EngineRuntime {
         #if os(Windows)
         watchedCodexLogURLs = []; codexRunningExpiry = nil
         logWatcher.stop()
+        antigravitySettingsWatch?.stop(); antigravitySettingsWatch = nil
         #endif
     }
     private func cleanupSources(quota: CodexQuotaMonitor?, claude: ClaudeQuotaMonitor?, balance: DeepSeekBalanceMonitor?, sleeping: Bool) async {

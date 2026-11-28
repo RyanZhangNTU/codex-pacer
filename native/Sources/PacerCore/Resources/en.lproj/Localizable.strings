@@ -1862,6 +1862,10 @@
 "antigravity.quota.3p" = "Claude and GPT";
 "antigravity.quota.group" = "Quota shown on the island";
 "antigravity.quota.unavailable" = "Pacer couldn’t read your Antigravity quota.";
+"antigravity.background.title" = "Keep running after closing";
+"antigravity.background.off" = "Off";
+"antigravity.background.info" = "Antigravity quits when you close its window, so Pacer can’t update its quota and keeps showing the last reading. Turned on, Antigravity keeps running in the background after you close the window.";
+"antigravity.background.steps" = "In Antigravity, press %@ to open Settings, choose Application, then turn on Keep in menu bar.";
 
 "progress_guide.plugin.conversation" = "Open Antigravity, start a new conversation, and paste this prompt.";
 "progress_guide.plugin.example" = "Use terminal commands to check today's date and this computer's name, then tell me both in one sentence.";
