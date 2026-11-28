@@ -284,10 +284,11 @@ extension IslandModel {
         guard isModuleEnabled(.deepseek), !sleeping, !stopped, !demo else { return }
         synchronizeDeepSeekBalanceSource()
         guard deepseekBalanceTask == nil, !deepseekRefreshing, force || deepseekBalanceError?.needsConnection != true else { return }
-        let mode = deepseekBalanceBinding?.mode
+        // Until Harness's billing is known, an automatic source reads through web sign-in (#308).
+        let mode = deepseekBalanceBinding?.readMode ?? .account
         let key = mode == .apiKey ? deepseekBalanceReads.apiKey() : nil
         let inputError = DeepSeekBalanceCoordinator.credentialError(mode: mode, key: key, webAvailable: true)
-        guard mode != nil, inputError == nil else { deepseekBalanceError = inputError; return }
+        guard inputError == nil else { deepseekBalanceError = inputError; return }
         let active = active ?? (visiblyExpanded || running.contains { $0.provider == .deepseek })
         let requested = !scheduled && !turnEnded
         guard DeepSeekBalanceCoordinator.isDue(lastAttempt: deepseekBalanceState?.lastAttempt,

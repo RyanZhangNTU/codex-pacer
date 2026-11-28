@@ -23,7 +23,8 @@ public enum DeepSeekAuthMode: String, CaseIterable, Codable, Sendable {
             let url = home.appendingPathComponent("profiles/\(profile)/cordis.patch.yml")
             guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size <= 256 * 1024,
                   let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
-            for line in text.split(separator: "\n").prefix(4096) {
+            // Swift reads "\r\n" as one Character, so splitting on "\n" alone would keep a CRLF file whole.
+            for line in text.split(whereSeparator: \.isNewline).prefix(4096) {
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
                 guard trimmed.hasPrefix("provider:") else { continue }
                 let value = trimmed.dropFirst(9).trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))

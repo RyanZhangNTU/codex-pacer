@@ -36,6 +36,7 @@ public struct DeepSeekBalanceState: Sendable, Equatable {
     public let error: DeepSeekBalanceError?
     public let refreshing: Bool, hasKey: Bool, webAvailable: Bool
     public var mode: DeepSeekAuthMode? { source.mode(detected: detected) }
+    public var readMode: DeepSeekAuthMode { source.readMode(detected: detected) }
     public let failureCount: Int
     public let lastAttempt: Date?
     public let successCount: UInt64
@@ -120,10 +121,11 @@ public actor DeepSeekBalanceCoordinator {
         return nil
     }
     @discardableResult public func refreshIfDue(active: Bool, force: Bool = false, requested: Bool = false, turnEnded: Bool = false) async -> Bool {
-        guard enabled, !paused, generation.contains(epoch), let home, let mode = source.mode(detected: detected), work == nil, attempt == nil else { return false }
+        guard enabled, !paused, generation.contains(epoch), let home, work == nil, attempt == nil else { return false }
         guard force || !disconnectFailed else { return false }
         guard force || error?.needsConnection != true else { return false }
         guard Self.isDue(lastAttempt: lastAttempt, failures: failures, active: active, force: force, requested: requested, turnEnded: turnEnded, now: now()) else { return false }
+        let mode = source.readMode(detected: detected)
         let key = mode == .apiKey ? services.readKey().flatMap(DeepSeekAPIKeyStore.validated) : nil
         hasKey = key != nil
         if mode == .apiKey && key == nil { error = .missingKey; await emit(); return false }
@@ -221,7 +223,7 @@ public actor DeepSeekBalanceCoordinator {
     }
     private func updateCredentialState() {
         guard enabled else { return }
-        let mode = source.mode(detected: detected)
+        let mode = source.readMode(detected: detected)
         hasKey = mode == .apiKey && services.readKey().flatMap(DeepSeekAPIKeyStore.validated) != nil
         if mode == .apiKey && !hasKey { error = .missingKey }
         else if mode == .account && services.readWeb == nil { error = .signedOut }

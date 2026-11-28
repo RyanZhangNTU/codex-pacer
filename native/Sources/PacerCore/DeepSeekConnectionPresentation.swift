@@ -4,8 +4,15 @@ import Foundation
 public enum DeepSeekBalanceSelection: String, Codable, CaseIterable, Identifiable, Sendable {
     case automatic, web, apiKey
     public var id: String { rawValue }
+    /// The billing mode that owns wallet history; nil while an automatic source
+    /// has not learned how Harness bills.
     public func mode(detected: DeepSeekAuthMode?) -> DeepSeekAuthMode? {
         switch self { case .automatic: detected; case .web: .account; case .apiKey: .apiKey }
+    }
+    /// How the balance is read. Until Harness's billing is known, an automatic
+    /// source reads through web sign-in, as Settings says (#308).
+    public func readMode(detected: DeepSeekAuthMode?) -> DeepSeekAuthMode {
+        mode(detected: detected) ?? .account
     }
 }
 
