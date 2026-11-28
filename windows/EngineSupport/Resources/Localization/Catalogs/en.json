@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "a81f4c0ba0ac95d78b87483f18553729230ae3dac7b5273dcb28d1f9f27e6cc7",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "6c1316ea7b9ef36b543ab4dbe3827c842edc252a84da8686f72ae1350a7b46b0",
     "windows/EngineSupport/Resources/Localization/en.json": "9c5c3afa9978273c9160fabc0506c301ea0cb77b9090d382d0ec78e963927bff"
   },
   "strings": {
@@ -279,7 +279,6 @@
     "codex.dot_tasks": "Dot Tasks",
     "codex.embedded_sessions": "Show Codex Sessions from Other Apps",
     "codex.embedded_sessions_help": "Sessions in apps that embed Codex, such as a Zotero plugin, show the app\u2019s name and switch to it when clicked. When off, these sessions and their reminders are hidden; Codex app, Terminal and VS Code sessions are unaffected.",
-    "codex.hooks.compaction_hint": "Allow %d new items in Codex to show when it compacts a conversation.",
     "codex.hooks.failed": "Codex task tracking could not be set up.",
     "codex.hooks.guide.alternative": "Or, in any chat, click Review hooks next to the message box, then Allow all.",
     "codex.hooks.guide.done": "Done. Codex tasks now show in Pacer.",
