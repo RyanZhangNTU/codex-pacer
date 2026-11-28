@@ -291,7 +291,7 @@ final class WindowsAntigravityTests: XCTestCase {
         await runtime.stop()
     }
 
-    func testEngineProjectsSelectedBucketAndRetiresQuotaOnHubLoss() async throws {
+    func testEngineProjectsSelectedBucketAndKeepsQuotaAfterHubLoss() async throws {
         let root = try directory(), home = root.appendingPathComponent("activity"), history = root.appendingPathComponent("history")
         _ = try hub(home, pid: 42, port: 34343)
         let capture = Capture(), session = Session()
@@ -329,15 +329,30 @@ final class WindowsAntigravityTests: XCTestCase {
         let warned = try await TestWait.until { capture.alerts.filter { $0.kind == "lowQuota" }.count == 2 }
         XCTAssertTrue(warned)
         for group in AntigravityQuotaGroup.allCases { XCTAssertTrue(capture.alerts.contains { $0.detail.contains(group.name) }) }
+        func dashboard() -> EngineQuotaDashboard.Provider? { capture.snapshot?.quotaDashboard?.providers.first { $0.provider == .antigravity } }
+        func reading() -> String? {
+            capture.snapshot?.groupedQuota?.first.map { quota in
+                "\(quota.capturedAt) " + quota.buckets.map { "\($0.id)=\($0.windows.first?.remainingPercent ?? -1)" }.joined(separator: ",")
+            }
+        }
+        let lowered = try XCTUnwrap(reading())
         await session.gate.arm()
         try await command("refresh", [:])
         let pending = try await TestWait.until { await session.gate.waiting }
         XCTAssertTrue(pending)
+        let loading = try await TestWait.until { dashboard()?.history?.refreshing == true }
+        XCTAssertTrue(loading)
+        // Closing Antigravity takes its server away, not its quota: the last
+        // reading stays on screen instead of "quota unavailable".
         session.replace(nil)
         try await command("refreshLocalHarness", ["provider": "antigravity"])
-        let retired = try await TestWait.until { capture.snapshot?.groupedQuota == nil }
-        XCTAssertTrue(retired); XCTAssertNil(projected())
+        let kept = try await TestWait.until { dashboard()?.history?.refreshing == false }
+        XCTAssertTrue(kept)
+        XCTAssertEqual(reading(), lowered); XCTAssertEqual(projected(), ["antigravity:3p-5h"])
+        XCTAssertEqual(dashboard()?.status?.state, .hidden)
         await session.gate.release()
+        try await command("refresh", [:])
+        XCTAssertEqual(reading(), lowered, "The closed server's late answer never replaces the kept reading")
         try await command("configure", ["enabledProviders": [] as [String]])
         XCTAssertNil(capture.snapshot?.groupedQuota)
         await runtime.stop()
@@ -350,6 +365,81 @@ final class WindowsAntigravityTests: XCTestCase {
                 XCTAssertNil(try Data(contentsOf: file).range(of: Data("user@example.invalid".utf8)))
             }
         }
+    }
+
+    private func initializeAntigravity(_ runtime: EngineRuntime, root: URL, home: URL) async throws {
+        let frame = try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": "initialize", "method": "initialize",
+            "supportsHarnessModules": true, "params": ["codexHome": root.appendingPathComponent("codex").path,
+            "claudeHome": root.appendingPathComponent("claude").path, "deepseekHome": root.appendingPathComponent("deepseek").path,
+            "harnessHomes": ["antigravity": home.path], "providerModes": ["antigravity": "enabled"], "monitorSSH": false, "monitorWSL": false]])
+        _ = await runtime.receive(frame)
+    }
+
+    /// Pacer started while Antigravity is closed shows the last saved reading,
+    /// which then ages into the delay mark like any other module's quota.
+    func testEngineRestoresLastQuotaWhileAntigravityIsClosedAndMarksItDelayed() async throws {
+        let root = try directory(), home = root.appendingPathComponent("activity"), history = root.appendingPathComponent("history")
+        _ = try hub(home, pid: 42, port: 34343)
+        let definition = try XCTUnwrap(HarnessRegistry.localHarnesses.first { $0.descriptor.id == .antigravity })
+        func runtime(_ session: Session, _ capture: Capture, at clock: @escaping @Sendable () -> Date) -> EngineRuntime {
+            EngineRuntime(demo: false, now: clock, dismissalStore: nil, antigravityHost: session, localQuotaDirectory: history,
+                allowsStorageRecovery: false, localHarnessDefinitions: [definition], installationDetection: { .init(installed: [.antigravity]) },
+                output: { capture.receive($0) })
+        }
+        let open = Capture(), first = runtime(Session(), open, at: { Date() })
+        try await initializeAntigravity(first, root: root, home: home)
+        let loaded = try await TestWait.until { open.snapshot?.groupedQuota?.first?.buckets.count == 2 }
+        XCTAssertTrue(loaded)
+        let saved = try XCTUnwrap(open.snapshot?.groupedQuota?.first)
+        XCTAssertNil(open.snapshot?.compactWarnings?.first { $0.kind == .quotaDelay })
+        await first.stop()
+
+        let closed = Session(); closed.replace(nil)
+        let later = Date().addingTimeInterval(11 * 60), capture = Capture(), second = runtime(closed, capture, at: { later })
+        try await initializeAntigravity(second, root: root, home: home)
+        let restored = try await TestWait.until { capture.snapshot?.groupedQuota?.first?.capturedAt == saved.capturedAt }
+        XCTAssertTrue(restored)
+        XCTAssertEqual(capture.snapshot?.groupedQuota?.first?.buckets.map(\.id), ["gemini", "3p"])
+        XCTAssertEqual(capture.snapshot?.quotaDashboard?.providers.first { $0.provider == .antigravity }?.status?.state, .hidden)
+        let delay = try XCTUnwrap(capture.snapshot?.compactWarnings?.first { $0.kind == .quotaDelay },
+                                  "Eleven minutes on, the kept reading is late like any other module's")
+        XCTAssertEqual(delay.affectedProviders, ["antigravity"]); XCTAssertFalse(delay.solid)
+        await second.stop()
+    }
+
+    /// The Settings guide follows "Keep in menu bar" as Antigravity saves it:
+    /// a temporary file renamed over `app_storage.json`.
+    func testModuleFollowsAntigravityKeepInMenuBarSetting() async throws {
+        let root = try directory(), home = root.appendingPathComponent("activity")
+        let folder = root.appendingPathComponent("Roaming/Antigravity", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent("app_storage.json")
+        let session = Session(); session.replace(nil)
+        let capture = Capture()
+        let definition = try XCTUnwrap(HarnessRegistry.localHarnesses.first { $0.descriptor.id == .antigravity })
+        let runtime = EngineRuntime(demo: false, dismissalStore: nil, antigravityHost: session, localQuotaDirectory: root.appendingPathComponent("history"),
+            allowsStorageRecovery: false, localHarnessDefinitions: [definition], installationDetection: { .init(installed: [.antigravity]) },
+            output: { capture.receive($0) }, antigravityAppSettings: { file })
+        try await initializeAntigravity(runtime, root: root, home: home)
+        func keepsRunning() -> Bool?? { capture.snapshot?.modules?.first { $0.provider == "antigravity" }.map(\.keepsRunningInBackground) }
+        func save(_ text: String) throws {
+            let temporary = folder.appendingPathComponent("app_storage.json.tmp-\(UUID().uuidString)")
+            try Data(text.utf8).write(to: temporary)
+            XCTAssertTrue(MoveFileExW(WindowsFiles.wide(temporary), WindowsFiles.wide(file), DWORD(MOVEFILE_REPLACE_EXISTING)))
+        }
+        let defaulted = try await TestWait.until { keepsRunning() == .some(false) }
+        XCTAssertTrue(defaulted, "Without the file, Antigravity's Windows default quits with the window")
+        try save(#"{"agy.homeGreeting.next":"x","runInBackground":"true"}"#)
+        let on = try await TestWait.until { keepsRunning() == .some(true) }
+        XCTAssertTrue(on)
+        try save(#"{"runInBackground":"false"}"#)
+        let off = try await TestWait.until { keepsRunning() == .some(false) }
+        XCTAssertTrue(off, "The renamed file stays watched")
+        let frame = try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": "off", "method": "configure",
+            "supportsHarnessModules": true, "params": ["providerModes": ["antigravity": "disabled"]]])
+        _ = await runtime.receive(frame)
+        XCTAssertEqual(keepsRunning(), .some(nil), "A module that is off has no guide")
+        await runtime.stop()
     }
 
     func testProgressApprovalIDsOnlyIncludeMatchingAntigravityRequests() throws {

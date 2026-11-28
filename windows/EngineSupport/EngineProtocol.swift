@@ -253,6 +253,9 @@ struct EngineModule: Codable, Equatable {
     /// Codex's Account row, read from its quota (`CodexAccountState`).
     var account: EngineStatusRow? = nil
     var applicationInstalled: Bool? = nil
+    /// Antigravity's "Keep in menu bar": while it is off, closing the window
+    /// quits Antigravity and Settings guides the user to turn it on.
+    var keepsRunningInBackground: Bool? = nil
     var quotaGroups: EngineQuotaGroups? = nil
 }
 

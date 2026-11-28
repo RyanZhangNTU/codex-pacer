@@ -55,6 +55,12 @@ internal static class AntigravityPresentationChecks
                 && Texts(settings).Any(t => t.Contains("66%")), "The account, weekly usage and group picker must match the reading");
             Check(Get<Button>(settings, Prefix + "open").IsVisible && Get<Button>(settings, Prefix + "refresh").IsEnabled,
                 "The module must offer Open Antigravity and Refresh");
+            // The demo's Antigravity quits with its window, as Windows installations start.
+            Check(Module()!.KeepsRunningInBackground == false && Get<Grid>(settings, Prefix + "background").IsVisible
+                && Name(Get<Border>(settings, Prefix + "background_state")) == ui.Text("antigravity.background.off")
+                && Name(Get<TextBlock>(settings, Prefix + "background_steps")).Contains("Ctrl+,", StringComparison.Ordinal)
+                && Find<Button>(settings, Prefix + "background.info") != null,
+                "Until Keep in menu bar is on, the Status card must say where to turn it on, with its reason behind ⓘ");
             // As on the Mac, an installed module's page has no bare website link; the Module Library offers Get instead.
             Check(Find<Button>(settings, Prefix + "website") == null && !Texts(settings).Any(t => t.Contains("antigravity.google")),
                 "The installed module's page must not show a website link");

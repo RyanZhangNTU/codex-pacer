@@ -122,6 +122,11 @@ public actor QuotaHistoryStore {
     public func restore(home: URL, accountScope: String, now: Date = Date()) -> (QuotaSnapshot, QuotaCycleHistory)? {
         cache.load(home: home, accountScope: accountScope, now: now)
     }
+    /// The newest saved reading for a source that cannot name its account
+    /// right now, such as a local app that is not running.
+    public func restoreLatest(home: URL, now: Date = Date()) -> (QuotaSnapshot, QuotaCycleHistory)? {
+        cache.loadLatest(home: home, now: now)
+    }
     public func save(home: URL, snapshot: QuotaSnapshot, history: QuotaCycleHistory,
                      now: Date = Date()) -> Bool {
         guard snapshot.accountScope != nil else { return true }
@@ -175,11 +180,18 @@ public struct QuotaCycleCache: Sendable {
     public init(directory: URL, files: (any PlatformFileSystem)? = nil) { self.directory = directory; self.files = files }
 
     public func load(home: URL, accountScope: String, now: Date = Date()) -> (QuotaSnapshot, QuotaCycleHistory)? {
+        load(home: home, now: now) { $0 == accountScope }
+    }
+    /// The saved reading whatever its account, as long as it names one.
+    public func loadLatest(home: URL, now: Date = Date()) -> (QuotaSnapshot, QuotaCycleHistory)? {
+        load(home: home, now: now) { $0 != nil }
+    }
+    private func load(home: URL, now: Date, accepts: (String?) -> Bool) -> (QuotaSnapshot, QuotaCycleHistory)? {
         let file = location(home)
         guard let data = read(file), let value = try? JSONDecoder().decode(Envelope.self, from: data),
               files == nil || recognized(value),
-              value.version == 1, value.snapshot.accountScope == accountScope,
-              value.history.accountScope == accountScope,
+              value.version == 1, accepts(value.snapshot.accountScope),
+              value.history.accountScope == value.snapshot.accountScope,
               now.timeIntervalSince(value.snapshot.capturedAt) >= -60,
               now.timeIntervalSince(value.snapshot.capturedAt) <= 7 * 86400 else { return nil }
         var history = value.history

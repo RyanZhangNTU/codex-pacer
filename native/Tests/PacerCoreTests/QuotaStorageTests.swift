@@ -92,6 +92,26 @@ final class QuotaStorageTests: XCTestCase {
         XCTAssertEqual(restored.1.cycles[0].points.count, 1)
         XCTAssertEqual(restored.1.cycles[0].points[0].remaining, 70)
     }
+    /// A local app that is closed cannot name its account, so its last saved
+    /// reading comes back whatever the account, for a week at most.
+    func testLatestReadingRestoresWhateverAccountWithinItsAge() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let home = URL(fileURLWithPath: "/synthetic-home")
+        let store = QuotaHistoryStore(directory: directory), injected = QuotaCycleCache(directory: directory, files: TestFileSystem())
+        let none = await store.restoreLatest(home: home, now: epoch)
+        XCTAssertNil(none)
+        var history = QuotaCycleHistory()
+        let reading = try snapshot(60, remaining: 70, scope: "other-account"); history.record(reading)
+        let saved = await store.save(home: home, snapshot: reading, history: history, now: reading.capturedAt)
+        XCTAssertTrue(saved)
+        let latest = await store.restoreLatest(home: home, now: epoch.addingTimeInterval(3600))
+        XCTAssertEqual(latest?.0, reading); XCTAssertEqual(latest?.1.accountScope, "other-account")
+        XCTAssertEqual(injected.loadLatest(home: home, now: epoch.addingTimeInterval(3600))?.0, reading)
+        XCTAssertNil(injected.loadLatest(home: URL(fileURLWithPath: "/other-home"), now: epoch))
+        let expired = await store.restoreLatest(home: home, now: reading.capturedAt.addingTimeInterval(8 * 86400))
+        XCTAssertNil(expired, "A reading older than a week is not shown")
+    }
     func testLegacyFineHistoryLoadsAsBoundedCoarseCurveWithoutWriting() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

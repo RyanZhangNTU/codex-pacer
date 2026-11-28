@@ -37,6 +37,8 @@ internal sealed partial class SettingsWindow
     private TextBlock? harnessQuotaAccount, harnessQuotaUsage;
     private Button? harnessOpenApp, harnessQuotaRefresh;
     private ComboBox? harnessGroup;
+    // Antigravity's "Keep in menu bar" guide, shown while it is off.
+    private Grid? harnessBackground;
 
     private void ClearHarnessPage()
     {
@@ -50,6 +52,7 @@ internal sealed partial class SettingsWindow
         harnessAccountState = harnessAccountHelp = null; harnessCreditsBlock = null; harnessCreditsKey = "";
         harnessAccountSignIn = harnessAccountOptions = null;
         harnessQuotaAccount = harnessQuotaUsage = null; harnessOpenApp = harnessQuotaRefresh = null; harnessGroup = null;
+        harnessBackground = null;
     }
 
     private void BuildHarnessPage(string provider)
@@ -104,6 +107,8 @@ internal sealed partial class SettingsWindow
             };
             rows.Add(InfoRow(ui.Text("provider.account"), Actions(harnessQuotaAccount, harnessOpenApp), id: id + ".account"));
             rows.Add(InfoRow(ui.Text("provider.usage"), Actions(harnessQuotaUsage, harnessQuotaRefresh), id: id + ".usage"));
+            // Antigravity quits with its window, and its quota stops, unless "Keep in menu bar" is on.
+            if (provider == "antigravity") rows.Add(harnessBackground = BuildBackgroundRow(id));
         }
         harnessSections.Children.Add(SectionTitle(ui.Text("main.section.status")));
         harnessSections.Children.Add(Card(rows.ToArray()));
@@ -145,6 +150,24 @@ internal sealed partial class SettingsWindow
             harnessSections.Children.Add(Card(harnessCreditsBlock));
         }
         if (descriptor.Local == true) harnessSections.Children.Add(Card(ProviderHomeEditor(provider)));
+    }
+
+    /// Antigravity's "Keep in menu bar" while it is off: one line says where to
+    /// turn it on, and the reason waits behind ⓘ. The row goes once it is on.
+    private Grid BuildBackgroundRow(string id)
+    {
+        string title = ui.Text("antigravity.background.title");
+        var state = Label(ui.Text("antigravity.background.off"), 11.5, FontWeights.SemiBold);
+        state.SetResourceReference(TextBlock.ForegroundProperty, "SettingsNoticeText");
+        var chip = new Border { CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 2, 8, 2), Child = state };
+        chip.SetResourceReference(Border.BackgroundProperty, "SettingsNoticeFill");
+        Identify(chip, id + ".background_state", state.Text);
+        var steps = Detail(ui.Text("antigravity.background.steps").Replace("%@", "Ctrl+,", StringComparison.Ordinal));
+        Identify(steps, id + ".background_steps", steps.Text);
+        var row = InfoRow(title, chip, ui.Text("antigravity.background.info"), steps, id + ".background");
+        Identify(row, id + ".background", title);
+        row.Visibility = Visibility.Collapsed;
+        return row;
     }
 
     /// The progress ring switch. A module whose app must trust Pacer's tool also
@@ -687,6 +710,8 @@ internal sealed partial class SettingsWindow
             harnessQuotaRefresh!.IsEnabled = editable && module.Enabled && reading?.History?.Refreshing != true;
             harnessGroup.IsEnabled = editable; harnessGroup.SelectedValue = groups.Selected;
         }
+        if (harnessBackground != null)
+            harnessBackground.Visibility = !closed && module.Enabled && module.KeepsRunningInBackground == false ? Visibility.Visible : Visibility.Collapsed;
         bool progressOn = !session.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal);
         if (harnessProgress != null)
         {

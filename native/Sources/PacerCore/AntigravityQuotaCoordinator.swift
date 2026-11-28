@@ -112,6 +112,13 @@ package actor AntigravityQuotaCoordinator: LocalHarnessQuotaCoordinator {
 
     private func read(scopeBefore before: String?, cached: Bool) async -> [IslandNotice] {
         guard current else { return [] }
+        // A server that went away says nothing about the account. The last
+        // reading stays until the source retires this coordinator.
+        if before == nil, state.snapshot != nil {
+            let bound = await client.isCurrent(session, checkDirectory: true)
+            guard current else { return [] }
+            if !bound { state.failures = 0; state.lastAttempt = now(); return [] }
+        }
         if before != scope || before == nil {
             clearReading(); scope = before
             await output(state, [])
@@ -135,12 +142,16 @@ package actor AntigravityQuotaCoordinator: LocalHarnessQuotaCoordinator {
         let bound = await client.isCurrent(session, checkDirectory: true)
         guard current else { return [] }
         scopeCheckedAt = bound && before == after && after != nil ? now() : nil
-        if !bound || before != after {
+        if !bound {
+            // The server went away during this read: its answers are dropped
+            // and the last reading stays, as above.
+            state.failures = 0; state.lastAttempt = now()
+        } else if before != after {
             clearReading()
-            state.failures = 0; state.lastAttempt = bound ? nil : now()
+            state.failures = 0; state.lastAttempt = nil
             // The scope may already have disappeared before this poll. Discard
             // the raced reading and get a fresh, anonymous sample for display.
-            if cached && bound && after == nil {
+            if cached && after == nil {
                 state.lastAttempt = now()
                 return await read(scopeBefore: nil, cached: false)
             }
