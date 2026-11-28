@@ -65,15 +65,18 @@ internal static class ContextLevelChecks
                 var pixel = new byte[4]; bitmap.CopyPixels(new Int32Rect(56, y * 4, 1, 1), pixel, 4, 0);
                 return pixel[3] / 255.0;
             }
+            // The capture comes first, so a failed check leaves the drawing to look at.
+            var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(Bitmap(surface, 2)));
+            using (var file = File.Create(FilePath.Combine(output, $"context-{name}-{ui.Language}-{(dark ? "dark" : "light")}.png"))) encoder.Save(file);
+            var icons = new PngBitmapEncoder(); icons.Frames.Add(BitmapFrame.Create(bitmap));
+            using (var file = File.Create(FilePath.Combine(output, $"context-icon-{name}-{ui.Language}-{(dark ? "dark" : "light")}.png"))) icons.Save(file);
             if (name is "working" or "ended" or "read")
             {
                 double top = name == "working" ? 0.06 : name == "ended" ? 0.42 : 0.08;
                 double bottom = name == "working" ? 0.25 : name == "ended" ? 1 : 0.21;
-                Check(Near(AlphaAt(6), top, 0.02) && Near(AlphaAt(22), bottom, 0.04), name + " renders the two tones inside its disc");
+                Check(Near(AlphaAt(6), top, 0.02) && Near(AlphaAt(22), bottom, 0.04),
+                    $"{name} renders the two tones inside its disc (face {icon.Face}, top {AlphaAt(6):0.000}, bottom {AlphaAt(22):0.000})");
             }
-            var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(Bitmap(surface, 2)));
-            using var file = File.Create(FilePath.Combine(output, $"context-{name}-{ui.Language}-{(dark ? "dark" : "light")}.png"));
-            encoder.Save(file);
         }
         foreach (double area in new[] { 0, 0.2, 0.5, 0.989, 0.99, 1 })
         {
@@ -121,7 +124,8 @@ internal static class ContextLevelChecks
     {
         var size = new Size(element.ActualWidth, element.ActualHeight);
         var drawing = new DrawingVisual();
-        var brush = new VisualBrush(element) { ViewboxUnits = BrushMappingMode.Absolute, Viewbox = new Rect(size) };
+        // The brush draws the element where it sits in its parent, so the view box starts at that offset.
+        var brush = new VisualBrush(element) { ViewboxUnits = BrushMappingMode.Absolute, Viewbox = new Rect((Point)VisualTreeHelper.GetOffset(element), size) };
         using (var context = drawing.RenderOpen()) context.DrawRectangle(brush, null, new Rect(size));
         var image = new RenderTargetBitmap((int)Math.Ceiling(size.Width * scale), (int)Math.Ceiling(size.Height * scale), 96 * scale, 96 * scale, PixelFormats.Pbgra32);
         image.Render(drawing);

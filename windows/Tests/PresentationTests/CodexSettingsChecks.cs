@@ -79,7 +79,7 @@ internal static class CodexSettingsChecks
             await Until(() => Descendants(window).OfType<CheckBox>().Any(value => AutomationProperties.GetAutomationId(value) == "panel.option.showContextLevel"), "Tasks inspector loads");
             window.SelectPanelBlock("tasks");
             var context = Find<CheckBox>(window, "panel.option.showContextLevel");
-            Check(context.IsChecked == true && AutomationProperties.GetName(context) == ui.Text("main.panel.context_level"), "Context level defaults on");
+            Check(context.IsChecked == true && AutomationProperties.GetName(context) == ui.Text("main.panel.context_level"), "Context usage defaults on");
             var info = Find<Button>(window, "panel.option.showContextLevel.info");
             Invoke(info); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
             var help = Descendants(window).OfType<TextBlock>().Single(text => text.IsVisible && text.Text == ui.Text("main.panel.context_level_help"));
