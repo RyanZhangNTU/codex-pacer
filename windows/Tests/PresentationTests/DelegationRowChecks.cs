@@ -101,7 +101,7 @@ internal static class DelegationRowChecks
             var peer = UIElementAutomationPeer.CreatePeerForElement(row)!;
             Check(!row.Focusable && peer.GetPattern(PatternInterface.Invoke) == null && AutomationProperties.GetHelpText(row) == "No link"
                 && row.HoverProgress == 0 && !TaskRow.LineHighlighted(folded!), "A task without a link offers no open action or highlight");
-            var stopPeer = peer.GetChildren()!.Single();
+            var stopPeer = peer.GetChildren()!.Single(child => child.GetAutomationControlType() == AutomationControlType.Button);
             Check(stops[0].IsEnabled && stopPeer.IsEnabled() && stopPeer.GetName() == "Stop this Codex run", "Stop stays available without a task link");
             ((IInvokeProvider)stopPeer.GetPattern(PatternInterface.Invoke)!).Invoke();
             await PresentationWait.UntilAsync(() => stopped == running.Id, "Stop must reach the running job without opening the task");

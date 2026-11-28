@@ -34,7 +34,7 @@ internal sealed record CodexModelChoice(string Slug, string Name, IReadOnlyList<
 /// Codex task tracking through Pacer's hooks: `off`, `settingUp`, `notInstalled`,
 /// `needsApproval` (Pending of Pacer's hooks still to allow in Codex), `running`,
 /// `notRunning`, `needsCodexUpdate` or `installFailed`.
-internal sealed record CodexHooks(string State, int? Pending = null, bool? OpensSettings = null);
+internal sealed record CodexHooks(string State, int? Pending = null, bool? OpensSettings = null, int? OptionalPending = null);
 /// A module's account credits as the engine knows them, with what the bill
 /// service reported; drawn the same way in Settings, Overview and the island.
 internal sealed record EngineAccountCredits(string Provider, HarnessAccountCredits Credits, bool Stale,
@@ -81,12 +81,14 @@ internal sealed record DeepSeekConnectionReading(string Title, string Text, stri
 internal sealed record EngineHostRequest(string RequestID, string Context, bool Cancelled, string? Path = null);
 internal sealed record CompactWarningItem(string Kind, string? Provider, bool Solid, string? Label, string? Symbol, string Help);
 
+internal sealed record EngineContextLevel(long UsedTokens, long CapacityTokens, double Fraction, double MeasuredAt);
 internal sealed record EngineTask(
     string Id, string Provider, string? SessionId, string? TurnId, string? ParentThreadId,
     string Title, string Source, string? SourceId, string Phase, string Stage, string StageLabel,
     string? Model, string? Effort, double? TokensPerSecond, double? RateReportedAt,
     bool RateIsFresh, bool RateIsEstimated, double? FirstTokenLatency,
-    double? StartedAt, bool Unread, bool Failed, double? TurnCost, double? TurnPeakCost);
+    double? StartedAt, bool Unread, bool Failed, double? TurnCost, double? TurnPeakCost,
+    EngineContextLevel? ContextLevel = null, double? CompactingSince = null);
 
 internal sealed record EngineRequest(string Id, string Provider, string ActivityId, string Kind, string Label, double DetectedAt);
 internal sealed record EngineSource(string Id, string Provider, bool Available, string Transport, string? Reason, ConnectionFailure? Failure = null,
@@ -230,7 +232,7 @@ internal sealed record EngineTaskRow(string Id, string Provider, string Title, s
     IReadOnlyList<string>? SubagentDots = null, string? SubagentDotsText = null,
     IReadOnlyList<EngineSubagentLine>? SubagentLines = null, string? SubagentsFolded = null,
     // On a Codex for Claude run's row: its mode as a tag (task, review, follow-up).
-    string? ModeTag = null);
+    string? ModeTag = null, EngineContextLevel? ContextLevel = null, double? CompactingSince = null);
 /// One subagent under its task: its own row for the icon and ring, its state
 /// (running, approval, input, completed, failed, stopped, unknown), its speed while it writes,
 /// and its time or how it ended. Its line shows its type and name as tags, its title,

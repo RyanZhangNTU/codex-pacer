@@ -63,12 +63,19 @@ internal sealed partial class SettingsWindow
     }
     /// Opens Codex's settings with the floating guide beside it on Settings' screen;
     /// a Codex that cannot open them takes the guide away again.
-    private void OpenCodexHooksGuide()
+    private void OpenCodexHooksGuide(bool compactionOnly = false)
     {
-        if (demo || sourceClosed || engine is not { IsConnectionClosed: false } client) return;
+        if ((demo && guideLinkLauncher == null) || sourceClosed || engine is not { IsConnectionClosed: false } client) return;
         var area = System.Windows.Forms.Screen.FromHandle(new System.Windows.Interop.WindowInteropHelper(this).Handle).WorkingArea;
-        CodexHooksGuideFloat.Open(client, ui, Resources, area);
-        try { using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("codex://settings") { UseShellExecute = true }); }
+        CodexHooksGuideFloat.Open(client, ui, Resources, area, compactionOnly);
+        try
+        {
+            if (guideLinkLauncher != null)
+            {
+                if (!guideLinkLauncher(new Uri("codex://settings"))) CodexHooksGuideFloat.Current?.Close();
+            }
+            else { using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("codex://settings") { UseShellExecute = true }); }
+        }
         catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException) { CodexHooksGuideFloat.Current?.Close(); }
     }
     private Button ConnectionRefreshButton(string key, string id, string method)

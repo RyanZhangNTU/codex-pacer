@@ -17,7 +17,7 @@ namespace CodexPacer.Windows;
 /// closes, a check draws itself and the icon pops; a request for the user
 /// bounces and rings twice; a failure shakes; resumed work empties the disc.
 /// A first sight or a rebuilt row draws the final state.
-public sealed class TaskStatusIcon : Grid
+public sealed partial class TaskStatusIcon : Grid
 {
     internal const double Diameter = 28, GlyphSide = 14, OrbSide = 20, DiscSide = 26, FillDuration = 0.42;
     private static readonly Color DarkInk = Color.FromArgb(189, 0, 0, 0);
@@ -26,13 +26,13 @@ public sealed class TaskStatusIcon : Grid
     private static Color ReadInk => PacerPalette.Light ? Color.FromArgb(158, 29, 29, 31) : Color.FromArgb(158, 255, 255, 255);
     private static readonly KeySpline Launch = new(0.22, 1, 0.36, 1);
     /// What each task's face last showed, so a state's arrival plays once.
-    private static readonly Dictionary<string, (string Face, double Seen)> Faces = new();
+    private static readonly Dictionary<string, FaceMemory> Faces = new();
 
     internal TaskProgressRing Ring { get; } = new();
     private readonly Grid ringHost = new() { Width = Diameter, Height = Diameter };
     private readonly Ellipse orb = new() { Width = OrbSide, Height = OrbSide, Opacity = 0, IsHitTestVisible = false };
     private readonly Grid disc = new() { Width = DiscSide, Height = DiscSide, Visibility = Visibility.Collapsed };
-    private readonly Path discFill = new(), discSheen = new();
+    private readonly Path discFill = new(), discSheen = new(), discAir = new();
     private readonly Ellipse[] ripples = [new(), new()];
     private readonly Grid glyphHost = new() { Width = GlyphSide, Height = GlyphSide };
     private Canvas glyph = new();
@@ -56,7 +56,7 @@ public sealed class TaskStatusIcon : Grid
         RenderTransform = new TransformGroup { Children = { pop, shift } };
         ringHost.Children.Add(Ring); Children.Add(ringHost);
         Children.Add(orb);
-        disc.Children.Add(discFill); disc.Children.Add(discSheen); Children.Add(disc);
+        disc.Children.Add(discAir); disc.Children.Add(discFill); disc.Children.Add(discSheen); Children.Add(disc);
         foreach (var ripple in ripples)
         {
             ripple.Width = ripple.Height = Diameter - 2; ripple.StrokeThickness = 1.6; ripple.Opacity = 0;
@@ -65,7 +65,16 @@ public sealed class TaskStatusIcon : Grid
         glyphHost.Children.Add(glyph); Children.Add(glyphHost);
         Unloaded += (_, _) => Halt();
         // Loops run only while the row is on screen, as the ring's do.
-        IsVisibleChanged += (_, _) => { if (IsVisible && motion) StartRhythms(); else StopRhythms(); };
+        IsVisibleChanged += (_, _) =>
+        {
+            if (IsVisible && motion)
+            {
+                StartRhythms();
+                if (Sweep != null) DrawLevel(Sweep, TaskProgressRing.Now);
+            }
+            else { StopRhythms(); StopLevel(); }
+            RefreshPress();
+        };
         UpdateDisc();
     }
 
@@ -76,30 +85,61 @@ public sealed class TaskStatusIcon : Grid
     /// Applies one row: its ring, then its face, playing a new state's arrival once.
     internal void Show(EngineTaskRow row, Color ink, bool animate)
     {
-        id = row.Id; color = ink; motion = animate;
-        Ring.Show(row.Id, row.ProgressState, row.ProgressMode, row.ProgressFraction ?? 0, row.ProgressStale == true, ink, animate,
-            completionPulseOnly: row.Provider == "codex");
-        ApplyFace(FaceOf(row.Symbol, row.Dimmed), animate);
-    }
-    internal void SetMotion(bool value) { motion = value; Ring.SetMotion(value); if (value) StartRhythms(); else { StopRhythms(); Settle(); } }
+        bool supports = TaskGlyphArt.IsWorking(row.Symbol) || row.Symbol is "checkmark.circle" or "pause.circle" or "xmark.circle";
+        double? fraction = supports ? row.ContextLevel?.Fraction : null;
+        var since = fraction.HasValue ? row.CompactingSince : null;
+        string next = since.HasValue ? Compacting : FaceOf(row.Symbol, row.Dimmed);
+        Faces.TryGetValue(row.Id, out var previous);
+        double now = TaskProgressRing.Now;
+        double? released = previous?.ReleasedHeight;
+        if (previous is { Face: Compacting, Level: { } last } && next != Compacting)
+            released = previous.Owner.TryGetTarget(out var owner) && owner.faceKey == Compacting && owner.id == row.Id
+                ? owner.LevelHeightShown : last.Displayed(now);
 
-    private void ApplyFace(string next, bool animate)
+        bool redraw = id != row.Id || color != ink || faceKey != next || light != PacerPalette.Light;
+        id = row.Id; color = ink; light = PacerPalette.Light; motion = animate;
+        var ring = new RingDrawing(row.Id, row.ProgressState, row.ProgressMode, row.ProgressFraction ?? 0,
+            row.ProgressStale == true, ink, row.Provider == "codex", since);
+        if (ring != lastRing)
+        {
+            Ring.Show(ring.Id, ring.State, ring.Mode, ring.Fraction, ring.Stale, ring.Ink, animate, completionPulseOnly: ring.Codex, compactingSince: ring.Since);
+            lastRing = ring;
+        }
+        else Ring.SetMotion(animate);
+        compactingSince = since;
+        double? fillEnd = redraw ? ApplyFace(next, animate, previous?.Face) : null;
+        ApplyLevel(next, fraction, fillEnd, row.CompactingSince == null ? released : null, previous, now);
+        RefreshPress();
+        if (!animate) { StopRhythms(); Settle(); }
+        else if (rhythms.Count == 0 && parts.Any(part => part.Rhythm != null)) StartRhythms();
+    }
+    private const string Compacting = "compacting";
+    private readonly record struct RingDrawing(string Id, string? State, string? Mode, double Fraction, bool Stale, Color Ink, bool Codex, double? Since);
+    private RingDrawing? lastRing;
+    private bool light;
+    private static bool IsOrb(string face) => face == Compacting || face.StartsWith("working:", StringComparison.Ordinal);
+
+    internal void SetMotion(bool value)
+    {
+        motion = value; Ring.SetMotion(value); RefreshPress();
+        if (!value) { StopRhythms(); Settle(); SettleLevel(); }
+        else if (rhythms.Count == 0) StartRhythms();
+    }
+
+    private double? ApplyFace(string next, bool animate, string? previous)
     {
         double now = TaskProgressRing.Now;
-        string? previous = Faces.TryGetValue(id!, out var memory) ? memory.Face : null;
-        Faces[id!] = (next, now); Prune(now);
         bool arriving = animate && previous != null && previous != next;
         bool solid = next.StartsWith("solid:", StringComparison.Ordinal), wasSolid = previous?.StartsWith("solid:", StringComparison.Ordinal) == true;
         bool read = next.EndsWith(":read", StringComparison.Ordinal);
-        string symbol = next.Split(':')[1];
+        string symbol = next == Compacting ? Compacting : next.Split(':')[1];
         // A request that ends with an estimate closes its arc before the disc fills.
         double fillDelay = arriving && symbol == "checkmark.circle" ? TaskProgressRing.SweepRemaining(id!) : 0;
         faceKey = next;
 
         // The orb sits under a working glyph only.
-        bool working = next.StartsWith("working:", StringComparison.Ordinal);
-        orb.Fill = new RadialGradientBrush(new GradientStopCollection { new(EstimatePaint.WithAlpha(color, 0.32), 0), new(EstimatePaint.WithAlpha(color, 0.1), 0.72) })
-            { Center = new Point(0.5, 0.28), GradientOrigin = new Point(0.5, 0.28), RadiusX = 1.06, RadiusY = 1.06 };
+        bool working = IsOrb(next);
+        orb.Fill = OrbFill();
         Fade(orb, working ? 1 : 0, arriving && (orb.Opacity > 0) != working ? 0.3 : 0, working ? 0 : fillDelay);
 
         // The disc fills from the ring inwards, and empties back out.
@@ -136,37 +176,58 @@ public sealed class TaskStatusIcon : Grid
             && !previous.EndsWith(":read", StringComparison.Ordinal) && TaskGlyphArt.AsksUser(previous.Split(':')[1]);
         if (arriving && asks && !asked) { Bounce(); Ripple(); }
         if (arriving && next == "solid:xmark.circle") Shake();
-        if (!animate) Settle();
+        return arriving && fills ? now + fillDelay + FillDuration : null;
     }
+
+    private RadialGradientBrush OrbFill() => new(new GradientStopCollection { new(EstimatePaint.WithAlpha(color, 0.32), 0), new(EstimatePaint.WithAlpha(color, 0.1), 0.72) })
+        { Center = new Point(0.5, 0.28), GradientOrigin = new Point(0.5, 0.28), RadiusX = 1.06, RadiusY = 1.06 };
 
     private void RebuildGlyph(string face, string symbol, bool solid, bool read, bool animate, double exitDelay, double drawDelay)
     {
         Color ink = solid ? read ? ReadInk : DarkInk : color;
         string key = face + "|" + ink;
         if (key == glyphKey) return;
+        bool crossfade = face == Compacting || glyphKey?.StartsWith(Compacting + "|", StringComparison.Ordinal) == true;
         bool wasDrawn = glyphKey != null; glyphKey = key;
         var old = glyph;
         StopRhythms(); parts.Clear();
         glyph = new Canvas { Width = GlyphSide, Height = GlyphSide, RenderTransformOrigin = new Point(0.5, 0.5) };
-        var art = solid ? TaskGlyphArt.Solid(symbol) : face.StartsWith("working:", StringComparison.Ordinal) ? TaskGlyphArt.Parts(symbol) : [new TaskGlyphArt.Part(TaskGlyphArt.Moon, false)];
+        var art = face switch
+        {
+            Compacting => TaskGlyphArt.Compress,
+            _ when solid => TaskGlyphArt.Solid(symbol),
+            _ => TaskGlyphArt.Parts(symbol)
+        };
         if (art.Count == 0) art = [new TaskGlyphArt.Part(TaskGlyphArt.Moon, false)];
         var scale = new ScaleTransform(GlyphSide / 24, GlyphSide / 24);
         Path? check = null;
         foreach (var part in art)
         {
-            double width = solid ? symbol is "checkmark.circle" or "xmark.circle" ? 2.9 : 2.1 : part.Filled ? 0.6 : 2.1;
+            double width = face == Compacting ? 2 : solid ? symbol is "checkmark.circle" or "xmark.circle" ? 2.9 : 2.1 : part.Filled ? 0.6 : 2.1;
             // A filled part on a disc keeps the disc's colour for its inner stroke, as the question mark does.
             bool innerMark = solid && symbol == "questionmark.bubble" && !part.Filled;
             var brush = new SolidColorBrush(innerMark ? read ? ReadDisc : color : ink);
             var path = new Path { Data = part.Path, RenderTransform = scale, Stroke = brush, StrokeThickness = width,
                 StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, StrokeLineJoin = PenLineJoin.Round,
                 Fill = part.Filled ? new SolidColorBrush(ink) : null };
+            if (face == Compacting && parts.Count > 0)
+                path.RenderTransform = new TransformGroup { Children = { scale, new TranslateTransform() } };
             glyph.Children.Add(path); parts.Add((path, part.Rhythm));
             if (solid && symbol == "checkmark.circle") check = path;
         }
         glyphHost.Children.Add(glyph);
         if (!animate || !wasDrawn) { glyphHost.Children.Remove(old); StartRhythms(); return; }
         // The old glyph leaves; the new one arrives, or a check draws itself.
+        if (crossfade)
+        {
+            old.RenderTransform = Transform.Identity;
+            var fade = Spline(old.Opacity, 0, 0.3, exitDelay);
+            fade.Completed += (_, _) => glyphHost.Children.Remove(old);
+            old.BeginAnimation(OpacityProperty, fade);
+            glyph.BeginAnimation(OpacityProperty, Spline(0, 1, 0.3, drawDelay));
+            StartRhythms();
+            return;
+        }
         var leaving = new ScaleTransform(1, 1); old.RenderTransformOrigin = new Point(0.5, 0.5); old.RenderTransform = leaving;
         double outSeconds = exitDelay > 0 ? 0.2 : 0.32;
         var fadeOut = Spline(1, 0, outSeconds, exitDelay); fadeOut.Completed += (_, _) => glyphHost.Children.Remove(old);
@@ -235,7 +296,7 @@ public sealed class TaskStatusIcon : Grid
         bool solid = faceKey.StartsWith("solid:", StringComparison.Ordinal);
         foreach (var element in new UIElement[] { orb, ringHost, glyph }) element.BeginAnimation(OpacityProperty, null);
         BeginAnimation(HoleProperty, null);
-        orb.Opacity = faceKey.StartsWith("working:", StringComparison.Ordinal) ? 1 : 0;
+        orb.Opacity = IsOrb(faceKey) ? 1 : 0;
         disc.Visibility = solid ? Visibility.Visible : Visibility.Collapsed; Hole = solid ? 0 : DiscSide / 2;
         ringHost.Opacity = solid ? 0 : 1; glyph.Opacity = 1; glyph.RenderTransform = null;
         foreach (UIElement child in glyphHost.Children.Cast<UIElement>().ToArray()) if (child != glyph) glyphHost.Children.Remove(child);
@@ -244,7 +305,7 @@ public sealed class TaskStatusIcon : Grid
         pop.BeginAnimation(ScaleTransform.ScaleXProperty, null); pop.BeginAnimation(ScaleTransform.ScaleYProperty, null);
         shift.BeginAnimation(TranslateTransform.XProperty, null); shift.BeginAnimation(TranslateTransform.YProperty, null);
     }
-    private void Halt() { StopRhythms(); Settle(); Ring.Halt(); }
+    private void Halt() { StopPress(); StopLevel(); StopRhythms(); Settle(); Ring.Halt(); }
 
     private void Pop(double after)
     {
@@ -288,7 +349,7 @@ public sealed class TaskStatusIcon : Grid
         var outer = new EllipseGeometry(new Point(DiscSide / 2, DiscSide / 2), DiscSide / 2, DiscSide / 2);
         double hole = Math.Clamp(Hole, 0, DiscSide / 2);
         Geometry shape = hole <= 0.01 ? outer : new CombinedGeometry(GeometryCombineMode.Exclude, outer, new EllipseGeometry(new Point(DiscSide / 2, DiscSide / 2), hole, hole));
-        discFill.Data = shape; discSheen.Data = shape;
+        discAir.Data = discFill.Data = discSheen.Data = shape;
     }
     private AnimationTimeline Animate(DependencyProperty property, double from, double to, double seconds, double delay)
     {

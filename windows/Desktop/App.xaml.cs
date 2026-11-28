@@ -128,7 +128,7 @@ public partial class App : Application
             if (position < 0) throw new ArgumentException("Unknown island position.");
         }
         int stage = 0, stageIndex = Array.IndexOf(e.Args, "--stage");
-        int lastStage = demoAntigravityGuide ? 4 : 3;
+        const int lastStage = 4;
         if (stageIndex >= 0 && (!demo || stageIndex + 1 >= e.Args.Length || !int.TryParse(e.Args[stageIndex + 1], out stage) || stage < 0 || stage > lastStage))
             throw new ArgumentException($"Demo stage must be between 0 and {lastStage}.");
         int capture = Array.IndexOf(e.Args, "--capture-preview");
@@ -235,7 +235,7 @@ public partial class App : Application
         var applications = demo ? new WindowsDesktopApplications(_ => true, _ => true) : new WindowsDesktopApplications();
         island = new IslandWindow(engine, demo, language == "zh-Hans", position, desktopApplications: applications,
             displayMode: positionIndex >= 0 ? 2 : Array.IndexOf(new[] { "automatic", "notch", "floating" }, preferences.DisplayMode),
-            canConnectDeepSeekWeb: () => webConnection.Available, harnessAccounts: accounts, demoAntigravityGuide: demoAntigravityGuide);
+            canConnectDeepSeekWeb: () => webConnection.Available, harnessAccounts: accounts);
         island.Presence.Changed += OnPresenceChanged;
         if (capture < 0 || activationQa != null)
             instanceActivation = new WindowsInstanceActivation(island, action =>

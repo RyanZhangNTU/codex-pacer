@@ -7,8 +7,8 @@ namespace CodexPacer.Windows;
 
 /// The task icon's centre glyphs, drawn as paths so each can light one part
 /// at a time: the three stars while thinking, the dots while replying, the
-/// cursor while a tool runs. A glyph never turns, scales or moves; only its
-/// parts brighten and dim. Paths use the Mac's 24-unit box with y running down.
+/// cursor while a tool runs. The compaction chevrons move toward their bar.
+/// Paths use the Mac's 24-unit box with y running down.
 internal static class TaskGlyphArt
 {
     /// How a part's opacity loops. Every part of one glyph shares a period, and
@@ -60,6 +60,9 @@ internal static class TaskGlyphArt
             new(Svg("M18.4 8.4h2.2l-2.2 2.2h2.2"), false, new(3, [0.2, 1, 0.2], [0, 0.5, 1], 1.5))],
         _ => []
     };
+
+    internal static readonly IReadOnlyList<Part> Compress = [
+        new(Svg("M4.1 12h15.8"), false), new(Svg("M7 3l5 4 5-4"), false), new(Svg("M7 21l5-4 5 4"), false)];
 
     /// The check a finished task draws inside its disc.
     internal static readonly Geometry Check = Svg("M7.4 12.4l3.1 3.1 6.1-6.6");

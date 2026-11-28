@@ -20,7 +20,9 @@ internal sealed class CodexHooksGuideFloat : GuideFloatWindow
     /// The plugin's name on Codex's Hooks page (Core's `CodexHookPlugin.displayName`).
     internal const string PluginName = "Codex Pacer";
     /// Pacer registers this many hooks (Core's `CodexHookEvent.Kind`).
-    internal const int HookCount = 7;
+    internal const int HookCount = 9;
+    private const int CoreHookCount = 7;
+    private readonly bool compactionOnly;
     private static readonly TimeSpan DoneShown = TimeSpan.FromSeconds(8), Lifetime = TimeSpan.FromMinutes(10);
 
     private static CodexHooksGuideFloat? current;
@@ -37,22 +39,21 @@ internal sealed class CodexHooksGuideFloat : GuideFloatWindow
     private string key = "";
 
     /// Shows the guide beside Codex, replacing any other guide.
-    internal static void Open(EngineClient client, UiText ui, ResourceDictionary resources, System.Drawing.Rectangle area)
+    internal static void Open(EngineClient client, UiText ui, ResourceDictionary resources, System.Drawing.Rectangle area, bool compactionOnly = false)
     {
         HarnessGuideFloat.Current?.Close();
         current?.Close();
-        var shown = new CodexHooksGuideFloat(() => client.LatestSnapshot?.CodexHooks, () => client.IsConnectionClosed, ui, resources, area);
+        var shown = new CodexHooksGuideFloat(() => client.LatestSnapshot?.CodexHooks, () => client.IsConnectionClosed, ui, resources, area, compactionOnly);
         shown.Closed += (_, _) => { shown.timer.Stop(); if (current == shown) current = null; };
         current = shown;
         shown.timer.Start();
         shown.Follow();
     }
 
-    /// <param name="hooks">The hooks' state in the engine's latest snapshot.</param>
-    /// <param name="disconnected">Whether the engine connection closed.</param>
-    internal CodexHooksGuideFloat(Func<CodexHooks?> hooks, Func<bool> disconnected, UiText ui, ResourceDictionary resources, System.Drawing.Rectangle area)
+    internal CodexHooksGuideFloat(Func<CodexHooks?> hooks, Func<bool> disconnected, UiText ui, ResourceDictionary resources, System.Drawing.Rectangle area, bool compactionOnly = false)
         : base(ui, resources, area, "codex_hooks_guide")
     {
+        this.compactionOnly = compactionOnly;
         this.hooks = hooks; this.disconnected = disconnected;
         Header.Text = "Pacer · Codex";
         title = new TextBlock { FontSize = 14.5, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap, Text = ui.Text("codex.hooks.guide.title") };
@@ -93,8 +94,9 @@ internal sealed class CodexHooksGuideFloat : GuideFloatWindow
 
     /// Where the guide stands for the hooks' state: allowed hooks are done; a
     /// state the guide doesn't describe closes it, and Settings says what to do.
-    internal static string Phase(string? state) => state switch
+    internal static string Phase(string? state, int? optionalPending = null) => state switch
     {
+        "needsApproval" or "running" or "notRunning" when optionalPending.HasValue => optionalPending > 0 ? "steps" : "done",
         "running" or "notRunning" => "done",
         "off" or "needsCodexUpdate" or "installFailed" => "gone",
         _ => "steps"
@@ -105,7 +107,8 @@ internal sealed class CodexHooksGuideFloat : GuideFloatWindow
     {
         if (disconnected() || DateTime.UtcNow - openedAt > Lifetime) { Close(); return; }
         var state = hooks();
-        switch (Phase(state?.State))
+        int? optionalPending = compactionOnly ? state?.OptionalPending ?? 0 : null;
+        switch (Phase(state?.State, optionalPending))
         {
             case "gone": Close(); return;
             case "done":
@@ -115,7 +118,7 @@ internal sealed class CodexHooksGuideFloat : GuideFloatWindow
                 break;
             default:
                 doneSince = null;
-                Display("steps:" + (state?.State == "needsApproval" && state.Pending is int pending ? pending : HookCount));
+                Display("steps:" + (optionalPending ?? (state?.State == "needsApproval" ? state.Pending : null) ?? CoreHookCount));
                 break;
         }
     }

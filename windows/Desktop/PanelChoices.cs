@@ -20,6 +20,11 @@ internal static class PanelChoices
     {
         var values = Read(json) ?? new JsonObject();
         if (!values.ContainsKey("version")) values["version"] = 1;
+        if (field == "showContextLevel" && value is true)
+        {
+            values.Remove(field);
+            return values.ToJsonString();
+        }
         values[field] = value switch
         {
             bool flag => JsonValue.Create(flag),

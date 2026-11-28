@@ -37,6 +37,16 @@ internal static class SlowEngineChecks
                     quota = Array.Empty<object>(), notices = Array.Empty<object>(), modules = json.RootElement.GetProperty("params") });
                 ReplyCounts(id);
             }
+            else if (mode == "compactionHints" && method == "setHooks")
+            {
+                var data = json.RootElement.GetProperty("params");
+                Reply(new { protocolVersion = 1, type = "snapshot", sequence = ++sequence, demo = true,
+                    tasks = Array.Empty<object>(), requests = Array.Empty<object>(), sources = Array.Empty<object>(),
+                    quota = Array.Empty<object>(), notices = Array.Empty<object>(), modules = data.GetProperty("modules"), codexHooks = data.GetProperty("hooks") });
+                ReplyCounts(id);
+            }
+            else if (mode == "compactionHints" && method == "inspectCodexSource")
+                Reply(new { protocolVersion = 1, type = "result", id, ok = true, value = new { candidates = Array.Empty<object>(), executable = "", home = "", effectiveHome = "", historyTitle = "" } });
             else if (method is "projectCompactBar" or "layoutQuotaChart" or "validatePreferences")
             {
                 requests++;

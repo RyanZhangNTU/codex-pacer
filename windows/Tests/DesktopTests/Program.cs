@@ -136,6 +136,12 @@ internal static class Program
             catch (EngineCommandException error) { Check(error.Code == "invalidCommand", "Malformed command keeps its correlation ID"); }
             await client.SendAsync("demoStage", new { demoStage = 3 });
             Check(latest!.Tasks.Any(t => t.Unread && t.Phase == "completed"), "Shared completion projection");
+            await client.SendAsync("demoStage", new { demoStage = 4 });
+            var compacting = latest.Tasks.Single(task => task.CompactingSince.HasValue);
+            var row = latest.Presentation!.Rows.Single(value => value.Id == compacting.Id);
+            Check(compacting.ContextLevel is { UsedTokens: 443000, CapacityTokens: 486400, Fraction: 0.91, MeasuredAt: > 0 }
+                && row.ContextLevel == compacting.ContextLevel && row.CompactingSince == compacting.CompactingSince
+                && compacting.CompactingSince == compacting.ContextLevel.MeasuredAt, "Task and row carry the same context sample and Unix start time");
         });
 
         await Test("provider-pinned conversation links, matched cloud fallback and existing host plans", ConversationApplicationChecks.Run);
@@ -282,6 +288,7 @@ internal static class Program
             client.Snapshot += value => latest = value;
             await client.StartAsync(Environment.ProcessPath!, true, "fragmented");
             Check(latest?.Tasks.Single().StageLabel == "思考中", "Split UTF8 frame");
+            Check(latest?.CodexHooks is { State: "running", Pending: null, OptionalPending: 2, OpensSettings: true }, "Optional approvals are independent of core hook status");
             await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => client.SendAsync("refresh")));
             Check(latest!.Sequence == 9, "Every result is paired with its command");
         });
@@ -423,7 +430,7 @@ internal static class Program
             await Write(new
             {
                 protocolVersion = 1, type = "snapshot", sequence = mode == "outOfOrder" ? 1UL : sequence,
-                demo = true, capturedAt = 1000,
+                demo = true, capturedAt = 1000, codexHooks = new { state = "running", optionalPending = 2, opensSettings = true },
                 tasks = new[] { new { id = child?.Id.ToString() ?? "fixture", provider = "codex", title = "Fixture",
                     source = "local", phase = "running", stage = "thinking", stageLabel = "思考中" } },
                 requests = Array.Empty<object>(), sources = Array.Empty<object>(), quota = Array.Empty<object>(), notices = Array.Empty<object>(),
