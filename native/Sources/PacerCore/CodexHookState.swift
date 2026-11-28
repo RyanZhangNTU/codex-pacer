@@ -9,11 +9,13 @@ struct CodexHookState: Sendable {
         var lastAt: Date
         /// The turn a UserPromptSubmit opened and no Stop or Interrupt has closed.
         var openTurn: String?
+        var context = TaskContextState()
         var approval: (turn: String?, kind: CodexHookEvent.Approval, at: Date)?
         /// Codex closed the thread (SessionEnd), usually because it quit.
         var endedAt: Date?
         static func == (lhs: Thread, rhs: Thread) -> Bool {
             lhs.transcript == rhs.transcript && lhs.lastAt == rhs.lastAt && lhs.openTurn == rhs.openTurn && lhs.endedAt == rhs.endedAt
+                && lhs.context == rhs.context
                 && lhs.approval?.turn == rhs.approval?.turn && lhs.approval?.kind == rhs.approval?.kind && lhs.approval?.at == rhs.approval?.at
         }
     }
@@ -94,6 +96,10 @@ struct CodexHookState: Sendable {
         }
         thread.transcript = transcript(event.transcript, following: thread.transcript ?? children[event.thread]?.transcript)
         switch event.kind {
+        case .preCompact, .postCompact:
+            guard event.agent == nil, let turn = event.turn, thread.openTurn == nil || thread.openTurn == turn else { return false }
+            if event.kind == .preCompact { thread.context.preCompact(turn: turn, at: event.at) }
+            else { thread.context.postCompact(turn: turn, at: event.at) }
         case .userPromptSubmit:
             thread.openTurn = event.turn; thread.approval = nil; thread.endedAt = nil
         case .stop, .interrupt:

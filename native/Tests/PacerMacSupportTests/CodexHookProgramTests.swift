@@ -63,7 +63,9 @@ final class CodexHookProgramTests: XCTestCase {
                               "agent_transcript_path": home.appendingPathComponent("sessions/2026/11/21/rollout-\(child).jsonl").path]),
             ("Stop", ["last_assistant_message": secret, "stop_hook_active": false]),
             ("Interrupt", [:]),
-            ("SessionEnd", ["reason": "other", "turn_id": NSNull()])
+            ("SessionEnd", ["reason": "other", "turn_id": NSNull()]),
+            ("PreCompact", ["trigger": "auto"]),
+            ("PostCompact", ["trigger": "manual"])
         ]
         for (event, extra) in events {
             let result = try run(payload(event, extra))

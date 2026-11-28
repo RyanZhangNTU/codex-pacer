@@ -348,7 +348,7 @@ public actor ClaudeActivityMonitor {
 /// turn, turn and tool boundaries, self-reported progress and attention.
 /// Later streaming text joins the 1 s (expanded) or 5 s (collapsed) batch.
 struct ClaudeUrgency {
-    private static let boundaries: Set<String> = ["prompt", "progress", "waiting", "toolStart", "toolEnd", "agentResult",
+    private static let boundaries: Set<String> = ["preCompact", "postCompact", "compactBoundary", "prompt", "progress", "waiting", "toolStart", "toolEnd", "agentResult",
         "agentNotification", "approval", "input", "attentionCleared", "stop", "stopVerified", "failure", "interrupt",
         "subagentStart", "subagentStop", "unavailable"]
     private static let turnBoundaries: Set<String> = ["prompt", "stop", "stopVerified", "failure", "interrupt"]

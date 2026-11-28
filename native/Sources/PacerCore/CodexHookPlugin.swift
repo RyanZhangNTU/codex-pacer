@@ -59,7 +59,7 @@ public enum CodexHookPlugin {
                 ("plugins/\(plugin)/hooks/hooks.json", try json(hooks(command: command, commandWindows: commandWindows)))]
     }
 
-    /// The seven definitions. Every handler is asynchronous except SessionEnd, which
+    /// The hook definitions. Every handler is asynchronous except SessionEnd, which
     /// Codex always waits for; the program writes no output, so it never decides anything.
     static func hooks(command: String?, commandWindows: String?) -> [String: Any] {
         func handler(_ timeout: Int, async: Bool = true) -> [String: Any] {
@@ -76,6 +76,8 @@ public enum CodexHookPlugin {
         }
         return ["hooks": [
             CodexHookEvent.Kind.userPromptSubmit.rawValue: group(timeout),
+            CodexHookEvent.Kind.preCompact.rawValue: group(timeout),
+            CodexHookEvent.Kind.postCompact.rawValue: group(timeout),
             CodexHookEvent.Kind.stop.rawValue: group(timeout),
             CodexHookEvent.Kind.interrupt.rawValue: group(shortTimeout),
             CodexHookEvent.Kind.permissionRequest.rawValue: group(timeout, matcher: "*"),

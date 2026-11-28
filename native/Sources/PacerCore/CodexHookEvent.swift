@@ -7,6 +7,7 @@ public struct CodexHookEvent: Equatable, Sendable {
     public enum Kind: String, CaseIterable, Sendable {
         case userPromptSubmit = "UserPromptSubmit", stop = "Stop", interrupt = "Interrupt"
         case permissionRequest = "PermissionRequest", subagentStart = "SubagentStart", subagentStop = "SubagentStop"
+        case preCompact = "PreCompact", postCompact = "PostCompact"
         case sessionEnd = "SessionEnd"
     }
     /// What a permission request asks for, from the hook's `tool_name`:

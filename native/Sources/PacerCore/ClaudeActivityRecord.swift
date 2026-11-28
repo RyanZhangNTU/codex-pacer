@@ -7,7 +7,7 @@ struct ClaudeTranscriptFields {
     let timestamp: Date?
     init?(_ bytes: Data) {
         guard let document = try? JSONFieldView.document(bytes, maximumBytes: ClaudeActivityRecord.maximumBytes),
-              let values = try? document.fields(["type", "subtype", "timestamp", "sessionId", "uuid", "parentUuid", "promptId", "cwd", "agentId", "isMeta", "isSynthetic", "message", "toolUseResult", "durationMs", "sessionTitle", "customTitle", "is_error", "stop_reason", "preventedContinuation", "requestId", "serverClassifierRequest", "origin", "promptSource", "turnOrigin", "hookErrors", "hookAdditionalContext", "entrypoint", "mcpMeta", "effort", "perTurnEffort", "attachment", "toolUseID", "isApiErrorMessage"]) else { return nil }
+              let values = try? document.fields(["type", "subtype", "timestamp", "sessionId", "uuid", "parentUuid", "promptId", "cwd", "agentId", "isMeta", "isSynthetic", "message", "toolUseResult", "durationMs", "sessionTitle", "customTitle", "is_error", "stop_reason", "preventedContinuation", "requestId", "serverClassifierRequest", "origin", "promptSource", "turnOrigin", "hookErrors", "hookAdditionalContext", "entrypoint", "mcpMeta", "effort", "perTurnEffort", "attachment", "toolUseID", "isApiErrorMessage", "isSidechain", "compactMetadata"]) else { return nil }
         self.values = values
         timestamp = values["timestamp"]?.string(limit: 80).flatMap(ClaudeActivityRecord.date)
     }
@@ -64,6 +64,16 @@ enum ClaudeActivityRecord {
         if attachment["type"]?.matchesStringLiteral("hook_non_blocking_error") == true { return (stop, false) }
         return nil
     }
+    private static let usageKeys: Set<String> = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"]
+    private static func contextTokens(_ usage: [String: JSONFieldView]) -> Int? {
+        guard usage["input_tokens"] != nil, usage["output_tokens"] != nil else { return nil }
+        var total = 0
+        for field in usage.values {
+            guard let n = field.integer(), n >= 0, n <= Int.max - total else { return nil }
+            total += n
+        }
+        return total
+    }
     /// Both shutdown and an interactive fork save this untimed checkpoint.
     static func costCheckpoint(_ parsed: ClaudeTranscriptFields, sessionID: String, parentID: String?,
                                latestTimestamp: Date?, fileEndedAt: Date? = nil, registered: Bool = false, registrationEndedAt: Double? = nil) -> [Data] {
@@ -106,6 +116,19 @@ enum ClaudeActivityRecord {
         if let model = message["model"]?.string(limit: 256), !model.hasPrefix("<") {
             metadata["model"] = model
             if let effort = fields["perTurnEffort"]?.string(limit: 32) ?? fields["effort"]?.string(limit: 32) { metadata["effort"] = effort }
+        }
+        let usage = message["usage"].flatMap { try? $0.fields(usageKeys) }
+        if parentID == nil, fields["isSidechain"]?.boolean() != true {
+            if kind == "assistant", metadata["model"] != nil, let usage,
+               let used = contextTokens(usage) { metadata["contextUsed"] = used }
+            if kind == "system", fields["subtype"]?.matchesStringLiteral("compact_boundary") == true {
+                var boundary = base
+                boundary["kind"] = "compactBoundary"
+                let counts = try? fields["compactMetadata"]?.fields(["postTokens", "preTokens"])
+                if let used = counts?["postTokens"]?.integer(), used >= 0 { boundary["contextUsed"] = used }
+                if let used = counts?["preTokens"]?.integer(), used >= 0 { boundary["preTokens"] = used }
+                result.append(boundary)
+            }
         }
         // Apps that embed Claude Code through the Agent SDK launch it as `sdk-*`.
         if let entrypoint = fields["entrypoint"]?.string(limit: 64) { metadata["embedded"] = entrypoint.hasPrefix("sdk-") }
@@ -211,8 +234,7 @@ enum ClaudeActivityRecord {
             let id = identifier(fields["uuid"]?.string() ?? message["id"]?.string()) ?? "assistant"
             if let messageID = identifier(message["id"]?.string()),
                let requestID = identifier(fields["requestId"]?.string()) ?? identifier(message["id"]?.string()),
-               let usage = message["usage"].flatMap({ try? $0.fields(["output_tokens"]) }),
-               let output = usage["output_tokens"]?.integer(), output > 0, output <= 1_000_000_000_000 {
+               let output = usage?["output_tokens"]?.integer(), output > 0, output <= 1_000_000_000_000 {
                 var value = base; value["kind"] = "modelBlock"; value["requestId"] = requestID
                 value["messageId"] = messageID; value["outputTokens"] = output; value["toolIds"] = toolStarts.map { $0.0 }
                 // Claude Code knows a response's stop reason only after it ends.
@@ -552,7 +574,33 @@ struct ClaudeActivityState: Sendable {
             }
             return
         }
+        if ["preCompact", "postCompact", "compactBoundary"].contains(kind) {
+            guard value.parentThreadID == nil, record["parentId"] == nil else { return }
+            if kind == "compactBoundary", origin == "transcript" {
+                value.context.boundary = max(date, value.context.boundary ?? .distantPast)
+                if let used = TaskContextLevel.count(record["contextUsed"]) {
+                    value.context.measureClaude(used: used, model: value.modelName, afterCompaction: true,
+                        preTokens: TaskContextLevel.count(record["preTokens"]), at: date)
+                }
+            } else {
+                guard origin == "hook", sessions[key] != nil else { return }
+                let turn = ClaudeActivityRecord.identifier(record["promptId"] as? String)
+                if let turn, let current = value.turnID, turn != current { return }
+                if kind == "preCompact" { value.context.preCompact(turn: turn ?? value.turnID, at: date) }
+                if kind == "postCompact" { value.context.postCompact(turn: turn ?? value.turnID, at: date) }
+            }
+            sessions[key] = value
+            return
+        }
         if kind == "metadata" {
+            if value.parentThreadID == nil, record["parentId"] == nil {
+                if origin == "hook", let model = ModelDisplay.sanitizedModel(record["model"]) {
+                    value.context.setClaudeModel(model, at: date)
+                }
+                if origin == "transcript", let used = TaskContextLevel.count(record["contextUsed"]) {
+                    value.context.measureClaude(used: used, model: record["model"] as? String, at: date)
+                }
+            }
             var event: [String: Any] = ["method": "metadata", "threadId": thread, "at": seconds]
             if let project = record["project"] as? String, !project.isEmpty { event["cwd"] = String(project.prefix(240)) }
             if let title = record["title"] as? String { event["name"] = String(title.prefix(240)) }

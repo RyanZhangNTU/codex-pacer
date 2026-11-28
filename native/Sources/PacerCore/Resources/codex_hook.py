@@ -17,7 +17,7 @@ SPOOL = 1
 MAX_INPUT = 32*1024*1024
 MAX_SPOOL = 2*1024*1024
 MAX_PATH = 4096
-EVENTS = {'UserPromptSubmit','Stop','Interrupt','PermissionRequest','SubagentStart','SubagentStop','SessionEnd'}
+EVENTS = {'UserPromptSubmit','Stop','Interrupt','PermissionRequest','SubagentStart','SubagentStop','SessionEnd','PreCompact','PostCompact'}
 CANONICAL = {name[0].lower()+name[1:]:name for name in EVENTS}
 
 HEX = frozenset('0123456789abcdefABCDEF')

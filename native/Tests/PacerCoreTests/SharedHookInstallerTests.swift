@@ -34,6 +34,17 @@ final class SharedHookInstallerTests: XCTestCase {
     private func object(_ url: URL, _ storage: Storage) throws -> [String: Any] {
         try XCTUnwrap(JSONSerialization.jsonObject(with: storage.read(url)) as? [String: Any])
     }
+    func testClaudeInstallsBothCompactionHooks() throws {
+        let (home, storage, installer) = fixture()
+        _ = try installer.install(home: home)
+        let settings = try object(home.appendingPathComponent("settings.json"), storage)
+        let groups = try XCTUnwrap(settings["hooks"] as? [String: [[String: Any]]])
+        for kind in ["PreCompact", "PostCompact"] {
+            let handlers = try XCTUnwrap(groups[kind]?.first?["hooks"] as? [[String: Any]])
+            XCTAssertEqual(handlers.count, 1)
+            XCTAssertTrue((handlers.first?["command"] as? String)?.contains("/pacer/hook.py") == true)
+        }
+    }
     func testLocalHarnessProgressSetupPreservesOtherConnectorsAndRevokesOnDisable() throws {
         let (home, storage, _) = fixture(), config = home.appendingPathComponent("mcp.json")
         let flag = home.appendingPathComponent("pacer-progress/enabled")

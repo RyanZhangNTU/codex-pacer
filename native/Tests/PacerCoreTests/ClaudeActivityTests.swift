@@ -683,6 +683,18 @@ final class ClaudeActivityTests: XCTestCase {
         XCTAssertEqual(child.terminationStatus, 0)
         return (expected, try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [[String: Any]]), bytes)
     }
+    func testNativeAndSshForwardOnlyMainContextCountsAndPostBoundaryTokens() throws {
+        let assistant: [String: Any] = ["type": "assistant", "timestamp": "2027-01-15T08:00:00Z",
+            "message": ["model": "claude-sonnet-4", "usage": ["input_tokens": 5, "cache_read_input_tokens": 9,
+                "cache_creation_input_tokens": 20, "output_tokens": 40]]]
+        let boundary: [String: Any] = ["type": "system", "subtype": "compact_boundary", "timestamp": "2027-01-15T08:00:01Z",
+            "compactMetadata": ["preTokens": 74, "postTokens": 12, "summary": "synthetic-sentinel"]]
+        let (local, remote, bytes) = try nativeAndSshRows([assistant, assistant.merging(["isSidechain": true]) { _, new in new }, boundary])
+        XCTAssertTrue(NSArray(array: remote).isEqual(to: local))
+        XCTAssertEqual(remote.compactMap { $0["contextUsed"] as? Int }, [74, 12])
+        XCTAssertFalse(String(decoding: bytes, as: UTF8.self).contains("synthetic-sentinel"))
+    }
+
     func testTranscriptModelAndEffortSkipSyntheticRecordsInBothReaders() throws {
         func answer(_ id: String, at second: Int, model: String, effort: [String: Any]) -> [String: Any] {
             ["type": "assistant", "sessionId": session, "promptId": turn, "uuid": id, "timestamp": "2027-01-15T08:00:0\(second)Z",

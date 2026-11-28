@@ -57,7 +57,7 @@ final class CodexHookTests: XCTestCase {
         XCTAssertNil(CodexHookSpool.transcript("/Users/a/.codex/sessions/rollout-x.jsonl", home: windowsHome))
     }
 
-    func testThePluginDefinesSevenFixedHooksAndOnlySessionEndWaits() throws {
+    func testThePluginDefinesTheFixedHooksAndOnlySessionEndWaits() throws {
         let files = try CodexHookPlugin.files(command: "'/home/a/.codex/pacer/bin/codex-hook'", commandWindows: nil)
         XCTAssertEqual(files.map(\.relativePath), [".agents/plugins/marketplace.json", "plugins/pacer-hooks/.codex-plugin/plugin.json",
                                                    "plugins/pacer-hooks/hooks/hooks.json"])
@@ -96,7 +96,7 @@ final class CodexHookTests: XCTestCase {
     }
 
     func testStatusNeedsEveryHookTrustedAndNoticesASilentHook() {
-        let now = Date(), all = Array(repeating: "trusted", count: 7)
+        let now = Date(), all = Array(repeating: "trusted", count: CodexHookEvent.Kind.allCases.count)
         func status(enabled: Bool = true, supports: Bool? = true, installed: Bool? = true, trust: [String]? = all,
                     hook: Date? = nil, turn: Date? = nil) -> CodexHookStatus {
             CodexHookStatus.evaluate(enabled: enabled, supportsHooks: supports, installed: installed, trust: trust,
@@ -106,7 +106,7 @@ final class CodexHookTests: XCTestCase {
         XCTAssertEqual(status(supports: false), .needsCodexUpdate)
         XCTAssertEqual(status(installed: nil), .installFailed)
         XCTAssertEqual(status(installed: false), .notInstalled)
-        XCTAssertEqual(status(trust: ["trusted", "untrusted", "modified", "trusted", "trusted", "trusted", "trusted"]), .needsApproval(count: 2))
+        XCTAssertEqual(status(trust: ["untrusted", "modified"] + all.dropFirst(2)), .needsApproval(count: 2))
         XCTAssertEqual(status(trust: ["trusted"]), .installFailed, "Missing definitions mean the plugin did not load as written")
         XCTAssertEqual(status(trust: nil), .notInstalled, "Installed hooks whose trust Codex did not report are not running yet")
         XCTAssertTrue(CodexHookSetupResult(supportsHooks: true, installed: true, trust: nil).awaitsTrust)
@@ -270,6 +270,52 @@ final class CodexHookReaderTests: XCTestCase {
     }
     private func phase(_ activities: [SessionActivity], _ thread: String) -> ActivityPhase? {
         activities.first { $0.threadID == thread }?.phase
+    }
+
+    func testRolloutAndHooksShareCompactionEvidenceAcrossReads() async throws {
+        let home = temporaryHome("pacer-context-"), start = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
+        let file = try rollout(home, thread, start: start)
+        let reader = LocalActivityReader()
+        func at(_ seconds: Int) -> Date { start.addingTimeInterval(Double(seconds)) }
+        func hook(_ event: String, _ seconds: Int) throws {
+            try CodexHookFixture.announce([file], home: home, event: event, turn: "t1", at: at(seconds))
+        }
+        func read(_ seconds: Int) async throws -> SessionActivity {
+            let snapshot = await reader.read(home: home, now: at(seconds))
+            return try XCTUnwrap(snapshot.activities.first)
+        }
+        func usage(_ used: Int, _ seconds: Int) throws {
+            try append(file, record("event_msg", ["type": "token_count", "info": [
+                "last_token_usage": ["total_tokens": used], "model_context_window": 112_000,
+                "total_token_usage": ["total_tokens": 1_000_000]]], at: at(seconds)))
+        }
+        try hook("UserPromptSubmit", 0)
+        try usage(76_000, 1)
+        try hook("PreCompact", 2)
+        let compacting = try await read(3)
+        XCTAssertEqual(compacting.contextLevel?.fraction, 0.64)
+        XCTAssertEqual(compacting.compactingSince(at: at(3)), at(2))
+        try append(file, record("compacted", [:], at: at(5)))
+        let compacted = try await read(5)
+        XCTAssertNil(compacted.contextLevel)
+        XCTAssertNil(compacted.compactingSince(at: at(5)))
+        try usage(13_000, 6)
+        try hook("PostCompact", 7)
+        let after = try await read(7)
+        XCTAssertEqual(after.contextLevel?.usedTokens, 13_000)
+        try append(file, record("event_msg", ["type": "item_completed", "thread_id": thread, "turn_id": "t1",
+                                               "item": ["type": "ContextCompaction"]], at: at(10)))
+        let marker = try await read(10)
+        XCTAssertNil(marker.contextLevel)
+        XCTAssertEqual(marker.phase, .running)
+        try usage(26_000, 11)
+        try hook("PreCompact", 12)
+        try hook("PostCompact", 13)
+        try CodexHookFixture.announce([file], home: home, turn: "next", at: at(14))
+        try append(file, record("event_msg", ["type": "task_started", "turn_id": "next"], at: at(14)))
+        let newerTurn = try await read(15)
+        XCTAssertNil(newerTurn.contextLevel, "A new prompt cannot revive usage invalidated by the previous turn's PostCompact")
+        XCTAssertNil(newerTurn.compactingSince(at: at(15)))
     }
 
     /// A Codex that crashed sends no Stop or SessionEnd. A turn the reader already

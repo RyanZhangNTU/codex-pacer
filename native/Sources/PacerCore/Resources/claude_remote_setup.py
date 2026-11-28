@@ -14,7 +14,7 @@ import sys
 import uuid
 
 LIMIT = 2 * 1024 * 1024
-EVENTS = ('SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse',
+EVENTS = ('SessionStart', 'UserPromptSubmit', 'PreCompact', 'PostCompact', 'PreToolUse', 'PostToolUse',
           'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied', 'Stop',
           'StopFailure', 'SessionEnd', 'Notification', 'SubagentStart',
           'SubagentStop', 'Elicitation', 'ElicitationResult')

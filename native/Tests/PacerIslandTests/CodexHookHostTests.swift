@@ -234,7 +234,7 @@ final class CodexHookHostTests: XCTestCase {
                     calls.append((home.lastPathComponent, enabled))
                     if enabled { installed.insert(home.path) } else { installed.remove(home.path) }
                 }
-                return .init(supportsHooks: true, installed: enabled, trust: enabled ? Array(repeating: "trusted", count: 7) : nil)
+                return .init(supportsHooks: true, installed: enabled, trust: enabled ? Array(repeating: "trusted", count: CodexHookEvent.Kind.allCases.count) : nil)
             }
             var log: [String] { lock.withLock { calls.map { ($0.1 ? "+" : "-") + $0.0 } } }
             var homes: Set<String> { lock.withLock { installed } }
@@ -284,7 +284,7 @@ final class CodexHookHostTests: XCTestCase {
                     failedOnce = true
                     return .init(supportsHooks: nil, installed: nil, trust: nil)
                 }
-                return .init(supportsHooks: true, installed: enabled, trust: enabled ? Array(repeating: "trusted", count: 7) : nil)
+                return .init(supportsHooks: true, installed: enabled, trust: enabled ? Array(repeating: "trusted", count: CodexHookEvent.Kind.allCases.count) : nil)
             }
         }
         let first = try temporaryHome("codex-uninstall"), second = try temporaryHome("codex-destination")
@@ -308,7 +308,7 @@ final class CodexHookHostTests: XCTestCase {
         let home = try temporaryHome("codex-status")
         let model = try model(home: home)
         model.codexHookSetupOverride = { _, _, enabled in
-            .init(supportsHooks: true, installed: enabled, trust: Array(repeating: "trusted", count: 7))
+            .init(supportsHooks: true, installed: enabled, trust: Array(repeating: "trusted", count: CodexHookEvent.Kind.allCases.count))
         }
         model.syncCodexHooks()
         try await TestWait.until { model.codexHookStatus == .running }
@@ -356,7 +356,7 @@ final class CodexHookHostTests: XCTestCase {
         let reads = Reads()
         model.codexHookSetupOverride = { _, _, enabled in .init(supportsHooks: true, installed: enabled, trust: nil) }
         // Setup could not read the trust; the watch's first check asks again at once.
-        model.codexHookTrustOverride = { _, _ in _ = reads.next(); return Array(repeating: "trusted", count: 7) }
+        model.codexHookTrustOverride = { _, _ in _ = reads.next(); return Array(repeating: "trusted", count: CodexHookEvent.Kind.allCases.count) }
         model.syncCodexHooks()
         try await TestWait.until { model.codexHookStatus == .notInstalled }
         XCTAssertFalse(model.codexHooksNeedUser, "Unknown trust shows as setting up, not as a problem")
@@ -374,7 +374,7 @@ final class CodexHookHostTests: XCTestCase {
             func apply(_ enabled: Bool) -> CodexHookSetupResult {
                 lock.withLock {
                     passes += 1
-                    return updated ? .init(supportsHooks: true, installed: enabled, trust: Array(repeating: "trusted", count: 7))
+                    return updated ? .init(supportsHooks: true, installed: enabled, trust: Array(repeating: "trusted", count: CodexHookEvent.Kind.allCases.count))
                                    : .init(supportsHooks: false, installed: false, trust: nil)
                 }
             }

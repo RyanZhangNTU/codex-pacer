@@ -3,7 +3,7 @@ import PacerMacSupport
 @testable import PacerCore
 
 final class ClaudeHookInstallerTests: XCTestCase {
-    private let eventNames = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
+    private let eventNames = ["SessionStart", "UserPromptSubmit", "PreCompact", "PostCompact", "PreToolUse", "PostToolUse", "PostToolUseFailure",
                               "PermissionRequest", "PermissionDenied", "Stop", "StopFailure", "SessionEnd", "Notification", "SubagentStart",
                               "SubagentStop", "Elicitation", "ElicitationResult"]
 
@@ -432,6 +432,8 @@ final class ClaudeHookInstallerTests: XCTestCase {
         _ = try ClaudeHookInstaller.install(home: fixture.home)
         let inputs: [[String: Any]] = [
             ["hook_event_name": "UserPromptSubmit", "prompt_id": "prompt-1", "prompt": "PRIVATE prompt"],
+            ["hook_event_name": "PreCompact", "trigger": "manual", "custom_instructions": "PRIVATE fixture"],
+            ["hook_event_name": "PostCompact", "trigger": "manual", "compact_summary": "PRIVATE fixture"],
             ["hook_event_name": "PreToolUse", "tool_use_id": "tool-1", "tool_name": "AskUserQuestion", "tool_input": ["question": "PRIVATE question"]],
             ["hook_event_name": "PermissionRequest", "tool_name": "AskUserQuestion", "tool_input": ["question": "PRIVATE question"]],
             ["hook_event_name": "PostToolUse", "tool_use_id": "tool-1", "tool_response": "PRIVATE output"],
@@ -455,7 +457,7 @@ final class ClaudeHookInstallerTests: XCTestCase {
         let events = rows.filter { $0["kind"] as? String != "metadata" }
         // The question's permission asks for a reply; the notification after its
         // answer has no waiting tool left to flag.
-        XCTAssertEqual(events.compactMap { $0["kind"] as? String }, ["prompt", "toolStart", "input", "toolEnd", "subagentStart", "stopRequested", "stopRequested"])
+        XCTAssertEqual(events.compactMap { $0["kind"] as? String }, ["prompt", "preCompact", "postCompact", "toolStart", "input", "toolEnd", "subagentStart", "stopRequested", "stopRequested"])
         XCTAssertEqual(events.first { $0["kind"] as? String == "toolStart" }?["attention"] as? String, "input")
         let child = try XCTUnwrap(events.first { $0["kind"] as? String == "subagentStart" })
         XCTAssertEqual(child["sessionId"] as? String, "agent-1")
