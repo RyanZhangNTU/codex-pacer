@@ -210,6 +210,7 @@ public struct ExpandedPanelOptions: Codable, Equatable, Sendable {
     public static let spendTaskChoices = [2, 4]
 
     public var pageSize = 3
+    public var showContextLevel = true
     public var rowStyle: RowStyle = .twoLine
     public var rowFields: Set<RowField> = Set(RowField.allCases)
     public var codexPeriods: Periods = .both
@@ -260,7 +261,7 @@ public struct ExpandedPanelOptions: Codable, Equatable, Sendable {
     public func showsBudgetDial(hasBudget: Bool) -> Bool { hasBudget && deepseekDial == .budget }
 
     private enum CodingKeys: String, CodingKey {
-        case version, pageSize, rowStyle, rowFields, codexPeriods, claudePeriods, antigravityPeriods, quotaArrange, quotaDetails, paceTick,
+        case version, pageSize, showContextLevel, rowStyle, rowFields, codexPeriods, claudePeriods, antigravityPeriods, quotaArrange, quotaDetails, paceTick,
              codexResets, deepseekDial, deepseekPeak, spendTasks, spendElsewhere, weekLine, headerActions
     }
 
@@ -276,6 +277,7 @@ public struct ExpandedPanelOptions: Codable, Equatable, Sendable {
         let defaults = Self()
         let size = field(.pageSize, defaults.pageSize)
         pageSize = Self.pageSizes.contains(size) ? size : defaults.pageSize
+        showContextLevel = field(.showContextLevel, defaults.showContextLevel)
         rowStyle = field(.rowStyle, defaults.rowStyle)
         rowFields = set(.rowFields, defaults.rowFields)
         codexPeriods = field(.codexPeriods, defaults.codexPeriods)
@@ -298,6 +300,7 @@ public struct ExpandedPanelOptions: Codable, Equatable, Sendable {
         var values = encoder.container(keyedBy: CodingKeys.self)
         try values.encode(Self.version, forKey: .version)
         try values.encode(pageSize, forKey: .pageSize)
+        if !showContextLevel { try values.encode(false, forKey: .showContextLevel) }
         try values.encode(rowStyle, forKey: .rowStyle)
         try values.encode(RowField.allCases.filter(rowFields.contains), forKey: .rowFields)
         try values.encode(codexPeriods, forKey: .codexPeriods)

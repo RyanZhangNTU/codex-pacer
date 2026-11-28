@@ -94,10 +94,11 @@ internal static class Program
                 }
                 if (Has("progress") && groups.Length == 1)
                 {
-                    await ProgressRingMotionChecks.Run();
+                    await ProgressRingMotionChecks.Run(); await ContextLevelChecks.Run(output);
                     Check(Errors.Count == 0, "The progress ring must not report WPF runtime errors");
                     Console.WriteLine("All progress ring presentation checks passed."); result = 0; return;
                 }
+                if (Has("progress") || Has("all")) await Attempt(nameof(ContextLevelChecks), () => ContextLevelChecks.Run(output));
                 await projections.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en", referenceFixture: true);
                 ShellProjection.Client = projections;
                 if (All("recovery") || Has("persistence")) await Attempt(nameof(StorageRecoveryChecks), () => StorageRecoveryChecks.Run());
@@ -250,7 +251,7 @@ internal static class Program
             string[] dialNames = Descendants<QuotaDial>(window).Select(dial => UIElementAutomationPeer.CreatePeerForElement(dial).GetName()).ToArray();
             Check(dialNames.Any(name => name.Contains("43%")) && dialNames.Any(name => name.Contains("81%") && name.Contains("64%")) && dialNames.Any(name => name.Contains("¥86")),
                 "Vector dials must expose their actual quota and wallet values to accessibility clients");
-            for (int stage = 0; stage <= 3; stage++)
+            for (int stage = 0; stage <= 4; stage++)
             {
                 await PresentationWait.CommandSnapshotAsync(engine, "demoStage", new { demoStage = stage }, waitForSnapshot: stage != 0);
                 await window.WaitForPresentationAsync();
@@ -259,12 +260,17 @@ internal static class Program
                 string[] expected = latest!.Presentation!.Rows.Take(latest.Presentation.PageSize).Select(row => row.Id).ToArray();
                 string[] actual = Descendants<TaskRow>(window).Select(row => ((TaskRowState)row.DataContext).Value.Id).ToArray();
                 Check(actual.SequenceEqual(expected), $"Stage {stage} rows must match the shared engine projection: {string.Join(",", actual)}");
+                if (stage == 4)
+                    Check(latest.Presentation.Rows.Any(row => row.CompactingSince != null && row.ContextLevel != null)
+                        && latest.Presentation.Rows.Any(row => row.Phase == "completed" && row.ContextLevel != null), "The compacting demo includes both measured faces");
                 Check(Errors.Count == 0, "Every task stage must bind without runtime errors");
             }
+            await PresentationWait.CommandSnapshotAsync(engine, "demoStage", new { demoStage = 3 });
+            await window.WaitForPresentationAsync();
             Check(latest?.CapturedAt == 1_800_000_000 && window.LogicalTarget.Width == 404 && window.LogicalTarget.Height == PresentationWait.ReferenceHeight(window) && window.VisibleSizeMatches(404, PresentationWait.ReferenceHeight(window)),
                 "The original synthetic clock and settled 404×438 geometry");
             await IslandSurfaceChecks.Run(window);
-            Console.WriteLine("PASS " + scenario + ": shared row order, four states, bindings and reveal accessibility");
+            Console.WriteLine("PASS " + scenario + ": shared row order, five stages, bindings and reveal accessibility");
 
             var reversalFrames = new List<MotionFrame>();
             void Frame(MotionFrame value) => reversalFrames.Add(value);

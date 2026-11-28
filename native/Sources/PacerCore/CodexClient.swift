@@ -265,20 +265,65 @@ public actor CodexClient {
                                  cachedManifestMatches: cachedManifestMatches, checkOnly: checkOnly, pathsMatch: pathsMatch)
     }
 
-    /// The trust states (`trusted`, `untrusted`, `modified`, ...) of the hooks a
-    /// plugin brings, in Codex's display order, or an empty list when it brings none.
-    public func pluginHookTrust(pluginID: String) async throws -> [String] {
+    /// Inspect this exact executable's protocol offline. hooks/list in a user's
+    /// home only reports installed events, so seven rows cannot establish capability.
+    func supportsCompactionHooks() async -> Bool? {
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-hook-schema-" + UUID().uuidString)
+        let schema = scratch.appendingPathComponent("schema")
+        do {
+            try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: false)
+            defer { try? FileManager.default.removeItem(at: scratch) }
+            var environment = executables.launchEnvironment(for: executable, inherited: inheritedEnvironment,
+                userHome: FileManager.default.homeDirectoryForCurrentUser)
+            environment["CODEX_HOME"] = scratch.path
+            try Task.checkCancellation()
+            let child = try processes.launch(.init(executable: executable,
+                arguments: ["app-server", "generate-json-schema", "--out", schema.path], environment: environment),
+                output: { _ in }, ended: {})
+            ownedChildren.add(child)
+            defer { child.close() }
+            let exited = await withTaskCancellationHandler {
+                await child.exited.wait(until: DispatchTime.now() + requestTimeout)
+            } onCancel: { child.close() }
+            guard exited, child.terminationStatus == 0, !Task.isCancelled else {
+                child.terminateImmediately()
+                _ = await child.waitForExit()
+                return nil
+            }
+            let response = schema.appendingPathComponent("v2/HooksListResponse.json")
+            guard files.metadata(response) != nil else { return false }
+            return try Self.compactionSupport(in: files.read(response, offset: 0, maximumBytes: 256 * 1024))
+        } catch { return nil }
+    }
+
+    static func compactionSupport(in schema: Data) throws -> Bool {
+        let definitions = try JSONFieldView.document(schema).fields(["definitions"])["definitions"]
+        let event = try definitions?.fields(["HookEventName"])["HookEventName"]
+        guard let names = try event?.fields(["enum"])["enum"], names.isArray else { throw CodexClientError.invalidResponse }
+        let values = try names.elements(maximumCount: 256).compactMap { $0.string() }
+        return values.contains("preCompact") && values.contains("postCompact")
+    }
+
+    /// Pacer's hook events and their effective trust states in Codex's display order.
+    public func pluginHookTrust(pluginID: String) async throws -> [CodexHookTrust] {
         try await prepareReadConnection()
         let bytes = try await request("hooks/list", params: ["cwds": [home.path]])
+        return try Self.decodeHookTrust(bytes, pluginID: pluginID)
+    }
+
+    static func decodeHookTrust(_ bytes: Data, pluginID: String) throws -> [CodexHookTrust] {
         let fields = try JSONFieldView.document(bytes).fields(["data"])
         guard let data = fields["data"], data.isArray else { throw CodexClientError.invalidResponse }
-        var states: [String] = []
+        var states: [CodexHookTrust] = []
         for scope in try data.elements(maximumCount: 8) {
             guard let hooks = try scope.fields(["hooks"])["hooks"], hooks.isArray else { continue }
             for hook in try hooks.elements(maximumCount: 512) {
-                let row = try hook.fields(["pluginId", "trustStatus", "enabled"])
-                guard row["pluginId"]?.string() == pluginID else { continue }
-                states.append(row["enabled"]?.boolean() == false ? "disabled" : row["trustStatus"]?.string() ?? "unknown")
+                let row = try hook.fields(["pluginId", "eventName", "trustStatus", "enabled"])
+                // HookMetadata.eventName is lower camel case; hook inputs use the same name with an initial capital.
+                guard row["pluginId"]?.string() == pluginID, let name = row["eventName"]?.string(),
+                      let event = CodexHookEvent.Kind(rawValue: name.prefix(1).uppercased() + name.dropFirst()) else { continue }
+                let state = row["enabled"]?.boolean() == false ? "disabled" : row["trustStatus"]?.string() ?? "unknown"
+                states.append(.init(event: event, state: state))
             }
             // Plugin hooks are user-level, so every cwd lists the same ones.
             break

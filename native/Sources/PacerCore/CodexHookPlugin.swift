@@ -1,14 +1,27 @@
 import Foundation
 
-/// Pacer's Codex hooks ship as one local plugin, so Codex lists them together,
-/// the user trusts them once and they leave cleanly.
-///
-/// Codex keys a plugin hook's trust by plugin ID, event and position and hashes
-/// its definition; a new plugin version marks every hook "modified". The name,
-/// version and definitions below therefore never change between Pacer releases.
-/// The hook program lives outside the plugin, behind a fixed launcher that each
-/// Pacer release may rewrite. Adding an event or capability is the one reason to
-/// change a definition, and asking the user to review it again is intended.
+public enum CodexHookSet: Sendable {
+    case legacy, full
+
+    public var events: [CodexHookEvent.Kind] {
+        self == .legacy ? CodexHookEvent.Kind.coreEvents : CodexHookEvent.Kind.allCases
+    }
+
+    init(installed bytes: Data) throws {
+        guard let document = try JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+              let hooks = document["hooks"] as? [String: Any] else { throw CodexClientError.invalidResponse }
+        let names = Set(hooks.keys)
+        switch names {
+        case Set(Self.legacy.events.map(\.rawValue)): self = .legacy
+        case Set(Self.full.events.map(\.rawValue)): self = .full
+        default: throw CodexClientError.invalidResponse
+        }
+    }
+}
+
+/// Codex trusts the complete hooks.json by content hash. Keep the 4.8.0 bytes for
+/// an existing seven-event installation until the user chooses to update it.
+/// Both sets use the same plugin identity and fixed platform launcher.
 public enum CodexHookPlugin {
     public static let market = "codex-pacer-hooks"
     public static let plugin = "pacer-hooks"
@@ -24,8 +37,10 @@ public enum CodexHookPlugin {
     public static let timeout = 10
 
     public struct Layout: Equatable, Sendable {
+        public let cachedHooks: URL
         public let root: URL, owner: URL, marketplace: URL, pluginRoot: URL, manifest: URL, hooks: URL
         public init(home: URL) {
+            cachedHooks = home.appendingPathComponent("plugins/cache/\(CodexHookPlugin.market)/\(CodexHookPlugin.plugin)/\(CodexHookPlugin.version)/hooks/hooks.json")
             root = home.appendingPathComponent("pacer/codex-hooks/marketplace", isDirectory: true)
             owner = root.appendingPathComponent(".pacer-owner")
             marketplace = root.appendingPathComponent(".agents/plugins/marketplace.json")
@@ -43,7 +58,7 @@ public enum CodexHookPlugin {
 
     /// The three plugin files. `command` and `commandWindows` are the platform's
     /// fixed launcher invocations (`CodexHookLauncher`); a host writes only its own.
-    public static func files(command: String?, commandWindows: String?) throws -> [(relativePath: String, data: Data)] {
+    public static func files(set: CodexHookSet, command: String?, commandWindows: String?) throws -> [(relativePath: String, data: Data)] {
         guard command != nil || commandWindows != nil else { throw CocoaError(.featureUnsupported) }
         let marketplace: [String: Any] = [
             "name": market, "interface": ["displayName": displayName],
@@ -56,12 +71,12 @@ public enum CodexHookPlugin {
         ]
         return [(".agents/plugins/marketplace.json", try json(marketplace)),
                 ("plugins/\(plugin)/.codex-plugin/plugin.json", try json(manifest)),
-                ("plugins/\(plugin)/hooks/hooks.json", try json(hooks(command: command, commandWindows: commandWindows)))]
+                ("plugins/\(plugin)/hooks/hooks.json", try json(hooks(set: set, command: command, commandWindows: commandWindows)))]
     }
 
-    /// The seven definitions. Every handler is asynchronous except SessionEnd, which
+    /// The hook definitions. Every handler is asynchronous except SessionEnd, which
     /// Codex always waits for; the program writes no output, so it never decides anything.
-    static func hooks(command: String?, commandWindows: String?) -> [String: Any] {
+    static func hooks(set: CodexHookSet, command: String?, commandWindows: String?) -> [String: Any] {
         func handler(_ timeout: Int, async: Bool = true) -> [String: Any] {
             var value: [String: Any] = ["type": "command", "timeout": timeout]
             if async { value["async"] = true }
@@ -74,7 +89,7 @@ public enum CodexHookPlugin {
             if let matcher { value["matcher"] = matcher }
             return [value]
         }
-        return ["hooks": [
+        var events = [
             CodexHookEvent.Kind.userPromptSubmit.rawValue: group(timeout),
             CodexHookEvent.Kind.stop.rawValue: group(timeout),
             CodexHookEvent.Kind.interrupt.rawValue: group(shortTimeout),
@@ -82,7 +97,12 @@ public enum CodexHookPlugin {
             CodexHookEvent.Kind.subagentStart.rawValue: group(timeout),
             CodexHookEvent.Kind.subagentStop.rawValue: group(timeout),
             CodexHookEvent.Kind.sessionEnd.rawValue: group(shortTimeout, async: false)
-        ]]
+        ]
+        if set == .full {
+            events[CodexHookEvent.Kind.preCompact.rawValue] = group(timeout)
+            events[CodexHookEvent.Kind.postCompact.rawValue] = group(timeout)
+        }
+        return ["hooks": events]
     }
 
     private static func json(_ value: [String: Any]) throws -> Data {
@@ -134,15 +154,16 @@ public enum CodexHookStatus: Equatable, Sendable {
     ///   - lastCodexTurn: the newest rollout change no open hook turn explains
     ///     (`LocalActivityReader.hookEvidence`).
     ///   - trustedAt: when Pacer saw the user allow the hooks; turns before it ran without them.
-    public static func evaluate(enabled: Bool, supportsHooks: Bool?, installed: Bool?, trust: [String]?,
+    public static func evaluate(enabled: Bool, supportsHooks: Bool?, installed: Bool?, hookSet: CodexHookSet, trust: [CodexHookTrust]?,
                                 lastHookEvent: Date?, lastCodexTurn: Date?, trustedAt: Date? = nil, now: Date,
                                 silence: TimeInterval = 300) -> CodexHookStatus {
         guard enabled else { return .off }
         if supportsHooks == false { return .needsCodexUpdate }
         guard let installed else { return .installFailed }
         guard installed, let trust else { return .notInstalled }
-        guard trust.count == CodexHookEvent.Kind.allCases.count else { return .installFailed }
-        let pending = trust.filter { $0 != "trusted" }.count
+        let required = hookSet.events
+        guard trust.count == required.count, Set(trust.map(\.event)) == Set(required) else { return .installFailed }
+        let pending = trust.filter { $0.state != "trusted" }.count
         if pending > 0 { return .needsApproval(count: pending) }
         if let turn = lastCodexTurn, now.timeIntervalSince(turn) < silence, turn > trustedAt ?? .distantPast,
            turn.timeIntervalSince(lastHookEvent ?? .distantPast) > silence {

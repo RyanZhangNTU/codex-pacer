@@ -64,6 +64,10 @@ struct DeepSeekActivityState: Sendable {
         }.compactMap(\.threadID))
     }
 
+    mutating func measureContext(_ levels: [String: TaskContextLevel]) {
+        for (session, level) in levels { sessions[AgentProvider.deepseek.activityID(sessionID: session)]?.context.measure(level) }
+    }
+
     mutating func setAvailable(_ available: Bool, watching: Bool) {
         status.connected = available; status.sourceAvailable = available; status.watchingLogs = watching
         if !available { for session in openSessions() { release(session) } }

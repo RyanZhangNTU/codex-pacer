@@ -19,8 +19,8 @@ internal sealed class CodexHooksGuideFloat : GuideFloatWindow
 {
     /// The plugin's name on Codex's Hooks page (Core's `CodexHookPlugin.displayName`).
     internal const string PluginName = "Codex Pacer";
-    /// Pacer registers this many hooks (Core's `CodexHookEvent.Kind`).
-    internal const int HookCount = 7;
+    /// The picture's total before the engine reports the installed plugin's count (Core's `CodexHookEvent.Kind`).
+    internal const int HookCount = 9;
     private static readonly TimeSpan DoneShown = TimeSpan.FromSeconds(8), Lifetime = TimeSpan.FromMinutes(10);
 
     private static CodexHooksGuideFloat? current;
@@ -48,8 +48,6 @@ internal sealed class CodexHooksGuideFloat : GuideFloatWindow
         shown.Follow();
     }
 
-    /// <param name="hooks">The hooks' state in the engine's latest snapshot.</param>
-    /// <param name="disconnected">Whether the engine connection closed.</param>
     internal CodexHooksGuideFloat(Func<CodexHooks?> hooks, Func<bool> disconnected, UiText ui, ResourceDictionary resources, System.Drawing.Rectangle area)
         : base(ui, resources, area, "codex_hooks_guide")
     {
@@ -115,7 +113,9 @@ internal sealed class CodexHooksGuideFloat : GuideFloatWindow
                 break;
             default:
                 doneSince = null;
-                Display("steps:" + (state?.State == "needsApproval" && state.Pending is int pending ? pending : HookCount));
+                // The installed plugin holds seven hooks, or nine with compaction, as the Mac's picture counts them.
+                int total = state?.HookCount ?? HookCount;
+                Display("steps:" + (state?.State == "needsApproval" && state.Pending is int pending ? pending : total) + ":" + total);
                 break;
         }
     }
@@ -128,7 +128,11 @@ internal sealed class CodexHooksGuideFloat : GuideFloatWindow
             key = state;
             title.Visibility = steps.Visibility = art.Visibility = alternative.Visibility = finished ? Visibility.Collapsed : Visibility.Visible;
             done.Visibility = finished ? Visibility.Visible : Visibility.Collapsed;
-            if (!finished) art.Child = Picture(int.Parse(state["steps:".Length..], System.Globalization.CultureInfo.InvariantCulture));
+            if (!finished)
+            {
+                var counts = state["steps:".Length..].Split(':');
+                art.Child = Picture(int.Parse(counts[0], System.Globalization.CultureInfo.InvariantCulture), int.Parse(counts[1], System.Globalization.CultureInfo.InvariantCulture));
+            }
             if (finished && Presented && done.Children[1] is TextBlock line)
                 UIElementAutomationPeer.FromElement(line)?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
         }
@@ -148,7 +152,7 @@ internal sealed class CodexHooksGuideFloat : GuideFloatWindow
     /// A drawing of Codex's Hooks settings: Hooks in its sidebar, Pacer's plugin
     /// under From Plugins with the hooks waiting for review, and Trust all inside
     /// a ring. Numbers mark the steps. The steps already say what to do.
-    private DecorativeBorder Picture(int pending)
+    private DecorativeBorder Picture(int pending, int total)
     {
         static Border Placeholder(double width)
         {
@@ -196,7 +200,7 @@ internal sealed class CodexHooksGuideFloat : GuideFloatWindow
         plugin.Children.Add(icon);
         var name = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) };
         name.Children.Add(Text(PluginName, 11.5, strong: true));
-        name.Children.Add(Text(ui.Text("codex.hooks.guide.picture.count").Replace("%ld", HookCount.ToString(System.Globalization.CultureInfo.CurrentCulture), StringComparison.Ordinal), 10, brush: "SettingsSecondary"));
+        name.Children.Add(Text(ui.Text("codex.hooks.guide.picture.count").Replace("%ld", total.ToString(System.Globalization.CultureInfo.CurrentCulture), StringComparison.Ordinal), 10, brush: "SettingsSecondary"));
         plugin.Children.Add(name);
         var row = new Border { CornerRadius = new CornerRadius(7), BorderThickness = new Thickness(1), Padding = new Thickness(8, 0, 8, 0), Margin = new Thickness(0, 8, 0, 8), Child = plugin };
         row.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); row.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");

@@ -154,7 +154,7 @@ internal sealed partial class SettingsWindow
         AutomationProperties.SetName(overviewSubtitle, overviewSubtitle.Text);
         var attention = AttentionItems();
         string? update = updater?.CurrentOffer?.Version;
-        string key = JsonSerializer.Serialize(new { snapshot?.Presentation, snapshot?.QuotaDashboard, snapshot?.Wallet, snapshot?.Modules, snapshot?.ActivityLinks,
+        string key = JsonSerializer.Serialize(new { snapshot?.Presentation, snapshot?.CodexHooks, snapshot?.QuotaDashboard, snapshot?.Wallet, snapshot?.Modules, snapshot?.ActivityLinks,
             credits = snapshot?.AccountCredits, creditsState = harnessAccounts?.All.Select(account => account.Provider + account.State + account.Busy),
             attention = attention.Select(value => value.Title + value.Detail + value.Action), update, dismissedUpdate, downloading = inlineDownload != null, session.Current.ExpandedQuotaStyle, session.Current.AccentColor, closed,
             checkFailed = CheckFailureBannerShown(update) });
@@ -163,9 +163,16 @@ internal sealed partial class SettingsWindow
         editors.RemoveAll(editor => editor.IsDescendantOf(overviewBody));
         foreach (UIElement child in overviewBody.Children) PageAccessibility.Retire(child);
         overviewBody.Children.Clear();
+        codexCompactionHint = null;
         if (update != null && (update != (dismissedUpdate ?? updater?.DismissedBanner) || inlineDownload != null)) overviewBody.Children.Add(UpdateBanner(update));
         else if (CheckFailureBannerShown(update)) overviewBody.Children.Add(CheckFailureBanner());
         if (attention.Count > 0) overviewBody.Children.Add(AttentionCard(attention));
+        if (!closed && CodexCompactionHint.Shows(snapshot?.CodexHooks))
+        {
+            // A card of its own, as the Mac's Overview shows it.
+            var hint = CompactionHint(); hint.Margin = new Thickness(14, 11, 14, 11); hint.Update(snapshot?.CodexHooks);
+            overviewBody.Children.Add(Card(hint));
+        }
         var enabled = closed ? [] : EnabledProviders();
         var harnesses = closed ? [] : (snapshot?.Modules ?? []).Where(module => module.Enabled && HarnessPane(module.Provider)).Select(module => module.Provider);
         var services = enabled.Concat(harnesses).ToArray();
@@ -419,7 +426,7 @@ internal sealed partial class SettingsWindow
         foreach (var value in rows.Take(8))
         {
             if (index++ > 0) content.Children.Add(new Border { Height = 1, Margin = new Thickness(9, 4, 9, 4), Background = PacerPalette.Overlay(15) });
-            var row = new TaskRow(value) { Language = Language, Height = 54 };
+            var row = new TaskRow(value, ui: ui) { Language = Language, Height = 54 };
             var state = (TaskRowState)row.DataContext;
             if (surfaceWindow?.CanOpenFromWindow(value) == true)
             {

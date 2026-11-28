@@ -158,6 +158,7 @@ public struct TaskPresentationOptions: Equatable, Sendable {
     public var showsDeepSeekTurnCost: Bool
     /// Modules whose rows leave out the credits each turn used.
     public var hiddenTurnCredits: Set<AgentProvider> = []
+    public var showContextLevel = true
     /// Providers whose rows draw the self-reported progress ring.
     public var progressRingProviders: Set<AgentProvider>
     /// Rows on one page of the expanded panel's task list.
@@ -199,6 +200,12 @@ public struct ActivityTaskRowPresentation: Sendable {
         guard let cost else { return nil }
         if case .estimatedYuan? = activity.turnCharge { return L10n.text("deepseek.turn_cost_accessibility", cost) }
         return cost
+    }
+    public let contextLevel: TaskContextLevel?
+    public let compactingSince: Date?
+    public var isCompacting: Bool { compactingSince != nil }
+    public var contextAccessibilityValue: String? {
+        isCompacting ? L10n.text("activity.compacting_context") : contextLevel?.accessibilityValue
     }
     public let progressRing: TaskProgressRing?
     /// Set on a Codex for Claude run's row: its ledger entry.
@@ -363,6 +370,7 @@ public struct ActivityTaskRowPresentation: Sendable {
     public init(activity: SessionActivity, group: ActivityTaskGroup? = nil, attention: PendingAttentionRequest.Kind? = nil,
                 unread: Bool, options: TaskPresentationOptions = .init(), at now: Date) {
         self.activity = activity; self.attention = attention; self.unread = unread
+        let parent = group?.primary ?? activity
         delegation = activity.codexDelegation
         let delegated = group?.delegations ?? []
         delegatedCount = delegated.filter(Self.isRunningDelegation).count
@@ -395,6 +403,9 @@ public struct ActivityTaskRowPresentation: Sendable {
                 stopped: hidden.filter { $0.state == .stopped || $0.state == .unknown }.count)
         } else { subagentLines = []; foldedSubagents = nil }
         phase = group?.isRunning == true ? .running : group?.isWaiting == true ? .waitingForInput : activity.observedPhase(at: now)
+        let needsUser = attention != nil || phase == .waitingForInput
+        contextLevel = options.showContextLevel && !needsUser ? parent.contextLevel : nil
+        compactingSince = needsUser ? nil : parent.compactingSince(at: now)
         title = Self.title(activity, hideProjects: options.hideProjects)
         var text = phase == .completed ? activity.endingLabel : activity.detail(at: now)
         if let link = activity.codexDelegation { text = Self.delegationStatus(link, title: title, phase: phase, detail: text) }
@@ -413,7 +424,7 @@ public struct ActivityTaskRowPresentation: Sendable {
                 }
             }
         }
-        status = text
+        status = compactingSince != nil ? L10n.text("activity.compacting_context") : text
         symbol = TaskSymbol.symbol(for: activity, attention: attention, groupIsRunning: group?.isRunning == true)
         dimmed = Self.isDimmed(phase: phase, unread: unread, attention: attention != nil, failed: activity.turnFailed)
         subagents = (group?.runningSubagentCount ?? 0) + (phase == .running ? activity.claudeCloud?.additionalWorkers ?? 0 : 0)

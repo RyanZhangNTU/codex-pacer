@@ -53,6 +53,18 @@ struct DeepSeekLogRecord: Equatable, Sendable {
 }
 
 enum DeepSeekSessionLog {
+    static func contextLevel(_ bytes: Data, at date: Date) -> TaskContextLevel? {
+        do {
+            var node = try JSONFieldView.document(bytes, maximumBytes: 1 << 20)
+            for key in ["record", "rows", "contextPressure", "val"] {
+                guard let child = try node.fields([key])[key] else { return nil }
+                node = child
+            }
+            let counts = try node.fields(["pressureTokens", "contextWindow"])
+            return TaskContextLevel(used: counts["pressureTokens"]?.integer(), capacity: counts["contextWindow"]?.integer(), at: date)
+        } catch { return nil }
+    }
+
     static let maximumLineBytes = 4 << 20
     /// Large bodies that carry no lifecycle evidence are skipped before parsing.
     private static let wanted: Set<String> = ["session", "session/title", "model/selection", "request/context", "request/header", "turn/start", "step/start",

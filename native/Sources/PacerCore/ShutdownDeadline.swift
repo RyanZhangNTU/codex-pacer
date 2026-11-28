@@ -48,14 +48,17 @@ public final class ShutdownSignal: @unchecked Sendable {
         for continuation in continuations { continuation.resume(returning: true) }
     }
     public func wait(until deadline: ShutdownDeadline) async -> Bool {
+        await wait(until: deadline.time)
+    }
+    func wait(until time: DispatchTime) async -> Bool {
         await withCheckedContinuation { continuation in
             lock.lock()
             if finished { lock.unlock(); continuation.resume(returning: true); return }
-            if deadline.hasExpired { lock.unlock(); continuation.resume(returning: false); return }
+            if DispatchTime.now() >= time { lock.unlock(); continuation.resume(returning: false); return }
             let id = UUID()
             waiting[id] = continuation
             lock.unlock()
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: deadline.time) { [self] in
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: time) { [self] in
                 lock.lock(); let waiting = self.waiting.removeValue(forKey: id); lock.unlock()
                 waiting?.resume(returning: false)
             }

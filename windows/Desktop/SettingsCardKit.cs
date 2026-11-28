@@ -205,7 +205,7 @@ internal sealed partial class SettingsWindow
         parts.Action.IsEnabled = !closed && !busy && !session.RequiresRestart && !demo;
     }
 
-    /// A Status row's one button: Open Codex, Retry or Rescan for its module.
+    /// Runs the module's Settings action once the engine is ready.
     private async Task RunStatusAction(string key, string kind)
     {
         if (sourceClosed || engine == null || busy) return;
@@ -219,6 +219,7 @@ internal sealed partial class SettingsWindow
                 case ("codex", "openCodex") when key == "codex.account": OpenCodexApplication(); break;
                 case ("codex", "openCodex"): OpenCodexHooksGuide(); break;
                 case ("codex", "retry"): await engine.SendAsync("retryCodexHooks"); break;
+                case ("codex", "update"): await engine.SendAsync("updateCodexHooks"); break;
                 case ("codex", "rescan"): sourceInspection = InspectSavedSourceAsync(); await engine.SendAsync("retryCodexHooks"); break;
                 case ("claude", "retry"): await engine.SendAsync("retryClaudeSetup"); break;
                 case (_, "rescan"): await engine.SendAsync("refreshLocalHarness", new { provider }); break;

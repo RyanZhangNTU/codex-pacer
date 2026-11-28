@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import PacerCore
 @testable import PacerIsland
@@ -63,6 +64,39 @@ final class DemoSettingsTests: XCTestCase {
         model.setDemoStage(.thinking)
         XCTAssertTrue(model.activities.filter { $0.provider == .codex }.allSatisfy { $0.phase == .running },
             "The same synthetic turn can replay a running stage after completion")
+        await model.shutdown()
+    }
+
+    func testContextLevelSettingReachesDemoRowsAndPersistsAfterReload() async throws {
+        let defaults = try defaults()
+        let model = IslandModel(demo: true, demoClock: { self.now }, demoArguments: ["--demo"], defaults: defaults)
+        model.setDemoStage(.compacting)
+        func compacting() throws -> ActivityTaskRowPresentation { try XCTUnwrap(model.taskPresentation.rows.first { $0.isCompacting }) }
+        XCTAssertTrue(model.panelOptions.showContextLevel)
+        let full = try XCTUnwrap(try compacting().contextLevel?.fraction)
+        let ended = try XCTUnwrap(model.taskPresentation.rows.first { $0.phase == .completed })
+        XCTAssertNotNil(ended.contextLevel)
+        var options = model.panelOptions
+        options.showContextLevel = false; options.save(to: defaults); model.reloadPanelSettings()
+        XCTAssertFalse(ExpandedPanelOptions.load(from: defaults).showContextLevel)
+        XCTAssertTrue(model.taskPresentation.rows.allSatisfy { $0.contextLevel == nil })
+        let row = try compacting()
+        XCTAssertEqual(row.status, L10n.text("activity.compacting_context"))
+        XCTAssertEqual(row.contextAccessibilityValue, row.status)
+        let view = TaskStatusIconNSView()
+        let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 28, height: 28), styleMask: .borderless, backing: .buffered, defer: true)
+        window.contentView = view
+        view.update(.init(id: row.activity.id, ring: row.progressRing, face: TaskRowView.face(row), contextFraction: row.contextLevel?.fraction,
+                          compactingSince: row.compactingSince, color: NSColor.orange.cgColor, animates: false))
+        XCTAssertTrue(view.showsOrb)
+        XCTAssertFalse(view.showsContextLevel)
+        options.showContextLevel = true; options.save(to: defaults); model.reloadPanelSettings()
+        model.setDemoStage(.responding)
+        let after = try XCTUnwrap(model.taskPresentation.rows.first { $0.activity.id == row.activity.id })
+        XCTAssertFalse(after.isCompacting)
+        XCTAssertLessThan(try XCTUnwrap(after.contextLevel?.fraction), full)
+        let label = TaskRowView(presentation: after, group: nil, now: now, enabled: true, accent: .orange, action: {}).accessibilityText
+        XCTAssertTrue(label.contains(try XCTUnwrap(after.contextAccessibilityValue)))
         await model.shutdown()
     }
 

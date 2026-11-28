@@ -2,13 +2,14 @@ import Foundation
 
 /// Synthetic event/usage fixtures. Never connects to Codex or reads user data.
 public enum DemoTaskStage: Int, CaseIterable {
-    case thinking, tool, responding, completed
+    case thinking, tool, responding, completed, compacting
     public var label: String {
         switch self {
         case .thinking: return L10n.text("demo.thinking")
         case .tool: return L10n.text("demo.tool")
         case .responding: return L10n.text("activity.responding")
         case .completed: return L10n.text("activity.turn_finished")
+        case .compacting: return L10n.text("activity.compacting_context")
         }
     }
 }
@@ -54,7 +55,7 @@ public enum DemoScenario {
 
     public static func tasks(stage: DemoTaskStage, at now: Date) -> [SessionActivity] {
         [task(id: "00000000-0000-4000-8000-000000000001", name: L10n.text("demo.optimize"), stage: stage, at: now),
-         task(id: "00000000-0000-4000-8000-000000000002", name: L10n.text("demo.verify_remote"), stage: .tool, at: now,
+         task(id: "00000000-0000-4000-8000-000000000002", name: L10n.text("demo.verify_remote"), stage: stage == .compacting ? .completed : .tool, at: now,
               sourceID: "remote-ssh-discovered:demo", sourceName: "SSH")]
     }
 
@@ -75,6 +76,7 @@ public enum DemoScenario {
         // Its self-reported estimate is drawn only while the progress ring is on:
         // none yet while thinking (the dashed ring), then 62%, then 100%.
         var activity = state.activities[0]
+        activity.context.measure(TaskContextLevel(used: 637_000, capacity: 1_000_000, at: now))
         if stage != .thinking {
             activity.reportProgress(stage == .completed ? 100 : 62, at: now.addingTimeInterval(-12), turnID: "demo-prompt")
         }
@@ -95,7 +97,7 @@ public enum DemoScenario {
         switch stage {
         case .thinking: coordinator = .running; threads[1] = thread(second, other, .idle)
         case .tool: coordinator = .running; threads[0] = thread(first, title, .needsInput, decisions: 1)
-        case .responding: break
+        case .responding, .compacting: break
         case .completed: threads[0] = thread(first, title, .resolved, ended: true)
         }
         func sessions(_ worker: ClaudeCloudSession.Worker) -> [String: ClaudeCloudSession] {
@@ -140,7 +142,9 @@ public enum DemoScenario {
                 record(0, .turnEnd(turn: 1, outcome: .completed), seq: 10)]
         }
         for value in records { state.consume(value, session: session, attaching: false, now: now) }
-        return state.activities[0]
+        var task = state.activities[0]
+        task.context.measure(TaskContextLevel(used: 118_100, capacity: 1_048_576, at: now))
+        return task
     }
 
     package static func antigravityTasks(at now: Date, requestsProgressApproval: Bool = true) -> HarnessActivity {
@@ -150,6 +154,7 @@ public enum DemoScenario {
             var value = SessionActivity.observedSession(provider: .antigravity, session: session, stage: .starting, at: start)
             value.applyObservedTurn(state, id: "demo-turn", started: start, at: now, live: true, model: "Gemini", effort: "high")
             value.applyObservedTitle(L10n.text(title), project: nil)
+            value.context.measure(TaskContextLevel(used: 61_000 * index, capacity: 512_000, at: now))
             return value
         }
         let parent = task(1, title: "demo.optimize", state: .working(.tool))
@@ -205,6 +210,7 @@ public enum DemoScenario {
            let update = SessionPerformanceUpdate(id: task.id, turnID: turnID, response: response, firstTokenLatency: nil, firstTokenReportedAt: nil) {
             update.apply(to: &task)
         }
+        task.context.measure(TaskContextLevel(used: 97_000, capacity: 256_000, at: now))
         task.setTurnCredits(stage == .completed ? 1.69 : 0.57, turnID: turnID)
         task.reportProgress(stage == .completed ? 100 : 45, at: now.addingTimeInterval(-10), turnID: turnID)
         return task
@@ -297,6 +303,19 @@ public enum DemoScenario {
             if stage == .completed { events += [event("turn/completed", 0, ["status": "completed"])] }
         }
         stream.consume(["kind": "runtimeBatch", "events": events])
-        return stream.activities[0]
+        var activity = stream.activities[0]
+        let localUsage: Int = switch stage {
+        case .thinking: 185_000
+        case .tool: 265_000
+        case .responding: 104_000
+        case .completed: 116_000
+        case .compacting: 443_000
+        }
+        activity.context.measure(TaskContextLevel(used: sourceID == nil ? localUsage : 320_000, capacity: 486_400, at: eventTime, codex: true))
+        if stage == .compacting {
+            activity.reportProgress(62, at: eventTime.addingTimeInterval(-10), turnID: "demo-turn")
+            activity.context.preCompact(turn: "demo-turn", at: eventTime)
+        }
+        return activity
     }
 }

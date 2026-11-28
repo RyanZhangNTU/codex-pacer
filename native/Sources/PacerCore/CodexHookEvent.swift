@@ -7,7 +7,11 @@ public struct CodexHookEvent: Equatable, Sendable {
     public enum Kind: String, CaseIterable, Sendable {
         case userPromptSubmit = "UserPromptSubmit", stop = "Stop", interrupt = "Interrupt"
         case permissionRequest = "PermissionRequest", subagentStart = "SubagentStart", subagentStop = "SubagentStop"
+        case preCompact = "PreCompact", postCompact = "PostCompact"
         case sessionEnd = "SessionEnd"
+
+        public var isCompaction: Bool { self == .preCompact || self == .postCompact }
+        public static let coreEvents = allCases.filter { !$0.isCompaction }
     }
     /// What a permission request asks for, from the hook's `tool_name`:
     /// `Bash` is a command, `mcp__server__tool` an MCP tool, anything else a file change.

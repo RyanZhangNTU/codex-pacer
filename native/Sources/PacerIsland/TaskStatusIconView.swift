@@ -6,11 +6,13 @@ import SwiftUI
 /// A task row's status icon: the provider's self-reported progress ring, and
 /// inside it the task's state. A working task shows a soft orb and a glyph
 /// whose parts light in turn; a task that needs the user or has ended fills a
-/// solid disc.
+/// disc. A measured conversation fills the orb or ended disc from the bottom.
 struct TaskStatusIconView: NSViewRepresentable {
     let id: String
     let ring: TaskProgressRing?
     let face: TaskStatusIconNSView.Face?
+    var contextFraction: Double? = nil
+    var compactingSince: Date? = nil
     let color: Color
     /// Off with reduced motion: final values and no loops.
     let animates: Bool
@@ -18,7 +20,8 @@ struct TaskStatusIconView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> TaskStatusIconNSView { TaskStatusIconNSView() }
     func updateNSView(_ view: TaskStatusIconNSView, context: Context) {
-        view.update(.init(id: id, ring: ring, face: face, color: NSColor(color).cgColor, animates: animates,
+        view.update(.init(id: id, ring: ring, face: face, contextFraction: contextFraction, compactingSince: compactingSince,
+                          color: NSColor(color).cgColor, animates: animates,
                           completionPulseOnly: completionPulseOnly))
     }
 }
@@ -45,11 +48,16 @@ final class TaskStatusIconNSView: NSView {
         case solid(TaskSymbol, read: Bool)
         /// Nothing known: the glyph alone.
         case plain(TaskSymbol)
-        var symbol: TaskSymbol {
-            switch self { case .working(let symbol), .solid(let symbol, _), .plain(let symbol): symbol }
-        }
+        case compacting
         var isSolid: Bool { if case .solid = self { true } else { false } }
-        var isWorking: Bool { if case .working = self { true } else { false } }
+        var isWorking: Bool { if case .working = self { true } else { self == .compacting } }
+        var supportsLevel: Bool {
+            switch self {
+            case .working, .compacting: true
+            case .solid(let symbol, _): [.completed, .interrupted, .failed].contains(symbol)
+            case .plain: false
+            }
+        }
         /// The face of a request waiting for the user.
         var asksUser: Bool { if case .solid(let symbol, false) = self { [.approval, .input].contains(symbol) } else { false } }
     }
@@ -62,23 +70,37 @@ final class TaskStatusIconNSView: NSView {
         var fraction = 0.0
         var stale = false
         var face: Face?
+        var contextFraction: Double?
+        var compactingSince: Date?
+        var drawingFace: Face? {
+            if contextFraction != nil, compactingSince != nil, face?.supportsLevel == true { return .compacting }
+            return face
+        }
         let color: CGColor
         let animates: Bool
         let completionPulseOnly: Bool
         init(id: String, state: TaskProgressRing.State?, mode: TaskProgressRing.Mode = .working, fraction: Double = 0,
-             stale: Bool = false, face: Face? = nil, color: CGColor, animates: Bool, completionPulseOnly: Bool = false) {
+             stale: Bool = false, face: Face? = nil, contextFraction: Double? = nil, compactingSince: Date? = nil,
+             color: CGColor, animates: Bool, completionPulseOnly: Bool = false) {
             self.id = id; self.state = state; self.mode = mode; self.fraction = fraction; self.stale = stale
+            self.contextFraction = contextFraction; self.compactingSince = compactingSince
             self.face = face; self.color = color; self.animates = animates
             self.completionPulseOnly = completionPulseOnly
         }
-        init(id: String, ring: TaskProgressRing?, face: Face? = nil, color: CGColor, animates: Bool, completionPulseOnly: Bool = false) {
+        init(id: String, ring: TaskProgressRing?, face: Face? = nil, contextFraction: Double? = nil, compactingSince: Date? = nil,
+             color: CGColor, animates: Bool, completionPulseOnly: Bool = false) {
             self.init(id: id, state: ring?.state, mode: ring?.mode ?? .working, fraction: ring?.fraction ?? 0,
-                stale: ring?.stale ?? false, face: face, color: color, animates: animates, completionPulseOnly: completionPulseOnly)
+                stale: ring?.stale ?? false, face: face, contextFraction: contextFraction, compactingSince: compactingSince,
+                color: color, animates: animates, completionPulseOnly: completionPulseOnly)
         }
         /// The same drawing, perhaps with motion switched.
         func sameDrawing(as other: Input) -> Bool {
+            sameStatus(as: other) && other.contextFraction == contextFraction
+        }
+        func sameStatus(as other: Input) -> Bool {
             other.id == id && other.state == state && other.mode == mode && other.fraction == fraction
-                && other.stale == stale && other.face == face && other.color == color && other.completionPulseOnly == completionPulseOnly
+                && other.stale == stale && other.drawingFace == drawingFace && other.compactingSince == compactingSince
+                && other.color == color && other.completionPulseOnly == completionPulseOnly
         }
     }
     /// Whether a window shows its content now; tests replace it.
@@ -126,6 +148,7 @@ final class TaskStatusIconNSView: NSView {
         var start: CFTimeInterval = 0, duration: CFTimeInterval = 0
         var ease = Ease.cubicOut
         var stale = false, full = false, done = false
+        var compactingSince: Date?
         /// The ring was breathing: a request waiting for its background work.
         var breathing = false
         var color: CGColor
@@ -146,7 +169,14 @@ final class TaskStatusIconNSView: NSView {
     private static var memories: [String: Memory] = [:]
     static func memory(for id: String) -> Memory? { memories[id] }
     /// What each task's face last showed, so a state's arrival plays once.
-    private struct FaceMemory { var face: Face; var seen: CFTimeInterval }
+    private struct FaceMemory {
+        weak var owner: TaskStatusIconNSView?
+        var face: Face
+        var seen: CFTimeInterval
+        var level: LevelSweep?
+        /// The end signal can invalidate the old sample before the new one arrives.
+        var releasedHeight: Double?
+    }
     private static var faces: [String: FaceMemory] = [:]
 
     /// The whole icon: it pulses, bounces and shakes.
@@ -164,6 +194,8 @@ final class TaskStatusIconNSView: NSView {
     private let step = CALayer(), stepBands = [CAShapeLayer(), CAShapeLayer(), CAShapeLayer()]
     private let orb = CAGradientLayer()
     private let disc = CALayer(), discFill = CAGradientLayer(), discSheen = CAGradientLayer(), discMask = CAShapeLayer()
+    private let discPaint = CALayer()
+    private var water: ContextWater?
     private let ripples = [CAShapeLayer(), CAShapeLayer()]
     private let glyphHost = CALayer()
     private var glyph = CALayer()
@@ -226,7 +258,8 @@ final class TaskStatusIconNSView: NSView {
         orb.type = .radial; orb.opacity = 0; orb.masksToBounds = true
         discFill.type = .axial; discSheen.type = .axial
         disc.masksToBounds = true; disc.isHidden = true
-        [discFill, discSheen].forEach(disc.addSublayer)
+        disc.addSublayer(discPaint)
+        [discFill, discSheen].forEach(discPaint.addSublayer)
         discMask.fillRule = .evenOdd; disc.mask = discMask
         for ripple in ripples { ripple.fillColor = nil; ripple.lineWidth = 1.6; ripple.opacity = 0 }
         glyphHost.addSublayer(glyph)
@@ -287,6 +320,7 @@ final class TaskStatusIconNSView: NSView {
             orb.endPoint = CGPoint(x: 1.25, y: drawsDownward ? 1.03 : -0.03)
             disc.frame = frame.insetBy(dx: (side - Self.discSide) / 2, dy: (side - Self.discSide) / 2)
             disc.cornerRadius = Self.discSide / 2
+            discPaint.frame = disc.bounds
             for gradient in [discFill, discSheen] {
                 gradient.frame = disc.bounds
                 gradient.startPoint = CGPoint(x: 0.5, y: drawsDownward ? 0 : 1); gradient.endPoint = CGPoint(x: 0.5, y: drawsDownward ? 1 : 0)
@@ -301,8 +335,9 @@ final class TaskStatusIconNSView: NSView {
                 pending.removeAnimation(forKey: "spin"); spinningPeriod = nil
                 flowLight.refresh(nil, live: false); flowFraction = nil
                 applyCometStops(tail: cometTail)
+                water?.place(downward: drawsDownward)
                 glyphKey = nil
-                if let input, input.face != nil { rebuildGlyph(for: input, animate: false) }
+                if let input, input.drawingFace != nil { rebuildGlyph(for: input, animate: false) }
             }
         }
         updateLoops()
@@ -326,9 +361,10 @@ final class TaskStatusIconNSView: NSView {
             drawnLight = PacerPalette.light
             CATransaction.begin(); CATransaction.setDisableActions(true)
             track.strokeColor = Self.trackInk; cometTrack.strokeColor = Self.trackInk
-            if let input, let face = input.face {
+            if let input, let face = input.drawingFace {
                 setDiscColors(for: face, color: input.color, animate: false)
                 rebuildGlyph(for: input, animate: false)
+                water?.setColors(input.color, face: face)
             }
             CATransaction.commit()
         }
@@ -349,7 +385,11 @@ final class TaskStatusIconNSView: NSView {
         input = next
         if let previous, previous.sameDrawing(as: next) { refreshMotion(); return }
         motion = next.animates && windowVisible
-        show(next)
+        if let previous, previous.sameStatus(as: next), previous.animates == next.animates, let face = next.drawingFace {
+            // A new measurement must not cancel an arrival or restart the outer ring.
+            Self.withoutActions { applyLevel(next, face: face) }
+            updateLoops()
+        } else { show(next) }
     }
 
     /// Motion follows the panel: with reduced motion, or while it is hidden or
@@ -374,7 +414,7 @@ final class TaskStatusIconNSView: NSView {
         spinningPeriod = nil; flowFraction = nil; breathingTarget = nil; fading = false; rhythmsRunning = false; pulseAt = nil
         container.opacity = 1; container.isHidden = input?.state == nil
         pending.opacity = pendingShown ? Self.pendingOpacity : 0
-        track.opacity = input?.state == .reported ? 1 : 0
+        track.opacity = input?.state != nil && !pendingShown ? 1 : 0
         arcGroup.opacity = dim ? Self.staleOpacity : 1
         ghost.opacity = 0
         setFraction(targetFraction)
@@ -387,6 +427,10 @@ final class TaskStatusIconNSView: NSView {
         if window != nil, let taskID, var memory = Self.memories[taskID], memory.owner === self {
             memory.from = memory.to; memory.start = CACurrentMediaTime(); memory.duration = 0
             Self.memories[taskID] = memory
+        }
+        if window != nil, let taskID, var face = Self.faces[taskID], face.owner === self, var level = face.level {
+            level.from = level.to; level.duration = 0
+            face.level = level; Self.faces[taskID] = face
         }
     }
 
@@ -433,6 +477,28 @@ final class TaskStatusIconNSView: NSView {
             }
             return
         }
+        if input.drawingFace == .compacting, let since = input.compactingSince {
+            var held = previous ?? Memory(state: state, color: color, seen: now)
+            // The first estimate can arrive in the same update as the press.
+            // Capture that ring once, including across row rebuilds.
+            if held.compactingSince != since {
+                held.compactingSince = since
+                held.state = state; held.to = state == .reported ? input.fraction : 0
+                held.stale = input.stale; held.full = held.to >= 0.9995; held.done = input.mode == .done
+            }
+            mode = input.mode; dim = held.stale; pendingShown = held.state == .pending
+            targetFraction = held.to
+            for layer in [container, pending, arcGroup, ghost, track, comet, cometGlow] as [CALayer] { layer.removeAllAnimations() }
+            if spinningPeriod != nil { pending.transform = rotation(currentSpinAngle(now)); spinningPeriod = nil }
+            container.isHidden = false; container.opacity = 1; fading = false
+            track.opacity = pendingShown ? 0 : 1; pending.opacity = pendingShown ? Self.pendingOpacity : 0
+            arcGroup.opacity = dim ? Self.staleOpacity : 1; ghost.opacity = 0
+            setInk(color, from: nil, animate: false); setFraction(targetFraction)
+            held.owner = self; held.from = held.to; held.duration = 0; held.breathing = false
+            held.color = color; held.seen = now
+            Self.memories[id] = held
+            return
+        }
         let previousMode = mode
         mode = input.mode
         fading = false
@@ -441,7 +507,7 @@ final class TaskStatusIconNSView: NSView {
         setInk(color, from: previous?.color, animate: animate)
         // A long step slows the comet and shortens its tail from where it is.
         // A ring first seen under a solid face is hidden, so it simply appears.
-        let tail = cometTail, launches = animate && previous == nil && state == .pending && !(input.face?.isSolid ?? false)
+        let tail = cometTail, launches = animate && previous == nil && state == .pending && !(input.drawingFace?.isSolid ?? false)
         if animate, previous?.state == .pending, previousMode != mode, [previousMode, mode].allSatisfy({ [.working, .longStep].contains($0) }) {
             animateCometStops(to: tail, duration: 0.4, timing: CAMediaTimingFunction(name: .easeInEaseOut), key: "tail")
         } else if !launches {
@@ -497,6 +563,7 @@ final class TaskStatusIconNSView: NSView {
             if animate, justCompleted { schedulePulse(at: now + max(0, remaining)) }
             kept.owner = self; kept.seen = now; kept.color = color; kept.stale = dimmed; kept.breathing = mode == .waiting
             kept.done = memory.done
+            kept.compactingSince = nil
             Self.memories[id] = kept
             return
         }
@@ -555,10 +622,10 @@ final class TaskStatusIconNSView: NSView {
     /// Draws the middle of the icon and plays a new state's arrival once.
     /// Returns when a disc that fills now will be full.
     private func applyFace(_ input: Input) -> CFTimeInterval? {
-        let now = CACurrentMediaTime(), next = input.face
+        let now = CACurrentMediaTime(), next = input.drawingFace
         let previous = Self.faces[input.id]?.face
-        Self.faces[input.id] = next.map { FaceMemory(face: $0, seen: now) }
         guard let next else {
+            Self.faces[input.id] = nil; removeWater()
             orb.opacity = 0; disc.isHidden = true; glyph.isHidden = true; ringHost.opacity = 1
             return nil
         }
@@ -567,7 +634,7 @@ final class TaskStatusIconNSView: NSView {
         let arriving = motion && previous != nil && previous != next
         // A request that ends with an estimate closes its arc before the disc fills.
         var fillDelay = 0.0
-        if next.isSolid, next.symbol == .completed, let memory = Self.memories[input.id], memory.state == .reported {
+        if case .solid(.completed, _) = next, let memory = Self.memories[input.id], memory.state == .reported {
             fillDelay = max(0, memory.start + memory.duration - now)
         }
         var fillEnd: CFTimeInterval?
@@ -621,12 +688,16 @@ final class TaskStatusIconNSView: NSView {
             ripple(color: input.color)
         }
         if arriving, next == .solid(.failed, read: false) { shake() }
+        applyLevel(input, face: next, fillEnd: fillEnd)
         return fillEnd
     }
 
     private func setDiscColors(for face: Face, color: CGColor, animate: Bool) {
         let colors: [CGColor]
-        if case .solid(_, true) = face { colors = [Self.readDisc, Self.readDisc] }
+        if case .solid(_, true) = face {
+            let gray = face.supportsLevel && input?.contextFraction != nil ? PacerPalette.overlayInk(0.21).cgColor : Self.readDisc
+            colors = [gray, gray]
+        }
         else { colors = [Self.lighten(color, by: 0.28), color] }
         if animate, let shown = (discFill.presentation() ?? discFill).colors {
             let transition = CABasicAnimation(keyPath: "colors")
@@ -640,15 +711,17 @@ final class TaskStatusIconNSView: NSView {
     /// Replaces the glyph when the state or its ink changes: the old one
     /// shrinks and fades as the new one grows in, and a check is drawn.
     private func rebuildGlyph(for input: Input, animate: Bool, exitDelay: Double = 0, drawDelay: Double = 0) {
-        guard let face = input.face else { return }
+        guard let face = input.drawingFace else { return }
         let ink: CGColor
         switch face {
-        case .working, .plain: ink = input.color
+        case .working, .plain, .compacting: ink = input.color
         case .solid(_, let read): ink = read ? Self.readInk : Self.darkInk
         }
         let key = GlyphKey(face: face, ink: ink, downward: drawsDownward)
         guard key != glyphKey else { return }
+        let crossfade = face == .compacting || glyphKey?.face == .compacting
         let wasDrawn = glyphKey != nil
+        for part in glyphParts { part.layer.removeAnimation(forKey: "press") }
         glyphKey = key
         let old = glyph
         let (next, parts) = makeGlyph(face, ink: ink)
@@ -661,7 +734,7 @@ final class TaskStatusIconNSView: NSView {
         let now = CACurrentMediaTime(), out = CAAnimationGroup()
         let fadeOut = CABasicAnimation(keyPath: "opacity"); fadeOut.fromValue = 1; fadeOut.toValue = 0
         let shrink = CABasicAnimation(keyPath: "transform.scale"); shrink.fromValue = 1; shrink.toValue = 0.6
-        out.animations = [fadeOut, shrink]; out.duration = exitDelay > 0 ? 0.2 : 0.32
+        out.animations = crossfade ? [fadeOut] : [fadeOut, shrink]; out.duration = crossfade ? 0.3 : (exitDelay > 0 ? 0.2 : 0.32)
         out.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
         out.beginTime = old.convertTime(now + exitDelay, from: nil); out.fillMode = .backwards
         old.opacity = 0
@@ -681,7 +754,7 @@ final class TaskStatusIconNSView: NSView {
             let arrive = CAAnimationGroup()
             let fadeIn = CABasicAnimation(keyPath: "opacity"); fadeIn.fromValue = 0; fadeIn.toValue = 1
             let grow = CABasicAnimation(keyPath: "transform.scale"); grow.fromValue = 0.6; grow.toValue = 1
-            arrive.animations = [fadeIn, grow]; arrive.duration = 0.32
+            arrive.animations = crossfade ? [fadeIn] : [fadeIn, grow]; arrive.duration = crossfade ? 0.3 : 0.32
             arrive.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
             arrive.beginTime = next.convertTime(now + drawDelay, from: nil); arrive.fillMode = .backwards
             next.add(arrive, forKey: "swap")
@@ -707,6 +780,11 @@ final class TaskStatusIconNSView: NSView {
         }
         var parts: [(layer: CALayer, rhythm: TaskGlyphArt.Rhythm?)] = []
         switch face {
+        case .compacting:
+            host.name = "compress"
+            for path in Self.compressPaths {
+                parts.append((shape(path, filled: false, width: 2), nil))
+            }
         case .working(let symbol):
             for part in TaskGlyphArt.parts(for: symbol) {
                 parts.append((shape(part.path, filled: part.filled, width: part.filled ? 0.6 : 2.1), part.rhythm))
@@ -781,7 +859,7 @@ final class TaskStatusIconNSView: NSView {
 
     /// The final drawing of the face, with nothing in motion.
     private func settleFace() {
-        guard let face = input?.face else { orb.opacity = 0; disc.isHidden = true; glyph.isHidden = true; ringHost.opacity = 1; return }
+        guard let face = input?.drawingFace else { orb.opacity = 0; disc.isHidden = true; glyph.isHidden = true; ringHost.opacity = 1; return }
         orb.opacity = face.isWorking ? 1 : 0
         disc.isHidden = !face.isSolid
         discMask.path = annulus(hole: face.isSolid ? 0 : Self.discSide / 2)
@@ -789,6 +867,189 @@ final class TaskStatusIconNSView: NSView {
         for ripple in ripples { ripple.opacity = 0 }
         for part in glyphParts { part.layer.opacity = 1; (part.layer as? CAShapeLayer)?.strokeEnd = 1 }
         glyph.opacity = 1
+    }
+
+    // MARK: Conversation context
+
+    /// Height as a share of the diameter. The circular segment below a chord at
+    /// distance x from the centre has area r²(acos(x/r) − (x/r)√(1 − (x/r)²)).
+    private static func levelHeight(_ fraction: Double) -> Double {
+        if fraction <= 0 { return 0 }
+        if fraction >= 1 { return 1 }
+        var low = -1.0, high = 1.0
+        for _ in 0..<24 {
+            let x = (low + high) / 2
+            if acos(x) - x * sqrt(1 - x * x) > .pi * fraction { low = x } else { high = x }
+        }
+        return (1 - (low + high) / 2) / 2
+    }
+
+    /// A rebuilt icon resumes the same transition on the media clock. The
+    /// Bézier used on the layers has linear x and y = 3t² − 2t³.
+    private struct LevelSweep {
+        var from: Double, to: Double
+        var start: CFTimeInterval, duration: Double
+        func displayed(at now: CFTimeInterval) -> Double {
+            guard duration > 0 else { return to }
+            let t = min(1, max(0, (now - start) / duration))
+            return from + (to - from) * t * t * (3 - 2 * t)
+        }
+    }
+
+    /// A bottom-to-top gradient with coincident stops at the waterline. The
+    /// orb/disc's rounded clip cuts that horizontal edge to the exact chord.
+    /// On an ended disc the complementary mask exposes its original artwork below.
+    @MainActor private final class ContextWater {
+        let gradient = CAGradientLayer(), mask = CAGradientLayer()
+        let isDisc: Bool
+        let side: CGFloat
+        var pressStart: Date?
+        init(disc: Bool, downward: Bool) {
+            isDisc = disc
+            gradient.name = "contextLevel"
+            side = disc ? TaskStatusIconNSView.discSide : TaskStatusIconNSView.orbSide
+            mask.colors = [NSColor.white.cgColor, NSColor.white.cgColor, NSColor.clear.cgColor, NSColor.clear.cgColor]
+            place(downward: downward)
+        }
+
+        func place(downward: Bool) {
+            // Extra air above the orb keeps it covered as the press scales the
+            // gradient about the bottom. The disc never presses.
+            for layer in isDisc ? [gradient, mask] : [gradient] {
+                layer.bounds = CGRect(x: 0, y: 0, width: side, height: side * (isDisc ? 1 : 2))
+                layer.anchorPoint = CGPoint(x: 0.5, y: downward ? 1 : 0)
+                layer.position = CGPoint(x: side / 2, y: downward ? side : 0)
+                layer.startPoint = layer.anchorPoint
+                layer.endPoint = CGPoint(x: 0.5, y: downward ? 0 : 1)
+            }
+        }
+
+        func setColors(_ color: CGColor, face: Face) {
+            func ink(_ alpha: CGFloat) -> CGColor { color.copy(alpha: alpha) ?? color }
+            if case .solid(_, let read) = face {
+                let air = read ? PacerPalette.overlayInk(0.08).cgColor : ink(0.42)
+                gradient.colors = [ink(0), ink(0), air, air]
+            } else {
+                gradient.colors = [ink(0.22), ink(0.4), ink(0.85), ink(0.85), ink(0.06), ink(0.06)]
+            }
+        }
+
+        func stops(at height: Double) -> [NSNumber] {
+            if isDisc { return [0, NSNumber(value: height), NSNumber(value: height), 1] }
+            let edge = height / 2
+            // The chord disappears at an empty orb and from 99% area onwards.
+            let width = height > 0 && height < TaskStatusIconNSView.lineCutoff ? 0.7 / (2 * side) : 0
+            let start = NSNumber(value: edge), end = NSNumber(value: edge + width)
+            return [0, start, start, end, end, 1]
+        }
+
+        func draw(_ sweep: LevelSweep, at now: CFTimeInterval) {
+            let target = stops(at: sweep.to)
+            for layer in isDisc ? [gradient, mask] : [gradient] {
+                layer.locations = target
+                guard sweep.start + sweep.duration > now, sweep.duration > 0 else {
+                    layer.removeAnimation(forKey: "level")
+                    continue
+                }
+                let move = CABasicAnimation(keyPath: "locations")
+                move.fromValue = stops(at: sweep.from); move.toValue = target
+                move.duration = sweep.duration; move.beginTime = layer.convertTime(sweep.start, from: nil)
+                move.timingFunction = CAMediaTimingFunction(controlPoints: 1/3, 0, 2/3, 1)
+                move.fillMode = .backwards
+                layer.add(move, forKey: "level")
+            }
+        }
+    }
+
+    private static let lineCutoff = levelHeight(0.99)
+    private static let compressPaths = ["M4.1 12h15.8", "M7 3l5 4 5-4", "M7 21l5-4 5 4"].map(TaskGlyphArt.svg)
+
+    private func removeWater() {
+        water?.gradient.removeFromSuperlayer()
+        discPaint.mask = nil
+        water = nil
+    }
+
+    private func applyLevel(_ input: Input, face: Face, fillEnd: CFTimeInterval? = nil) {
+        let previous = Self.faces[input.id], now = CACurrentMediaTime()
+        var memory = FaceMemory(owner: self, face: face, seen: now)
+        var released = previous?.releasedHeight
+        if previous?.face == .compacting, face != .compacting, let level = previous?.level {
+            let scale = water?.gradient.presentation()?.value(forKeyPath: "transform.scale.y") as? CGFloat ?? 1
+            released = level.displayed(at: now) * scale
+        }
+        defer { Self.faces[input.id] = memory }
+        guard face.supportsLevel, let fraction = input.contextFraction else {
+            if face.isWorking, input.compactingSince == nil { memory.releasedHeight = released }
+            if water != nil {
+                removeWater()
+                orb.colors = [input.color.copy(alpha: 0.32) ?? input.color, input.color.copy(alpha: 0.1) ?? input.color]
+                if face.isSolid { setDiscColors(for: face, color: input.color, animate: false) }
+            }
+            return
+        }
+
+        let target = Self.levelHeight(fraction)
+        var sweep = LevelSweep(from: target, to: target, start: now, duration: 0)
+        if motion, let fillEnd {
+            // The normal disc finishes filling from the ring before its waterline appears.
+            sweep = LevelSweep(from: 1, to: target, start: fillEnd, duration: 0.5)
+        } else if motion, face.isWorking, let released {
+            sweep = LevelSweep(from: released, to: target, start: now, duration: 0.9)
+        } else if motion, let previous, previous.face.isSolid == face.isSolid, let last = previous.level {
+            sweep = last.to == target ? last : LevelSweep(from: last.displayed(at: now), to: target, start: now, duration: 0.5)
+        }
+        memory.level = sweep
+        if water?.isDisc != face.isSolid {
+            removeWater()
+            let next = ContextWater(disc: face.isSolid, downward: drawsDownward)
+            if face.isSolid {
+                disc.insertSublayer(next.gradient, below: discPaint)
+                discPaint.mask = next.mask
+                setDiscColors(for: face, color: input.color, animate: false)
+            } else { orb.addSublayer(next.gradient) }
+            water = next
+        }
+        if !face.isSolid { orb.colors = nil }
+        water?.setColors(input.color, face: face)
+        water?.draw(sweep, at: now)
+    }
+
+    /// All four parts share the start signal's phase, including a row rebuilt
+    /// mid-press. Only Core Animation evaluates the repeating motion.
+    private func refreshPress(live: Bool, now: CFTimeInterval) {
+        guard let water, !water.isDisc else { return }
+        let layer = water.gradient
+        guard live, let since = input?.compactingSince, glyphParts.count == 3 else {
+            if water.pressStart != nil {
+                layer.removeAnimation(forKey: "press"); layer.removeAnimation(forKey: "density")
+                for part in glyphParts { part.layer.removeAnimation(forKey: "press") }
+                water.pressStart = nil
+            }
+            return
+        }
+        guard water.pressStart != since || layer.animation(forKey: "press") == nil || glyphParts[1].layer.animation(forKey: "press") == nil else { return }
+        water.pressStart = since
+        let period = 2.4
+        let start = now - max(0, -since.timeIntervalSinceNow).truncatingRemainder(dividingBy: period)
+        func press(_ target: CALayer, _ path: String, from: Any, to: Any, key: String = "press") {
+            let animation = CABasicAnimation(keyPath: path)
+            animation.fromValue = from; animation.toValue = to
+            animation.duration = period / 2; animation.autoreverses = true; animation.repeatCount = .infinity
+            animation.timingFunction = CAMediaTimingFunction(controlPoints: 0.445, 0.05, 0.55, 0.95)
+            animation.beginTime = target.convertTime(start, from: nil)
+            animation.preferredFrameRateRange = CAFrameRateRange(minimum: 10, maximum: 30, preferred: 30)
+            target.add(animation, forKey: key)
+        }
+        let down = drawsDownward ? 1.3 : -1.3
+        press(glyphParts[1].layer, "transform.translation.y", from: 0, to: down)
+        press(glyphParts[2].layer, "transform.translation.y", from: 0, to: -down)
+        press(layer, "transform.scale.y", from: 1, to: 0.95)
+        if let colors = layer.colors as? [CGColor] {
+            var dense = colors
+            dense[1] = colors[1].copy(alpha: 0.52) ?? colors[1]
+            press(layer, "colors", from: colors, to: dense, key: "density")
+        }
     }
 
     // MARK: Motion
@@ -803,7 +1064,8 @@ final class TaskStatusIconNSView: NSView {
         guard !applying else { return }
         let now = CACurrentMediaTime()
         let live = motion && window != nil && !fading
-        let ringLive = live && !container.isHidden && !(input?.face?.isSolid ?? false)
+        let compacting = input?.drawingFace == .compacting
+        let ringLive = live && !compacting && !container.isHidden && !(input?.drawingFace?.isSolid ?? false)
         Self.withoutActions {
             // The comet shows while it can turn; otherwise a still circle stands in.
             showComet(ringLive && pendingShown && (mode == .working || mode == .longStep))
@@ -846,7 +1108,8 @@ final class TaskStatusIconNSView: NSView {
                 }
             }
             // A working glyph lights its parts in turn.
-            let rhythms = live && (input?.face?.isWorking ?? false)
+            refreshPress(live: live && compacting, now: now)
+            let rhythms = live && !compacting && (input?.drawingFace?.isWorking ?? false)
             if rhythms != rhythmsRunning {
                 rhythmsRunning = rhythms
                 for part in glyphParts where part.rhythm != nil {
@@ -864,7 +1127,7 @@ final class TaskStatusIconNSView: NSView {
     }
     /// The stretch past the head during a long step with an estimate.
     private var stepWanted: Bool {
-        input?.state == .reported && !pendingShown && mode == .longStep && targetFraction < 0.9995 && !(input?.face?.isSolid ?? false)
+        input?.drawingFace != .compacting && input?.state == .reported && !pendingShown && mode == .longStep && targetFraction < 0.9995 && !(input?.drawingFace?.isSolid ?? false)
     }
     private func showStep(_ shown: Bool, breathing: Bool) {
         let live = shown && breathing
@@ -1059,6 +1322,10 @@ final class TaskStatusIconNSView: NSView {
             ("orb", orb), ("disc", disc), ("disc", discFill), ("disc", discMask)]
         layers += [("flow", flowLight.gradient as CALayer)] + stepBands.map { ("step", $0 as CALayer) } + ripples.map { ("ripple", $0 as CALayer) }
         layers += [("glyph", glyph)] + glyphParts.map { ("glyph", $0.layer) } + leavingGlyphs.map { ("glyph", $0) }
+        if let water {
+            layers.append(("water", water.gradient))
+            if water.isDisc { layers.append(("waterMask", water.mask)) }
+        }
         return layers
     }
     /// The animations each layer runs, as `layer.key`; read by tests.
@@ -1069,7 +1336,8 @@ final class TaskStatusIconNSView: NSView {
     var restingFraction: Double { Double(arc.strokeEnd) }
     var showsRing: Bool { !container.isHidden && !fading }
     /// Whether the face shows a filled disc, and whether a working orb shows; read by tests.
-    var showsDisc: Bool { !disc.isHidden && input?.face?.isSolid == true }
+    var showsDisc: Bool { !disc.isHidden && input?.drawingFace?.isSolid == true }
+    var showsContextLevel: Bool { water?.gradient.superlayer != nil }
     var showsOrb: Bool { orb.opacity > 0 }
     func sweepBegin() -> CFTimeInterval? { arc.animation(forKey: "sweep")?.beginTime }
 

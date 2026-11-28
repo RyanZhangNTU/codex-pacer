@@ -81,6 +81,7 @@ public sealed class TaskProgressRing : Grid
         public bool Breathing;
         public Color Color;
         public double Seen;
+        public double? CompactingSince;
         public WeakReference<AnimationLease>? Sweep;
         public int SweepGeneration;
         /// The comet's turn: its angle at `SpinEpoch` and its period. A long
@@ -120,20 +121,20 @@ public sealed class TaskProgressRing : Grid
     /// Applies one row's ring. Returns how the ring changed for this task, so
     /// the row can shrink or restore its icon in step with it.
     internal Change Show(string id, string? state, string? lifecycle, double fraction, bool stale, Color color, bool animate,
-                         bool completionPulseOnly = false)
+                         bool completionPulseOnly = false, double? compactingSince = null)
     {
         taskID = id;
         // Making the ring visible raises IsVisibleChanged synchronously. Its
         // looping motion starts once, from the finished state: started midway,
         // it would read stale fields and a later opacity fade would cancel it.
         showing = true;
-        try { StopBreathing(); return Apply(id, state, lifecycle, fraction, stale, color, animate, completionPulseOnly); }
+        try { StopBreathing(); return Apply(id, state, lifecycle, fraction, stale, color, animate, completionPulseOnly, compactingSince); }
         finally { showing = false; UpdateSpin(); }
     }
     private Change Apply(string id, string? state, string? lifecycle, double fraction, bool stale, Color color, bool animate,
-                         bool completionPulseOnly)
+                         bool completionPulseOnly, double? compactingSince)
     {
-        motion = animate; mode = lifecycle ?? "working";
+        motion = animate; mode = compactingSince.HasValue ? "compacting" : lifecycle ?? "working";
         double now = Now;
         Prune(now);
         Memories.TryGetValue(id, out var previous);
@@ -153,6 +154,27 @@ public sealed class TaskProgressRing : Grid
             return Change.Disappeared;
         }
         Visibility = Visibility.Visible;
+        if (compactingSince.HasValue)
+        {
+            // The first reported estimate can arrive with the start signal. Later snapshots
+            // and rebuilt rows keep that first ring until this compaction ends.
+            var held = previous ?? new Memory();
+            if (held.CompactingSince != compactingSince)
+            {
+                held.CompactingSince = compactingSince; held.State = state;
+                held.From = held.To = state == "reported" ? Math.Clamp(fraction, 0, 1) : 0;
+                held.Duration = 0; held.Sweep = null; held.SweepGeneration++;
+                held.Stale = stale; held.Full = held.To >= 0.9995; held.Done = lifecycle == "done"; held.Breathing = false;
+            }
+            Halt();
+            pendingShown = held.State == "pending"; dim = held.Stale; targetFraction = held.To;
+            Opacity = 1; ink.Color = color; ghost.Opacity = 0;
+            arc.Stale = dim; arc.Opacity = dim ? StaleOpacity : 1;
+            track.Opacity = pendingShown ? 0 : 1; pending.Opacity = pendingShown ? PendingOpacity : 0;
+            SetFraction(held.To); held.Color = color; held.Seen = now; Memories[id] = held;
+            return previous == null ? Change.Appeared : Change.Shown;
+        }
+        if (previous != null) previous.CompactingSince = null;
         bool appeared = previous == null || previous.State == "";
         // Colour follows the icon: provider, attention, failure or read.
         if (animate && previous != null && previous.Color != color)

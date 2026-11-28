@@ -127,6 +127,8 @@
 "activity.task_count" = "%ld 个任务";
 "activity.task_count_singular" = "%ld 个任务";
 "activity.task_list" = "任务列表";
+"activity.compacting_context" = "正在压缩上下文";
+"activity.context_used" = "上下文已用 %d%%";
 "activity.thinking" = "思考中";
 "activity.tool" = "正在执行工具";
 "activity.turn_finished" = "本轮结束";
@@ -1197,7 +1199,7 @@
 "main.collapsed.rings_custom" = "已手动选择圆环";
 "main.collapsed.warnings_choose" = "在“通知”里选择显示哪些警告";
 "settings.pane.expanded_panel" = "展开面板";
-"main.search.expandedPanel" = "面板 区块 任务 行 翻页 额度 圆环 周期 花费 去向 最近 按钮";
+"main.search.expandedPanel" = "面板 区块 任务 行 翻页 额度 圆环 周期 花费 去向 最近 按钮 上下文 用量 压缩 对话";
 "panel.group.tasks" = "任务";
 "panel.group.quota" = "额度";
 "panel.group.deepseek" = "DeepSeek";
@@ -1244,6 +1246,8 @@
 "main.panel.restore" = "恢复自动";
 "main.panel.page_size" = "每页任务";
 "main.panel.page_size_help" = "更多任务左右翻页。";
+"main.panel.context_level" = "上下文用量";
+"main.panel.context_level_help" = "对话用掉的上下文越多，任务图标里的圆填得越满。";
 "main.panel.row_style" = "行样式";
 "main.panel.row_two" = "两行";
 "main.panel.row_one" = "一行";
@@ -1668,6 +1672,8 @@
 "codex.hooks.notice_title" = "在 Codex 中允许 Pacer";
 "codex.hooks.notice_body" = "Codex 现在需要你批准，Pacer 才能跟踪它的任务。";
 "codex.hooks.open" = "打开 Codex";
+"codex.hooks.update_hint" = "更新 Codex 里的 Pacer hook，即可显示压缩状态。";
+"codex.hooks.update" = "更新";
 "codex.hooks.guide.title" = "在 Codex 设置里允许 Pacer";
 "codex.hooks.guide.step_hooks" = "点左侧的“钩子”。";
 "codex.hooks.guide.step_plugin" = "点“%@”。";

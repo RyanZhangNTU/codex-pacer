@@ -314,7 +314,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         applicationMenu.addItem(updateItem)
         if model.isDemo {
             for stage in DemoTaskStage.allCases {
-                let item = NSMenuItem(title: L10n.text("demo.menu", stage.label), action: #selector(demoStageChanged(_:)), keyEquivalent: String(stage.rawValue + 1))
+                let shortcut = guideDemo && stage == .compacting ? "6" : String(stage.rawValue + 1)
+                let item = NSMenuItem(title: L10n.text("demo.menu", stage.label), action: #selector(demoStageChanged(_:)), keyEquivalent: shortcut)
                 item.tag = stage.rawValue; item.target = self; applicationMenu.addItem(item)
             }
         }

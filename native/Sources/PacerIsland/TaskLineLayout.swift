@@ -70,6 +70,7 @@ struct ChildTaskLine: View {
             if measuring { Color.clear.frame(width: 20, height: 20) }
             else {
                 TaskStatusIconView(id: row.activity.id, ring: row.progressRing, face: TaskRowView.face(row),
+                                   contextFraction: row.contextLevel?.fraction, compactingSince: row.compactingSince,
                                    color: TaskRowView.color(row), animates: !reduceMotion, completionPulseOnly: true)
                     .frame(width: TaskStatusIconNSView.diameter, height: TaskStatusIconNSView.diameter)
                     .scaleEffect(20 / TaskStatusIconNSView.diameter)
@@ -89,6 +90,7 @@ struct ChildTaskLine: View {
                             .frame(minWidth: 48, maxWidth: measuring ? Self.measuredTitleWidth : .infinity, alignment: .leading)
                     }
                     HStack(alignment: .firstTextBaseline, spacing: 0) {
+                        let status = row.isCompacting ? row.status : self.status
                         if let rate {
                             Text(rate + " t/s").fontWeight(.semibold)
                                 .foregroundStyle(active && fresh ? PacerPalette.primary : PacerPalette.secondary)

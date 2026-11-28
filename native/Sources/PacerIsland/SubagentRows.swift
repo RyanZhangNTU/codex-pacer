@@ -93,6 +93,7 @@ struct SubagentLineView: View {
         .onHover { hovered = $0 }
         .animation(reduceMotion ? nil : .easeOut(duration: TaskRowInteraction.hoverDuration), value: hovered)
         .accessibilityLabel(line.accessibilityText)
+        .accessibilityValue(row.contextAccessibilityValue ?? "")
         .accessibilityHint(enabled ? row.activity.provider.taskOpenLabel : L10n.text("activity.no_link"))
     }
 }

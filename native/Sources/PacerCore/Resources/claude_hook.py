@@ -334,8 +334,9 @@ def hook(home,value):
             state.pop('permissionToolId',None);state.pop('permissionKind',None)
         if event=='ElicitationResult' and state.get('elicitationId')==item:state.pop('elicitationId',None)
         row['itemId']=item
-        mapping={'UserPromptSubmit':'prompt','PreToolUse':'toolStart','PostToolUse':'toolEnd','PostToolUseFailure':'toolEnd','PermissionDenied':'toolEnd','PermissionRequest':'approval','Stop':'stopRequested','StopFailure':'failure','SubagentStart':'subagentStart','SubagentStop':'stopRequested','SessionEnd':'unavailable','Elicitation':'input','ElicitationResult':'attentionCleared'}
+        mapping={'PreCompact':'preCompact','PostCompact':'postCompact','UserPromptSubmit':'prompt','PreToolUse':'toolStart','PostToolUse':'toolEnd','PostToolUseFailure':'toolEnd','PermissionDenied':'toolEnd','PermissionRequest':'approval','Stop':'stopRequested','StopFailure':'failure','SubagentStart':'subagentStart','SubagentStop':'stopRequested','SessionEnd':'unavailable','Elicitation':'input','ElicitationResult':'attentionCleared'}
         kind=mapping.get(event)
+        if event in ('PreCompact','PostCompact') and agent:kind=None
         if event=='PermissionRequest':kind=permission
         if display:
             kind='responseDelta';row.update(itemId=display[0],displayTurnId=display[1],partial=True,index=0,hasText=True,promptOwned=True)

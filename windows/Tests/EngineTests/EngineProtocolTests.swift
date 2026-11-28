@@ -267,6 +267,25 @@ final class EngineProtocolTests: XCTestCase {
         await runtime.stop()
     }
 
+    func testOptionalContextFieldsOnTaskAndPresentationRow() throws {
+        let now = Date(timeIntervalSince1970: 1000)
+        let session = "00000000-0000-4000-8000-000000000002"
+        var activity = SessionActivity(id: session, sessionID: session)
+        activity.applyRuntime(["method": "turn/started", "threadId": session, "turnId": "t", "at": 990.0])
+        activity.context.measure(TaskContextLevel(used: 64, capacity: 100, at: now))
+        activity.context.preCompact(turn: "t", at: now)
+        func check<T: Codable>(_ value: T) throws {
+            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as? [String: Any])
+            XCTAssertEqual(object["contextLevel"] as? [String: Double], ["usedTokens": 64, "capacityTokens": 100, "fraction": 0.64, "measuredAt": 1000])
+            XCTAssertEqual(object["compactingSince"] as? Double, 1000)
+            object.removeValue(forKey: "contextLevel")
+            object.removeValue(forKey: "compactingSince")
+            _ = try JSONDecoder().decode(T.self, from: JSONSerialization.data(withJSONObject: object))
+        }
+        try check(EngineTask(activity, unread: false, hideProjects: false, at: now))
+        try check(EngineTaskRow(ActivityTaskRowPresentation(activity: activity, unread: false, at: now)))
+    }
+
     func testWireTaskContainsOnlyTheMetadataProjection() throws {
         var activity = SessionActivity(id: "00000000-0000-4000-8000-000000000001", project: "Allowed project", phaseAwareRate: true)
         activity.applyRuntime(["method": "metadata", "threadId": "00000000-0000-4000-8000-000000000001",

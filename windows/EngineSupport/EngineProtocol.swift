@@ -130,6 +130,18 @@ struct EngineFramer {
     }
 }
 
+struct EngineContextLevel: Codable, Equatable {
+    let usedTokens: Int
+    let capacityTokens: Int
+    let fraction: Double
+    let measuredAt: Double
+
+    init(_ level: TaskContextLevel) {
+        usedTokens = level.usedTokens; capacityTokens = level.capacityTokens
+        fraction = level.fraction; measuredAt = level.measuredAt.timeIntervalSince1970
+    }
+}
+
 struct EngineTask: Codable, Equatable {
     let id: String
     let provider: String
@@ -145,6 +157,8 @@ struct EngineTask: Codable, Equatable {
     let model: String?
     let effort: String?
     let tokensPerSecond: Double?
+    let contextLevel: EngineContextLevel?
+    let compactingSince: Double?
     let rateReportedAt: Double?
     let rateIsFresh: Bool
     let rateIsEstimated: Bool
@@ -164,7 +178,9 @@ struct EngineTask: Codable, Equatable {
             : activity.sourceHost ?? L10n.text("common.local")
         sourceID = activity.sourceHostID
         phase = activity.observedPhase(at: now).rawValue; stage = activity.stage.rawValue
-        stageLabel = [.completed, .interrupted].contains(activity.phase) ? activity.endingLabel : activity.stage.label
+        contextLevel = activity.contextLevel.map(EngineContextLevel.init)
+        compactingSince = activity.compactingSince(at: now)?.timeIntervalSince1970
+        stageLabel = compactingSince != nil ? L10n.text("activity.compacting_context") : [.completed, .interrupted].contains(activity.phase) ? activity.endingLabel : activity.stage.label
         model = activity.modelName.map { ModelDisplay.name($0, provider: activity.provider) }; effort = activity.reasoningEffort
         tokensPerSecond = rate?.value; rateReportedAt = rate?.reportedAt.timeIntervalSince1970
         rateIsFresh = rate?.isFresh == true; rateIsEstimated = activity.displayedRateIsEstimated(at: now)

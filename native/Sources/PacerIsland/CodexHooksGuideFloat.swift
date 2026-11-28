@@ -99,7 +99,7 @@ private struct CodexHooksGuideContent: View {
                     }
                 }
                 .accessibilityElement(children: .combine)
-                CodexHooksPicture(pending: pending)
+                CodexHooksPicture(pending: pending, total: model.codexInstalledHookCount)
                 Text(L10n.text("codex.hooks.guide.alternative")).font(.system(size: 12)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -114,7 +114,7 @@ private struct CodexHooksGuideContent: View {
 
     private var pending: Int {
         if case .needsApproval(let count) = model.codexHookStatus { return count }
-        return CodexHookEvent.Kind.allCases.count
+        return model.codexInstalledHookCount
     }
 }
 
@@ -135,6 +135,7 @@ private struct NumberBadge: View {
 /// a ring around it. Numbers mark the steps.
 private struct CodexHooksPicture: View {
     let pending: Int
+    let total: Int
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -158,7 +159,7 @@ private struct CodexHooksPicture: View {
                     Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 18, height: 18)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(CodexHookPlugin.displayName).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
-                        Text(L10n.text("codex.hooks.guide.picture.count", CodexHookEvent.Kind.allCases.count))
+                        Text(L10n.text("codex.hooks.guide.picture.count", total))
                             .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 4)

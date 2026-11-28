@@ -552,6 +552,8 @@ final class WorkBuddyHarnessTests: XCTestCase {
         await monitor.start(home: fixture.home, policy: .expanded) { await updates.append($0) }
         let running = await updates.history.last
         let first = try XCTUnwrap(running?.activities.first { $0.phase == .running })
+        XCTAssertEqual(first.contextLevel?.fraction, 0.4)
+        XCTAssertEqual(running?.activities.first { $0.phase == .completed }?.contextLevel?.fraction, 0.2)
         XCTAssertEqual(first.turnCharge, .credits(0.53))
         XCTAssertEqual(running?.activities.first { $0.phase == .completed }?.turnCharge, .credits(1))
         XCTAssertEqual(running?.usage?.sessionCredits, 12.53)

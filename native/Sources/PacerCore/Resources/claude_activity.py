@@ -126,6 +126,19 @@ def transcript_record(value, owner, parent=None, prompt=None, failures_only=Fals
     rows = [meta]; starts = []; ends = []; model_kinds = set()
     content = message.get('content')
     kind = value.get('type')
+    if not parent and value.get('isSidechain') is not True:
+        usage=message.get('usage')
+        if kind=='assistant' and 'model' in meta and isinstance(usage,dict) and 'input_tokens' in usage and 'output_tokens' in usage:
+            counts=[usage.get(key,0) for key in ('input_tokens','cache_creation_input_tokens','cache_read_input_tokens','output_tokens')]
+            if all(type(n) is int and 0<=n for n in counts) and sum(counts)<=2**63-1:meta['contextUsed']=sum(counts)
+        if kind=='system' and value.get('subtype')=='compact_boundary':
+            boundary=dict(base,kind='compactBoundary')
+            counts=value.get('compactMetadata')
+            if isinstance(counts,dict):
+                for key,out in [('postTokens','contextUsed'),('preTokens','preTokens')]:
+                    n=counts.get(key)
+                    if type(n) is int and 0<=n<=2**63-1:boundary[out]=n
+            rows.insert(0,boundary)
     origin=value.get('origin');origin=origin if isinstance(origin,dict) else {}
     human=origin.get('kind')=='human' and origin.get('producer')!='session-task'
     legacy='origin' not in value and 'promptSource' not in value and 'turnOrigin' not in value
@@ -243,7 +256,7 @@ def stop_hook_failures_only(cursor,value):
     return bool(entry) and not entry[0] and isinstance(errors,list) and 0<len(errors)<=entry[1]
 
 ALLOWED_RECORD = {'kind','origin','sessionId','promptId','parentId','itemId','at','project','title','model','effort','attention','agentId','parentAgentId','agentTool','agentStatus','requestId','messageId','toolIds','startedAt','outputTokens','durationMs','ttftMs','firstContentMs','partial','index','displayTurnId','hasText','promptOwned','engineInterrupt','typedInterruptMarker','unownedTurn','embedded','progress','background','wakeups','wake','agents'}
-KINDS = {'metadata','prompt','toolStart','toolEnd','thinking','response','responseDelta','modelBlock','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','stopRequested','failure','interrupt','subagentStart','subagentStop','unavailable','request','progress','waiting'}
+KINDS = {'preCompact','postCompact','metadata','prompt','toolStart','toolEnd','thinking','response','responseDelta','modelBlock','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','stopRequested','failure','interrupt','subagentStart','subagentStop','unavailable','request','progress','waiting'}
 
 def sanitized(raw):
     try: value = json.loads(raw)
@@ -779,7 +792,7 @@ def main():
     except (IndexError,ValueError):interval=5
     pending=[];pending_due=None
     # Only the first reply of a turn is urgent; later streaming text waits for the batch.
-    urgent={'costCheckpoint','registrationEnded','prompt','progress','waiting','toolStart','toolEnd','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','failure','interrupt','subagentStart','subagentStop','unavailable'}
+    urgent={'preCompact','postCompact','compactBoundary','costCheckpoint','registrationEnded','prompt','progress','waiting','toolStart','toolEnd','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','failure','interrupt','subagentStart','subagentStop','unavailable'}
     turn_ends={'prompt','stop','stopVerified','failure','interrupt'};replying=set()
     def is_urgent(row):
         kind=row.get('kind');session=row.get('sessionId')

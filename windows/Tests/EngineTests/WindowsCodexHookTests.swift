@@ -45,7 +45,7 @@ final class WindowsCodexHookTests: XCTestCase {
         XCTAssertEqual(command, "& 'C:\\Users\\O''Brien $x\\.codex\\pacer\\bin\\codex-hook.cmd'")
         let launcher = WindowsCodexHookLauncher()
         XCTAssertEqual(launcher.commandWindows(home: home), command)
-        let files = try CodexHookPlugin.files(command: launcher.command(home: home), commandWindows: launcher.commandWindows(home: home))
+        let files = try CodexHookPlugin.files(set: .full, command: launcher.command(home: home), commandWindows: launcher.commandWindows(home: home))
         let hooks = try XCTUnwrap(files.first { $0.relativePath.hasSuffix("hooks/hooks.json") })
         let definitions = try XCTUnwrap((try JSONSerialization.jsonObject(with: hooks.data) as? [String: Any])?["hooks"] as? [String: [[String: Any]]])
         XCTAssertEqual(definitions.count, CodexHookEvent.Kind.allCases.count)

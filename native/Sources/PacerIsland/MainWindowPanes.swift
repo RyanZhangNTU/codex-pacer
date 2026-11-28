@@ -2,6 +2,26 @@ import AppKit
 import PacerCore
 import SwiftUI
 
+/// The hook update is offered only on the two Settings pages that describe Codex tracking.
+struct CodexCompactionHint: View {
+    let model: IslandModel
+
+    init?(model: IslandModel, pane: SettingsPane) {
+        guard pane == .overview || pane == .codex, model.codexHookUpdateAvailable else { return nil }
+        self.model = model
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(L10n.text("codex.hooks.update_hint"))
+                .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            Button(L10n.text("codex.hooks.update")) { model.updateCodexHooks() }
+                .buttonStyle(.main).fixedSize()
+        }
+    }
+}
+
 /// Something on Overview that needs the user, with the one action that fixes it.
 struct OverviewAttention: Identifiable {
     let id: String
@@ -46,6 +66,7 @@ struct OverviewPane: View {
                     }
                 }
             }
+            if let hint = CodexCompactionHint(model: model, pane: .overview) { MainCard { hint } }
             tasksCard
         }
     }

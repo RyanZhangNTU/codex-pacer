@@ -26,6 +26,12 @@ internal static class SlowEngineChecks
         var sentLateReply = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         void ReplyCounts(string id) => Reply(new { protocolVersion = 1, type = "result", id, ok = true,
             value = new { requests = Volatile.Read(ref requests), replies = Volatile.Read(ref replies) } });
+        int hookUpdates = 0;
+        string? pendingHookUpdate = null;
+        JsonElement hookModules = default;
+        void PublishHooks(object hooks) => Reply(new { protocolVersion = 1, type = "snapshot", sequence = ++sequence, demo = true,
+            tasks = Array.Empty<object>(), requests = Array.Empty<object>(), sources = Array.Empty<object>(),
+            quota = Array.Empty<object>(), notices = Array.Empty<object>(), modules = hookModules, codexHooks = hooks });
         while (Console.ReadLine() is { } line)
         {
             using var json = JsonDocument.Parse(line); string id = json.RootElement.GetProperty("id").GetString()!;
@@ -37,6 +43,35 @@ internal static class SlowEngineChecks
                     quota = Array.Empty<object>(), notices = Array.Empty<object>(), modules = json.RootElement.GetProperty("params") });
                 ReplyCounts(id);
             }
+            else if (mode == "compactionHints" && method == "setHooks")
+            {
+                var data = json.RootElement.GetProperty("params");
+                hookModules = data.GetProperty("modules").Clone();
+                PublishHooks(data.GetProperty("hooks"));
+                ReplyCounts(id);
+            }
+            else if (mode == "compactionHints" && method == "updateCodexHooks")
+            {
+                hookUpdates++;
+                pendingHookUpdate = id;
+            }
+            // Hold the reply so the UI can switch panes with the update in flight.
+            else if (mode == "compactionHints" && method == "finishHookUpdate" && pendingHookUpdate != null)
+            {
+                if (json.RootElement.GetProperty("params").GetProperty("reject").GetBoolean())
+                    Reply(new { protocolVersion = 1, type = "error", id = pendingHookUpdate, code = "codexHooksUnavailable" });
+                else
+                {
+                    ReplyCounts(pendingHookUpdate);
+                    PublishHooks(new { state = "needsApproval", pending = 9, opensSettings = true, updateAvailable = false });
+                }
+                pendingHookUpdate = null;
+                ReplyCounts(id);
+            }
+            else if (mode == "compactionHints" && method == "inspectHookUpdates")
+                Reply(new { protocolVersion = 1, type = "result", id, ok = true, value = hookUpdates });
+            else if (mode == "compactionHints" && method == "inspectCodexSource")
+                Reply(new { protocolVersion = 1, type = "result", id, ok = true, value = new { candidates = Array.Empty<object>(), executable = "", home = "", effectiveHome = "", historyTitle = "" } });
             else if (method is "projectCompactBar" or "layoutQuotaChart" or "validatePreferences")
             {
                 requests++;

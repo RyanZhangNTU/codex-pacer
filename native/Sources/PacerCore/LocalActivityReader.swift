@@ -79,6 +79,9 @@ public actor LocalActivityReader {
                evidence.state != "running" || evidence.observedAt > (cursor.writerLostAt ?? .distantPast) {
                 value.applySubagentEvidence(evidence)
             }
+            if let id = value.threadID, let state = hooks.threads[id] {
+                value.context.merge(state.context)
+            }
             return value
         }
         var files: [(URL, Date)] = []

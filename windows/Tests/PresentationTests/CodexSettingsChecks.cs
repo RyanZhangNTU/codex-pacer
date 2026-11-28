@@ -18,6 +18,7 @@ internal static class CodexSettingsChecks
 {
     internal static async Task Run(string language, bool dark, string output)
     {
+        await CheckCompactionHints(language, dark, output);
         await using var engine = new EngineClient();
         var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = "codex", ProviderModes = new()
             { ["codex"] = "enabled", ["claude"] = "enabled", ["deepseek"] = "enabled" } };
@@ -74,6 +75,26 @@ internal static class CodexSettingsChecks
             await Until(() => session.Current.MonitorDurable && durable.IsEnabled, "Enabling Dot must await engine acknowledgement");
             Toggle(durable);
             await Until(() => !session.Current.MonitorDurable && durable.IsEnabled, "Disabling Dot must await engine acknowledgement");
+            await window.NavigateAsync("expandedPanel");
+            await Until(() => Descendants(window).OfType<CheckBox>().Any(value => AutomationProperties.GetAutomationId(value) == "panel.option.showContextLevel"), "Tasks inspector loads");
+            window.SelectPanelBlock("tasks");
+            var context = Find<CheckBox>(window, "panel.option.showContextLevel");
+            Check(context.IsChecked == true && AutomationProperties.GetName(context) == ui.Text("main.panel.context_level"), "Context usage defaults on");
+            var info = Find<Button>(window, "panel.option.showContextLevel.info");
+            Invoke(info); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            var help = Descendants(window).OfType<TextBlock>().Single(text => text.IsVisible && text.Text == ui.Text("main.panel.context_level_help"));
+            help.BringIntoView(); window.UpdateLayout();
+            window.CapturePreview(Path.Combine(output, "context-switch-" + name + ".png"));
+            await PresentationWait.CommandSnapshotAsync(engine, "demoStage", new { demoStage = 4 });
+            Toggle(context);
+            await Until(() => context.IsEnabled && session.Current.ExpandedPanelOptions?.Contains("\"showContextLevel\":false", StringComparison.Ordinal) == true
+                && engine.LatestSnapshot?.ExpandedPanel?.Options.ShowContextLevel == false, "Disabling the switch persists false and reaches Core");
+            Check(engine.LatestSnapshot?.Presentation?.Rows.Any(row => row.CompactingSince != null && row.ContextLevel == null
+                && row.Status == ui.Text("activity.compacting_context")) == true, "Hiding context keeps the compacting status");
+            Toggle(context);
+            await Until(() => context.IsEnabled && session.Current.ExpandedPanelOptions?.Contains("showContextLevel", StringComparison.Ordinal) == false
+                && engine.LatestSnapshot?.ExpandedPanel?.Options.ShowContextLevel == true, "Enabling the switch omits the default key");
+            await PresentationWait.CommandSnapshotAsync(engine, "demoStage", new { demoStage = 0 });
             await window.NavigateAsync("codex"); await window.WaitForSourceInspectionAsync(); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
             module = Find<CheckBox>(window, "settings.codex.enabled");
             int sourceConfigurations = configurations;
@@ -187,6 +208,78 @@ internal static class CodexSettingsChecks
         }
         finally { window.AllowClose = true; window.Close(); ready.TrySetCanceled(); }
     }
+    private static async Task CheckCompactionHints(string language, bool dark, string output)
+    {
+        var ui = UiText.For(language == "zh-Hans");
+        await using var engine = new EngineClient();
+        await engine.StartAsync(Environment.ProcessPath!, true, "compactionHints", referenceFixture: true);
+        var session = new PreferencesSession(new DesktopPreferences { LastSettingsPane = "overview" }, _ => Task.CompletedTask, _ => true);
+        int guideLinks = 0;
+        var window = new SettingsWindow(ui, session, new Startup(), true, dark, engine, guideLinkLauncher: _ => { guideLinks++; return true; })
+            { ShowActivated = false, ShowInTaskbar = false };
+        Task Publish(object hooks) => PresentationWait.CommandSnapshotAsync(engine, "setHooks", new
+        {
+            modules = new[] { new EngineModule("codex", "enabled", true, true, Monitoring: new("on", "success", ui.Text("monitoring.on"))) },
+            hooks
+        });
+        TextBlock? Hint() => Descendants(window).OfType<TextBlock>().SingleOrDefault(text => text.IsVisible && AutomationProperties.GetAutomationId(text) == "settings.codex.compaction.hint");
+        Button UpdateButton() => Find<Button>(window, "settings.codex.hooks.update");
+        var available = new { state = "running", updateAvailable = true };
+        try
+        {
+            window.Show();
+            foreach (string pane in new[] { "overview", "codex" })
+            {
+                await window.NavigateAsync(pane);
+                foreach (string state in new[] { "running", "notRunning", "needsApproval", "settingUp", "off", "installFailed", "needsCodexUpdate", "notInstalled" })
+                {
+                    await Publish(new { state, updateAvailable = false });
+                    Check(Hint() == null, $"No hook update on {pane} while {state}");
+                }
+                await Publish(new { state = "running" });
+                Check(Hint() == null, "Snapshots without the update flag leave the hint hidden");
+                await Publish(available);
+                await Until(() => Hint()?.Text == ui.Text("codex.hooks.update_hint"), "Hook update text on " + pane);
+                var hint = Hint()!;
+                var update = UpdateButton();
+                Check(hint.FontSize == 12 && hint.TextWrapping == TextWrapping.Wrap && update.IsVisible && update.IsEnabled
+                    && Equals(update.Content, ui.Text("codex.hooks.update")), "The hint shows an Update button on " + pane);
+                hint.BringIntoView(); window.UpdateLayout();
+                window.CapturePreview(Path.Combine(output, $"context-hint-{pane}-{language}-{(dark ? "dark" : "light")}.png"));
+            }
+            Check(Find<TextBlock>(window, "settings.codex.monitoring").Text == ui.Text("monitoring.on")
+                && await engine.QueryAsync<int>("inspectHookUpdates") == 0, "Monitoring stays on until the user chooses Update");
+            await window.NavigateAsync("general");
+            Check(Hint() == null, "General has no hook update");
+            await window.NavigateAsync("codex");
+            Invoke(UpdateButton());
+            await Until(() => !UpdateButton().IsEnabled, "Update is disabled while the command is pending");
+            await window.NavigateAsync("overview");
+            Check(!UpdateButton().IsEnabled, "Switching panes keeps the pending update disabled");
+            await engine.SendAsync("finishHookUpdate", new { reject = false });
+            await Until(() => engine.LatestSnapshot?.CodexHooks is { State: "needsApproval", Pending: 9, OpensSettings: true } && Hint() == null,
+                "The update offer disappears when all nine hooks need approval");
+            Check(await engine.QueryAsync<int>("inspectHookUpdates") == 1 && guideLinks == 0 && CodexHooksGuideFloat.Current == null,
+                "One click sends one update command and leaves the guide closed");
+            await Publish(available);
+            Invoke(UpdateButton());
+            await Until(() => !UpdateButton().IsEnabled, "Overview disables Update while waiting for the engine");
+            await engine.SendAsync("finishHookUpdate", new { reject = true });
+            await Until(() => Find<TextBlock>(window, "settings.issue") is { IsVisible: true } issue
+                && issue.Text == ui.Text("windows.connection.refresh_failed") && UpdateButton().IsEnabled,
+                "A rejected update shows the Settings issue and enables Update again");
+            await window.NavigateAsync("codex");
+            var retry = UpdateButton();
+            Invoke(retry);
+            await Until(() => !retry.IsEnabled, "The user can retry the update");
+            await engine.SendAsync("shutdown");
+            await Until(() => engine.IsConnectionClosed && Hint() == null && retry.IsEnabled
+                && Find<TextBlock>(window, "settings.issue").Text == ui.Text("windows.connection.refresh_failed"),
+                "A closed connection ends the pending update and shows the Settings issue");
+        }
+        finally { CodexHooksGuideFloat.Current?.Close(); window.AllowClose = true; window.Close(); }
+    }
+
     private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement
         => Descendants(root).OfType<T>().Single(value => AutomationProperties.GetAutomationId(value) == id);
     private static void Edit(TextBox field, string value)

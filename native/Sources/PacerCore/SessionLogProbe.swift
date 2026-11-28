@@ -94,6 +94,8 @@ enum SessionLogProbe {
                         leaf=path.rsplit('/',1)[-1] if isinstance(path,str) else None
                         if leaf and re.fullmatch(r'[a-z0-9_]{1,64}',leaf):display['agent_path']=leaf
                         q['source']={'subagent':{'thread_spawn':display}}
+        elif outer == 'compacted':
+            pass  # Never forward the summary or replacement history.
         elif outer == 'turn_context':
             for k in ('turn_id','model'):
                 if isinstance(p.get(k),str): q[k] = p[k][:256]
@@ -102,6 +104,11 @@ enum SessionLogProbe {
             if root:q['root_turn_id']=root
         elif outer == 'event_msg' and kind == 'item_completed':
             item=p.get('item') or {}
+            if isinstance(item,dict) and item.get('type') == 'ContextCompaction':
+                turn=progress_id(p.get('turn_id'));thread=progress_id(p.get('thread_id'))
+                if not turn or not thread:return None
+                return {'timestamp':str(o.get('timestamp',''))[:80], 'type':outer,
+                        'payload':{'type':kind,'thread_id':thread,'turn_id':turn,'item':{'type':'ContextCompaction'}}}
             if progress_item(item):
                 percent=progress_item_value(item);tid=progress_id(p.get('thread_id'));turn=progress_id(p.get('turn_id'))
                 if percent is None or not tid or not turn:return None
@@ -137,14 +144,17 @@ enum SessionLogProbe {
                     value=p.get(k)
                     if isinstance(value,(int,float)) and not isinstance(value,bool) and 0<=value<=3600000:q[k]=value
             if kind == 'token_count':
-                total = (p.get('info') or {}).get('total_token_usage') or {}
-                output = total.get('output_tokens')
-                if isinstance(output,int) and output >= 0:
-                    q['info'] = {'total_token_usage':{'output_tokens':output}}
-                    last=(p.get('info') or {}).get('last_token_usage') or {}
-                    if isinstance(last.get('output_tokens'),int):
-                        q['info']['last_token_usage']={'output_tokens':last['output_tokens']}
-                        if isinstance(last.get('reasoning_output_tokens'),int):q['info']['last_token_usage']['reasoning_output_tokens']=last['reasoning_output_tokens']
+                info=p.get('info')
+                if isinstance(info,dict):
+                    clean={}
+                    for key,fields in [('total_token_usage',('output_tokens',)),('last_token_usage',('total_tokens','output_tokens','reasoning_output_tokens'))]:
+                        usage=info.get(key)
+                        if isinstance(usage,dict):
+                            counts={k:usage[k] for k in fields if type(usage.get(k)) is int and 0<=usage[k]<=2**63-1}
+                            if counts:clean[key]=counts
+                    window=info.get('model_context_window')
+                    if type(window) is int and 0<window<=2**63-1:clean['model_context_window']=window
+                    if clean:q['info']=clean
         elif outer == 'event_msg' and kind == 'thread_goal_updated':
             goal=goal_fields(p.get('goal'));tid=progress_id(p.get('threadId'))
             if not goal or not tid:return None
@@ -266,7 +276,7 @@ enum SessionLogProbe {
                     v = parse(line)
                     if not v or not v['payload'].get('turn_id'):continue
                     p=v['payload'];turn=p['turn_id']
-                    if p.get('type')=='item_completed' and p.get('thread_id')==thread_id:
+                    if p.get('type')=='item_completed' and 'first_output_at_ms' in p and p.get('thread_id')==thread_id:
                         reported=timestamp_ms(v['timestamp'])
                         if reported is None or p['first_output_at_ms']>reported:continue
                         if turn in first_times or len(first_times)<64:first_times[turn]=min(first_times.get(turn,p['first_output_at_ms']),p['first_output_at_ms'])

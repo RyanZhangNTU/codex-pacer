@@ -233,6 +233,7 @@ internal sealed partial class SettingsWindow
         tasks.Children.Add(Inline("rowStyle", "main.panel.row_style", PanelSegmentChoices("rowStyle", "main.panel.row_style",
             [("twoLine", "main.panel.row_two"), ("oneLine", "main.panel.row_one")], value => ChoosePanel("rowStyle", value)), "main.panel.row_style_help"));
         tasks.Children.Add(Stacked("rowFields", "main.panel.fields", PanelFieldChoices(), stretch: true));
+        tasks.Children.Add(Switch("showContextLevel", "main.panel.context_level", "main.panel.context_level_help", value => ChoosePanel("showContextLevel", value)));
         panelRetention = new ComboBox { VerticalAlignment = VerticalAlignment.Center, SelectedValuePath = "Tag" };
         foreach (var item in new[] { (5, "settings.five_minutes"), (15, "settings.fifteen_minutes"), (30, "settings.thirty_minutes"), (60, "settings.one_hour"), (240, "settings.four_hours"), (0, "settings.until_clicked") })
             panelRetention.Items.Add(new ComboBoxItem { Tag = item.Item1, Content = ui.Text(item.Item2) });
@@ -478,6 +479,7 @@ internal sealed partial class SettingsWindow
             Pick(provider + "Periods", options.Periods(provider)); Pick(provider + ".style", preferences.ExpandedQuotaStyle);
             Pick(provider + ".arrange", options.QuotaArrange); Flip(provider + ".details", options.QuotaDetails); Flip(provider + ".paceTick", options.PaceTick);
         }
+        Flip("showContextLevel", options.ShowContextLevel);
         Flip("codex.resets", options.CodexResets);
         Pick("dial", options.DeepseekDial); Flip("peak", options.DeepseekPeak);
         Pick("spendTasks", options.SpendTasks == 4 ? "4" : "2"); Flip("elsewhere", options.SpendElsewhere); Flip("weekLine", options.WeekLine);

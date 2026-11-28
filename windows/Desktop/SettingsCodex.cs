@@ -17,6 +17,8 @@ namespace CodexPacer.Windows;
 internal sealed partial class SettingsWindow
 {
     private CheckBox? codexEnabled, codexEmbedded, codexProgress, codexDurable;
+    private CodexCompactionHint? codexCompactionHint;
+    private bool updatingCodexHooks;
     private TextBlock? codexProgressState;
     private Button? codexProgressRetry;
     private FrameworkElement? codexProgressStatus;
@@ -37,10 +39,25 @@ internal sealed partial class SettingsWindow
     private readonly string?[] pendingSourceValidation = [null, null];
     private Task sourceInspection = Task.CompletedTask;
 
+    private CodexCompactionHint CompactionHint() => codexCompactionHint = new(ui, UpdateCodexHooks) { IsEnabled = !updatingCodexHooks };
+
+    private async Task UpdateCodexHooks()
+    {
+        if (updatingCodexHooks || codexCompactionHint == null) return;
+        updatingCodexHooks = true; codexCompactionHint.IsEnabled = false;
+        try { await RunStatusAction("codex.monitoring", "update"); }
+        finally
+        {
+            updatingCodexHooks = false;
+            if (codexCompactionHint != null) codexCompactionHint.IsEnabled = true;
+        }
+    }
+
     private void ClearCodex()
     {
         sourceInspectionRevision++; sourceCommitRevision++; Array.Clear(pendingSourceValidation); sourceInspectionKey = null; sourceReport = null;
         codexEnabled = codexEmbedded = codexProgress = codexDurable = null; codexDetection = executableIssue = homeIssue = historyTitle = null; codexHistory = null;
+        codexCompactionHint = null;
         codexProgressState = null; codexProgressRetry = null; codexProgressStatus = null;
         codexAutomatic = cliCandidates = null; codexSections = null; codexOff = null; codexLocations = null;
         executableField = homeField = null; executablePreference = homePreference = null;
@@ -62,7 +79,10 @@ internal sealed partial class SettingsWindow
 
         // Codex's CLI and its hooks read as one Task Monitoring row; signing in happens in Codex.
         codexSections.Children.Add(SectionTitle(ui.Text("main.section.status"), 0));
-        codexSections.Children.Add(Card(ModuleStatusRow("codex.monitoring", ui.Text("provider.monitoring"), ui.Text("codex.hooks.info")),
+        var monitoring = new StackPanel();
+        monitoring.Children.Add(ModuleStatusRow("codex.monitoring", ui.Text("provider.monitoring"), ui.Text("codex.hooks.info")));
+        monitoring.Children.Add(CompactionHint());
+        codexSections.Children.Add(Card(monitoring,
             ModuleStatusRow("codex.account", ui.Text("provider.account")), ProviderQuotaRow("codex")));
 
         var embedded = Toggle("main.embedded", "main.info.codex_embedded", "settings.codex.embedded", out var embeddedSwitch);
@@ -198,6 +218,7 @@ internal sealed partial class SettingsWindow
         // A missing CLI says why, as the location fields do.
         RefreshModuleStatusRow("codex.monitoring", module?.Monitoring,
             module?.Monitoring?.State == "notFound" ? sourceReport?.ExecutableIssue : null);
+        codexCompactionHint?.Update(providerConnectionClosed || engine.IsConnectionClosed ? null : engine.LatestSnapshot?.CodexHooks);
         RefreshModuleStatusRow("codex.account", module?.Account);
         if (executablePreference != session.Current.CodexExecutable)
         { executablePreference = session.Current.CodexExecutable; executableField!.Text = executablePreference; SetSourceIssue(executableIssue, null); }

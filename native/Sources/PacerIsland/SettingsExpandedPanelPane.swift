@@ -401,6 +401,7 @@ struct SettingsExpandedPanelPane: View {
                      selection: $options.rowStyle, options: [(.twoLine, L10n.text("main.panel.row_two")),
                                                              (.oneLine, L10n.text("main.panel.row_one"))])
             PanelRow(title: L10n.text("main.panel.fields"), stacked: true) { RowFieldsEditor(options: $options) }
+            switchRow(L10n.text("main.panel.context_level"), help: L10n.text("main.panel.context_level_help"), isOn: $options.showContextLevel)
             PanelRow(title: L10n.text("reminders.retention")) {
                 OutlineMenu(title: L10n.text("reminders.retention"), selection: $retention, options: [
                     (5, L10n.text("settings.five_minutes")), (15, L10n.text("settings.fifteen_minutes")),

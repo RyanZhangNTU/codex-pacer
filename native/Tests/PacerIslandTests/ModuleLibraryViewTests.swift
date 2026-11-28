@@ -75,11 +75,19 @@ final class ModuleLibraryViewTests: XCTestCase {
         func click(_ title: String) async throws {
             let frame = try XCTUnwrap(element(title, in: root), title).accessibilityFrame()
             let point = window.convertPoint(fromScreen: NSPoint(x: frame.midX, y: frame.midY))
-            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-                let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+            func mouse(_ type: NSEvent.EventType) throws -> NSEvent {
+                try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
                     timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                     context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
-                window.sendEvent(event)
+            }
+            // A control may track the press by reading the event queue until the
+            // button comes up. A runner without a real pointer never sends one, so
+            // queue the release first; send it directly if nothing took it.
+            let up = try mouse(.leftMouseUp)
+            NSApp.postEvent(up, atStart: false)
+            window.sendEvent(try mouse(.leftMouseDown))
+            if let pending = NSApp.nextEvent(matching: .leftMouseUp, until: Date(), inMode: .default, dequeue: true) {
+                window.sendEvent(pending)
             }
             try await Task.sleep(for: .milliseconds(180))
             root.layoutSubtreeIfNeeded()

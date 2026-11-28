@@ -42,6 +42,7 @@ struct AntigravityProjection {
         let displayName: String?
         let tokens: Int?
         let duration: Double?
+        var contextLevel: TaskContextLevel?
         let permitsMissedToolInference: Bool
 
         func performance(planner: TypedStep, turn: String, started: Date) -> ResponsePerformance? {
@@ -235,7 +236,7 @@ struct AntigravityProjection {
                 return index
             } ?? []
             guard !indices.isEmpty,
-                  let model = try fields["chatModel"]?.fields(["responseModel", "modelDisplayName", "streamingDuration", "timeToFirstToken", "usage", "tools"]) else { continue }
+                  let model = try fields["chatModel"]?.fields(["responseModel", "modelDisplayName", "streamingDuration", "timeToFirstToken", "usage", "tools", "chatStartMetadata"]) else { continue }
             let usage = try model["usage"]?.fields(["outputTokens", "thinkingOutputTokens", "responseOutputTokens"])
             func count(_ key: String) -> Int? {
                 guard let n = usage?[key]?.unsignedInteger(), n <= UInt64(Int32.max) else { return nil }
@@ -251,10 +252,17 @@ struct AntigravityProjection {
                 return value
             }
             let duration = seconds("timeToFirstToken").flatMap { first in seconds("streamingDuration").map { first + $0 } }
-            let call = Call(modelID: model["responseModel"]?.string(limit: 128),
+            let start = try? model["chatStartMetadata"]?.fields(["contextWindowMetadata"])
+            let window = try? start?["contextWindowMetadata"]?.fields(["estimatedTokensUsed", "maxContextTokens"])
+            let used = window?["estimatedTokensUsed"]?.unsignedInteger().flatMap(Int.init(exactly:))
+            let capacity = window?["maxContextTokens"]?.unsignedInteger().flatMap(Int.init(exactly:))
+            var call = Call(modelID: model["responseModel"]?.string(limit: 128),
                          displayName: model["modelDisplayName"]?.string(limit: 120), tokens: tokens, duration: duration,
                          permitsMissedToolInference: permitsMissedToolInference(model["tools"]))
             for index in Set(indices) {
+                if let step = owned[index], let at = step.created ?? step.finished {
+                    call.contextLevel = TaskContextLevel(used: used, capacity: capacity, at: at)
+                } else { call.contextLevel = nil }
                 if matches.updateValue(call, forKey: index) != nil { ambiguous.insert(index) }
             }
         }
@@ -390,6 +398,10 @@ struct AntigravityProjection {
         }
         task.applyObservedTurn(state, id: turn, started: started, at: at, live: observed, model: model?.name, effort: model?.effort)
         if let previous { task.mergePerformance(from: previous) }
+        if row.parent == nil, row.depth == 0 {
+            task.context.measure(previous?.contextLevel)
+            task.context.measure(live.responses.last?.call.contextLevel)
+        }
         task.observeToolStart(toolSince)
         if let background { task.waitForBackground(kinds: [background], wakeups: 0, at: at) }
         let sample = live.responses.reversed().lazy.compactMap {

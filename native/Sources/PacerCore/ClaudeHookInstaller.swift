@@ -59,7 +59,7 @@ public struct ClaudeHookInstaller {
             }
         }
     }
-    private let events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest", "PermissionDenied", "Stop", "StopFailure", "SessionEnd", "Notification", "SubagentStart", "SubagentStop", "Elicitation", "ElicitationResult"]
+    private let events = ["SessionStart", "UserPromptSubmit", "PreCompact", "PostCompact", "PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest", "PermissionDenied", "Stop", "StopFailure", "SessionEnd", "Notification", "SubagentStart", "SubagentStop", "Elicitation", "ElicitationResult"]
     /// Claude holds each displayed batch until its hooks return. Numeric OTLP
     /// spans already report TTFT, so the display observer is registered only
     /// without Pacer telemetry, and then runs in the background.
