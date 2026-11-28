@@ -56,6 +56,8 @@ struct EngineTaskRow: Codable, Equatable {
     /// Optional protocol-1 additions: absent when the progress ring is off.
     /// `pending` draws the dashed ring; `reported` draws `progressFraction`.
     let progressState: String?
+    let contextLevel: EngineContextLevel?
+    let compactingSince: Double?
     /// The request's lifecycle mode (`TaskProgressRing.Mode`), which sets the ring's style.
     let progressMode: String?
     let progressFraction: Double?
@@ -98,6 +100,8 @@ struct EngineTaskRow: Codable, Equatable {
         ratePlaceholder = value.ratePlaceholder; turnTime = value.turnTime; subagents = value.subagents
         unread = value.unread; failed = value.activity.turnFailed; dimmed = value.dimmed; cost = value.cost; peakCost = value.peakCost
         progressState = value.progressRing?.state.rawValue; progressMode = value.progressRing?.mode.rawValue
+        contextLevel = value.contextLevel.map(EngineContextLevel.init)
+        compactingSince = value.compactingSince?.timeIntervalSince1970
         progressFraction = value.progressRing?.fraction
         progressStale = value.progressRing?.stale; progressText = value.progressRing?.accessibilityText
         if value.delegatedCount > 0 { delegatedText = value.delegatedCountText }

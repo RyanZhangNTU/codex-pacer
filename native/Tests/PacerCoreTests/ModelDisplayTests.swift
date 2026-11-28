@@ -138,6 +138,31 @@ final class ModelDisplayTests: XCTestCase {
         XCTAssertTrue(configured.isInternalReview, "A configured review model still marks the thread as a review")
     }
 
+    func testSSHSendsOnlyWindowCountsAndCompactionMarkers() throws {
+        let output = try python(SessionLogProbe.library + #"""
+
+        count=sanitize({'type':'event_msg','payload':{'type':'token_count','info':{'model_context_window':112000,
+            'last_token_usage':{'total_tokens':76000,'output_tokens':22,'unknown':'fixture'}}}})
+        end=sanitize({'type':'compacted','payload':{'message':'fixture'}})
+        item=sanitize({'type':'event_msg','payload':{'type':'item_completed','thread_id':'thread','turn_id':'turn',
+            'item':{'type':'ContextCompaction','summary':'fixture'}}})
+        import io
+        start={'type':'event_msg','timestamp':'2027-01-15T08:00:00Z','payload':{'type':'task_started','turn_id':'turn'}}
+        item['timestamp']='2027-01-15T08:00:01Z'
+        rollout=b'{}\n'+json.dumps(start).encode()+b'\n'+json.dumps(item).encode()+b'\n'
+        assert anchor(io.BytesIO(rollout),len(rollout),'thread') == start
+        print(json.dumps([count,end,item]))
+        """#)
+        let rows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [[String: Any]])
+        let payloads = rows.compactMap { $0["payload"] as? [String: Any] }
+        let info = try XCTUnwrap(payloads.first?["info"] as? [String: Any])
+        XCTAssertEqual(info["model_context_window"] as? Int, 112_000)
+        XCTAssertEqual(info["last_token_usage"] as? [String: Int], ["total_tokens": 76_000, "output_tokens": 22])
+        XCTAssertEqual(payloads[1].count, 0)
+        XCTAssertEqual(payloads[2]["item"] as? [String: String], ["type": "ContextCompaction"])
+        XCTAssertFalse(output.contains("fixture"))
+    }
+
     private func python(_ script: String) throws -> String {
         let process = Process(), output = Pipe(), error = Pipe()
         process.executableURL = PythonFixture.executable

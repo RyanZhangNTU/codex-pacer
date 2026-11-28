@@ -31,6 +31,8 @@
     "activity.background_wait_compact": "等待后台工作",
     "activity.claude_host_missing": "不知道是哪个应用启动了这个 Claude 任务。Pacer 只能在任务运行时识别它的应用。",
     "activity.codex_host_missing": "不知道是哪个应用启动了这个 Codex 任务。Pacer 只能在任务运行时识别它的应用。",
+    "activity.compacting_context": "正在压缩上下文",
+    "activity.context_used": "上下文已用 %d%%",
     "activity.coordinating": "正在协调",
     "activity.done_compact": "1 已完成",
     "activity.ended_compact": "%ld 已结束",

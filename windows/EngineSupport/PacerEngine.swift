@@ -3434,6 +3434,7 @@ actor EngineRuntime {
                 }, showsDeepSeekTurnCost: deepseekSettings.showsTurnCost,
                 progressRingProviders: progressRingProviders, pageSize: panelOptions.pageSize,
                 showsDelegationRows: true)
+        presentationOptions.showContextLevel = panelOptions.showContextLevel
         presentationOptions.hiddenTurnCredits = hiddenTurnCredits
         let taskPresentation = selected == nil ? activityState.presentation(at: date, options: presentationOptions) :
             ActivityTaskPresentation(activities: visibleActivities, requests: visibleRequests, inbox: inbox, options: presentationOptions, at: date)

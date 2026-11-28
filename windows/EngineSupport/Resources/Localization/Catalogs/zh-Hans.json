@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "df9cc17a6a41bf687e208fb5de953fa50335d44c4088b7575cc74b6da74fa12e",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "5f01480c75339c795b19429cc9d1ecad3d95845e5b822aca8525e9c7ffdef1da",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "3be42c2706a73f341c7e8c9070eaa88a32b6bccef9c648f36f6fca8c0b2f6111"
   },
   "strings": {
@@ -35,6 +35,8 @@
     "activity.background_wait_compact": "\u7b49\u5f85\u540e\u53f0\u5de5\u4f5c",
     "activity.claude_host_missing": "\u4e0d\u77e5\u9053\u662f\u54ea\u4e2a\u5e94\u7528\u542f\u52a8\u4e86\u8fd9\u4e2a Claude \u4efb\u52a1\u3002Pacer \u53ea\u80fd\u5728\u4efb\u52a1\u8fd0\u884c\u65f6\u8bc6\u522b\u5b83\u7684\u5e94\u7528\u3002",
     "activity.codex_host_missing": "\u4e0d\u77e5\u9053\u662f\u54ea\u4e2a\u5e94\u7528\u542f\u52a8\u4e86\u8fd9\u4e2a Codex \u4efb\u52a1\u3002Pacer \u53ea\u80fd\u5728\u4efb\u52a1\u8fd0\u884c\u65f6\u8bc6\u522b\u5b83\u7684\u5e94\u7528\u3002",
+    "activity.compacting_context": "\u6b63\u5728\u538b\u7f29\u4e0a\u4e0b\u6587",
+    "activity.context_used": "\u4e0a\u4e0b\u6587\u5df2\u7528 %d%%",
     "activity.coordinating": "\u6b63\u5728\u534f\u8c03",
     "activity.done_compact": "1 \u5df2\u5b8c\u6210",
     "activity.ended_compact": "%ld \u5df2\u7ed3\u675f",

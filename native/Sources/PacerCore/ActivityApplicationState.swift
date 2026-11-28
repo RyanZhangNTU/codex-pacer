@@ -355,6 +355,7 @@ public struct ActivityApplicationState: Sendable {
         var dates = activities.compactMap(\.rateExpiresAt) + activities.compactMap(\.codexGoalDeadline)
         dates += activities.filter { ![.running, .waitingForInput, .completed, .interrupted].contains($0.phase) }
             .compactMap(\.unconfirmedDisplayDeadline)
+        dates += activities.compactMap { $0.compactingSince(at: now)?.addingTimeInterval(TaskContextState.timeout) }
         if retention > 0 { dates += inbox.activities.compactMap { $0.phaseChangedAt?.addingTimeInterval(retention) } }
         for value in activities where value.phase == .running {
             if let start = value.turnStartedAt, start <= now {

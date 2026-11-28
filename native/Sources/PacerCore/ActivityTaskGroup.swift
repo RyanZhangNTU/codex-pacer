@@ -4,6 +4,7 @@ import Foundation
 /// A Claude task also holds the Codex threads its Codex for Claude runs started.
 public struct ActivityTaskGroup: Sendable {
     public let primary: SessionActivity
+    public var contextLevel: TaskContextLevel? { primary.contextLevel }
     public let members: [SessionActivity]
     public var runningSubagentCount: Int {
         members.filter { $0.id != primary.id && $0.phase == .running && !$0.isCodexDelegation }.count

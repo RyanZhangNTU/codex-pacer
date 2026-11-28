@@ -159,6 +159,17 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     /// Start of a request that spans multiple physical turns.
     var continuedRequestStart: Date?
     private(set) var endedBySubagentHook = false
+    var context = TaskContextState()
+    public var contextLevel: TaskContextLevel? { parentThreadID == nil ? context.level : nil }
+
+    /// Evaluated on the host's existing presentation clock, including while a hook is missing.
+    public func compactingSince(at now: Date) -> Date? {
+        guard parentThreadID == nil else { return nil }
+        guard phase == .running || ([.completed, .interrupted].contains(phase)
+            && (context.start?.at ?? .distantPast) > (phaseChangedAt ?? .distantFuture)) else { return nil }
+        return context.compactingSince(turn: turnID, beganAt: turnStartedAt, now: now)
+    }
+
     public private(set) var turnStartedAt: Date?
     public private(set) var lastObserved: Date?
     public private(set) var phaseChangedAt: Date?
@@ -431,6 +442,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         if sameTurn, turnCharge == nil, other.turnCharge != nil {
             reportedCharge = other.reportedCharge
         }
+        if sameTurn || bothUnattached { context.merge(other.context) }
         if sameTurn, provider == .codex {
             mergeCodexRequestEvidence(from: other)
             if codexRootTurnID == nil || codexRootTurnID == turnID { codexRootTurnID = other.codexRootTurnID ?? codexRootTurnID }
@@ -681,6 +693,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         return phaseAwareRate ? generationRate.expiresAt : outputRate.expiresAt
     }
     public func detail(at now: Date) -> String {
+        if compactingSince(at: now) != nil { return L10n.text("activity.compacting_context") }
         if turnFailed, phase == .interrupted { return L10n.text("activity.failed") }
         if observedPhase(at: now) == .unknown, phase == .waitingForInput { return L10n.text("activity.last_waiting") }
         if observedPhase(at: now) == .unknown, phase == .running, stage == .tool { return L10n.text("activity.last_tool") }
@@ -836,6 +849,21 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             // copied prefix has ended. Its body is otherwise ignored normally.
             guard payload["thread_id"] as? String == threadID else { return }
             ignoringInheritedHistory = false
+        }
+        let outer = value["type"] as? String
+        if parentThreadID == nil, let timestamp = value["timestamp"] as? String,
+           (payload["turn_id"] as? String).map({ $0 == turnID }) ?? true,
+           (payload["thread_id"] as? String).map({ $0.lowercased() == threadID }) ?? true {
+            let event = payload["type"] as? String
+            if outer == "event_msg", event == "token_count", let info = payload["info"] as? [String: Any],
+               let last = info["last_token_usage"] as? [String: Any], let at = Self.parseDate(timestamp) {
+                context.measure(TaskContextLevel(used: TaskContextLevel.count(last["total_tokens"]),
+                    capacity: TaskContextLevel.count(info["model_context_window"]), at: at, codex: true))
+            } else if outer == "compacted" || (outer == "event_msg" && event == "item_completed"
+                && payload["thread_id"] as? String == threadID && (payload["item"] as? [String: Any])?["type"] as? String == "ContextCompaction") {
+                if let at = Self.parseDate(timestamp) { context.boundary = max(at, context.boundary ?? .distantPast) }
+                return
+            }
         }
         if value["type"] as? String == "turn_context" {
             guard let timestamp = value["timestamp"] as? String, let date = Self.parseDate(timestamp),

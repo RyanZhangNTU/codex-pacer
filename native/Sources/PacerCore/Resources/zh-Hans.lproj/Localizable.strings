@@ -127,6 +127,8 @@
 "activity.task_count" = "%ld 个任务";
 "activity.task_count_singular" = "%ld 个任务";
 "activity.task_list" = "任务列表";
+"activity.compacting_context" = "正在压缩上下文";
+"activity.context_used" = "上下文已用 %d%%";
 "activity.thinking" = "思考中";
 "activity.tool" = "正在执行工具";
 "activity.turn_finished" = "本轮结束";

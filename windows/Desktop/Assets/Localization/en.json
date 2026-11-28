@@ -31,6 +31,8 @@
     "activity.background_wait_compact": "Background work",
     "activity.claude_host_missing": "Pacer doesn’t know which app started this Claude task. It can only see the app while the task is running.",
     "activity.codex_host_missing": "Pacer doesn’t know which app started this Codex task. It can only see the app while the task is running.",
+    "activity.compacting_context": "Compacting context",
+    "activity.context_used": "Context %d%% used",
     "activity.coordinating": "Coordinating",
     "activity.done_compact": "1 done",
     "activity.ended_compact": "%ld ended",

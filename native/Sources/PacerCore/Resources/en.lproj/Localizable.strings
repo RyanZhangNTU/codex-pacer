@@ -127,6 +127,8 @@
 "activity.task_count" = "%ld tasks";
 "activity.task_count_singular" = "%ld task";
 "activity.task_list" = "Task list";
+"activity.compacting_context" = "Compacting context";
+"activity.context_used" = "Context %d%% used";
 "activity.thinking" = "Thinking";
 "activity.tool" = "Running a tool";
 "activity.turn_finished" = "Turn finished";
