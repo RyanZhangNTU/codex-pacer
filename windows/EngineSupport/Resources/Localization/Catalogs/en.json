@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "b7279d5cc16c15dfa7c0887136f11f05cb72027ba3ad21838ddaf0097d2a0cfe",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "69c93284f435fb1b84c12637e825694727662c11dd9ff2d1c9ae9b220bed2870",
     "windows/EngineSupport/Resources/Localization/en.json": "9c5c3afa9978273c9160fabc0506c301ea0cb77b9090d382d0ec78e963927bff"
   },
   "strings": {
@@ -1178,6 +1178,8 @@
     "main.panel.budget_link": "Budgets and alerts",
     "main.panel.codex_resets": "Banked resets",
     "main.panel.codex_resets_help": "Shows the available banked resets and a countdown to the next expiry under the Codex quota.",
+    "main.panel.context_level": "Context level",
+    "main.panel.context_level_help": "The circle inside each task's ring fills up as its conversation uses its context window.",
     "main.panel.custom": "Customized",
     "main.panel.details": "Details beside",
     "main.panel.details_help": "Pace, reset and forecast beside a service with its own row.",
@@ -1238,7 +1240,7 @@
     "main.search.collaboration": "codex claude delegate skill hand off second opinion review",
     "main.search.collapsedBar": "layout rings modules warnings bar",
     "main.search.deepseek": "balance budget spend price speed peak",
-    "main.search.expandedPanel": "panel blocks tasks rows page quota rings windows deepseek spend week buttons",
+    "main.search.expandedPanel": "panel blocks tasks rows page quota rings windows deepseek spend week buttons context level conversation",
     "main.search.general": "login startup dock icon language privacy project names",
     "main.search.history": "trend chart usage spend week",
     "main.search.local_harness": "local tasks usage progress MCP",

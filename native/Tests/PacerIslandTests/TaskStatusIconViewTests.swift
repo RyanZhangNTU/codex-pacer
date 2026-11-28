@@ -349,6 +349,155 @@ final class TaskStatusIconViewTests: XCTestCase {
         XCTAssertTrue(still.animationKeys.isEmpty, "Without motion the glyph keeps all its parts lit and the comet stands still")
     }
 
+    private func layer(named name: String, in root: CALayer?) -> CALayer? {
+        guard let root else { return nil }
+        if root.name == name { return root }
+        return root.sublayers?.lazy.compactMap { self.layer(named: name, in: $0) }.first
+    }
+
+    func testOrbSurfaceEnclosesTheMeasuredAreaAndOnlyMovesForChanges() throws {
+        let view = shown()
+        var value = input(UUID().uuidString, .reported, .working, 0.35)
+        value.face = .working(.thinking)
+        view.update(value)
+        XCTAssertNil(layer(named: "contextLevel", in: view.layer))
+        for fraction in [0, 0.05, 0.25, 0.5, 0.81, 0.989, 0.99, 1] {
+            value.contextFraction = fraction
+            view.update(value)
+            let fill = try XCTUnwrap(layer(named: "contextLevel", in: view.layer) as? CAGradientLayer)
+            let stops = try XCTUnwrap(fill.locations?.map(\.doubleValue))
+            let orb = try XCTUnwrap(fill.superlayer), diameter = orb.bounds.width
+            let height = stops[1] * fill.bounds.height
+            let x = 1 - 2 * height / diameter
+            XCTAssertEqual((acos(x) - x * sqrt(1 - x * x)) / .pi, fraction, accuracy: 0.00001)
+            XCTAssertEqual((stops[3] - stops[1]) * fill.bounds.height, (fraction > 0 && fraction < 0.99) ? 0.7 : 0, accuracy: 0.00001)
+            XCTAssertEqual(fill.superlayer?.cornerRadius, diameter / 2)
+            XCTAssertEqual(fill.superlayer?.masksToBounds, true)
+            XCTAssertEqual(fill.startPoint.y, fill.anchorPoint.y)
+            XCTAssertEqual(fill.startPoint.y, orb.contentsAreFlipped() ? 1 : 0)
+            if fraction > 0 {
+                let move = try XCTUnwrap(fill.animation(forKey: "level"))
+                XCTAssertEqual(move.duration, 0.5); XCTAssertEqual(move.repeatCount, 0)
+            }
+            XCTAssertNil(fill.animation(forKey: "press"))
+        }
+        value.contextFraction = nil
+        view.update(value)
+        XCTAssertNil(layer(named: "contextLevel", in: view.layer))
+        for symbol in [TaskSymbol.approval, .input] {
+            value.face = .solid(symbol, read: false); value.contextFraction = 0.7
+            value.compactingSince = Date()
+            view.update(value)
+            XCTAssertTrue(view.showsDisc)
+            XCTAssertNil(layer(named: "contextLevel", in: view.layer))
+            XCTAssertNil(layer(named: "compress", in: view.layer))
+        }
+    }
+
+    func testEndedDiscsKeepTheRingArrivalThenShowBothTones() throws {
+        let view = shown()
+        var value = input(UUID().uuidString, .reported, .working, 0.4)
+        value.face = .working(.tool); value.contextFraction = 0.5
+        view.update(value)
+        for read in [false, true] {
+            value.face = .solid(.completed, read: read); value.mode = .done; value.fraction = 1
+            view.update(value)
+            let level = try XCTUnwrap(layer(named: "contextLevel", in: view.layer) as? CAGradientLayer)
+            let disc = try XCTUnwrap(level.superlayer)
+            let paint = try XCTUnwrap(disc.sublayers?.first { $0.mask != nil })
+            let clip = try XCTUnwrap(paint.mask as? CAGradientLayer)
+            XCTAssertEqual((level.colors as? [CGColor])?.last?.alpha ?? -1, read ? 0.08 : 0.42, accuracy: 0.001)
+            let bottom = try XCTUnwrap(paint.sublayers?.first as? CAGradientLayer)
+            XCTAssertEqual((bottom.colors as? [CGColor])?.last?.alpha ?? -1, read ? 0.21 : 1, accuracy: 0.001)
+            XCTAssertEqual((clip.colors as? [CGColor])?.map(\.alpha), [1, 1, 0, 0])
+            XCTAssertEqual(clip.locations, level.locations)
+            XCTAssertEqual(clip.locations?[1].doubleValue ?? -1, 0.5, accuracy: 0.00001)
+            if !read {
+                let arrival = try XCTUnwrap(disc.mask?.animation(forKey: "fill"))
+                let reveal = try XCTUnwrap(clip.animation(forKey: "level") as? CABasicAnimation)
+                XCTAssertGreaterThanOrEqual(reveal.beginTime + 0.01, arrival.beginTime + arrival.duration)
+                XCTAssertEqual((reveal.fromValue as? [NSNumber])?[1], 1)
+            }
+        }
+    }
+
+    func testRenderedHalfFullFacesKeepTheirTopAndBottomTones() throws {
+        let view = shown(), id = UUID().uuidString
+        let scale = 4, size = Int(Ring.diameter) * scale
+        for face in [Ring.Face.working(.tool), .solid(.completed, read: false), .solid(.completed, read: true)] {
+            view.update(.init(id: id, state: nil, face: face, contextFraction: 0.5, color: ink, animates: false))
+            let context = try XCTUnwrap(CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: size * 4,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.scaleBy(x: CGFloat(scale), y: CGFloat(scale))
+            try XCTUnwrap(view.layer).render(in: context)
+            let bitmap = NSBitmapImageRep(cgImage: try XCTUnwrap(context.makeImage()))
+            // Both samples are inside the circle, clear of the glyph, surface and ring.
+            let top = try XCTUnwrap(bitmap.colorAt(x: size / 2, y: 6 * scale)).alphaComponent
+            let bottom = try XCTUnwrap(bitmap.colorAt(x: size / 2, y: 22 * scale)).alphaComponent
+            switch face {
+            case .working:
+                XCTAssertEqual(top, 0.06, accuracy: 0.02); XCTAssertEqual(bottom, 0.25, accuracy: 0.04)
+            case .solid(_, let read):
+                XCTAssertEqual(top, read ? 0.08 : 0.42, accuracy: 0.02); XCTAssertEqual(bottom, read ? 0.21 : 1, accuracy: 0.02)
+            default: XCTFail("Unexpected sample face")
+            }
+        }
+    }
+
+    func testCompactionHoldsTheArcAndOnlyPressesWhileMotionIsVisible() throws {
+        let view = shown(), id = UUID().uuidString
+        var value = input(id, .reported, .working, 0.43)
+        value.face = .working(.thinking); value.contextFraction = 0.9
+        view.update(value)
+        let since = Date()
+        value.compactingSince = since
+        view.update(value)
+        let glyph = try XCTUnwrap(layer(named: "compress", in: view.layer))
+        let parts = try XCTUnwrap(glyph.sublayers as? [CAShapeLayer])
+        XCTAssertEqual(parts.count, 3)
+        XCTAssertEqual(parts[0].path?.boundingBox.width ?? 0, 9.2, accuracy: 0.05)
+        XCTAssertNil(parts[0].animation(forKey: "press"))
+        XCTAssertEqual(glyph.animation(forKey: "swap")?.duration, 0.3)
+        let fill = try XCTUnwrap(layer(named: "contextLevel", in: view.layer))
+        for animation in [parts[1].animation(forKey: "press"), parts[2].animation(forKey: "press"),
+                          fill.animation(forKey: "press"), fill.animation(forKey: "density")] {
+            let press = try XCTUnwrap(animation)
+            XCTAssertTrue(press.autoreverses); XCTAssertEqual(press.duration * 2, 2.4)
+            XCTAssertEqual(press.preferredFrameRateRange.maximum, 30)
+        }
+        value.fraction = 0.7
+        view.update(value)
+        XCTAssertEqual(view.restingFraction, 0.43)
+        XCTAssertEqual(running(view), [], "Ring light and ordinary glyph rhythms stop")
+        shows = false
+        NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: view.window)
+        XCTAssertTrue(view.animationKeys.isEmpty)
+        XCTAssertNotNil(layer(named: "compress", in: view.layer))
+        shows = true
+        NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: view.window)
+        XCTAssertTrue(view.animationKeys.contains("water.press"))
+        view.update(.init(id: id, state: .reported, fraction: 0.7, face: .working(.thinking), contextFraction: 0.9,
+                          compactingSince: since, color: ink, animates: false))
+        XCTAssertTrue(view.animationKeys.isEmpty)
+        XCTAssertNotNil(layer(named: "compress", in: view.layer))
+        view.update(value)
+        value.contextFraction = 0.25; value.compactingSince = nil
+        view.update(value)
+        XCTAssertEqual(fill.animation(forKey: "level")?.duration, 0.9)
+        XCTAssertNil(fill.animation(forKey: "press"))
+        XCTAssertTrue(view.animationKeys.contains("flow.travel"))
+        value.compactingSince = since
+        view.update(value)
+        value.compactingSince = nil; value.contextFraction = nil
+        view.update(value)
+        XCTAssertFalse(view.showsContextLevel, "An end marker can precede the replacement reading")
+        value.contextFraction = 0.12
+        view.update(value)
+        XCTAssertEqual(layer(named: "contextLevel", in: view.layer)?.animation(forKey: "level")?.duration, 0.9)
+        view.removeFromSuperview()
+        XCTAssertTrue(view.animationKeys.isEmpty)
+    }
+
     func testWorkingGlyphsAreDrawnInsideTheirBox() {
         XCTAssertEqual(TaskGlyphArt.svg("M7.6 10.1l2.6 1.9-2.6 1.9").boundingBoxOfPath.integral, CGRect(x: 7, y: 10, width: 4, height: 4))
         let cloud = TaskGlyphArt.svg("M7.6 18.2h9a4 4 0 0 0 .5-7.97 5.4 5.4 0 0 0-10.3 1.2A3.4 3.4 0 0 0 7.6 18.2z").boundingBoxOfPath

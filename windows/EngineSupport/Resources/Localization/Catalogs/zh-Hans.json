@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "5f01480c75339c795b19429cc9d1ecad3d95845e5b822aca8525e9c7ffdef1da",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "9e918a9c71acc914262dd5308e6bd677d63dbc812485ad08e1f47b355d24f7b9",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "3be42c2706a73f341c7e8c9070eaa88a32b6bccef9c648f36f6fca8c0b2f6111"
   },
   "strings": {
@@ -1178,6 +1178,8 @@
     "main.panel.budget_link": "\u9884\u7b97\u4e0e\u63d0\u9192",
     "main.panel.codex_resets": "\u91cd\u7f6e\u5238",
     "main.panel.codex_resets_help": "\u5728 Codex \u989d\u5ea6\u4e0b\u65b9\u663e\u793a\u53ef\u7528\u7684\u91cd\u7f6e\u5238\u548c\u6700\u8fd1\u4e00\u5f20\u7684\u5230\u671f\u5012\u8ba1\u65f6\u3002",
+    "main.panel.context_level": "\u4e0a\u4e0b\u6587\u6c34\u4f4d",
+    "main.panel.context_level_help": "\u4efb\u52a1\u56fe\u6807\u91cc\u7684\u5706\u4f1a\u968f\u7740\u5bf9\u8bdd\u5360\u7528\u7684\u4e0a\u4e0b\u6587\u589e\u591a\u800c\u586b\u6ee1\u3002",
     "main.panel.custom": "\u5df2\u81ea\u5b9a\u4e49",
     "main.panel.details": "\u65c1\u8fb9\u7684\u8be6\u60c5",
     "main.panel.details_help": "\u5355\u72ec\u4e00\u884c\u65f6\u663e\u793a\u914d\u901f\u3001\u91cd\u7f6e\u548c\u9884\u6d4b\u3002",
@@ -1238,7 +1240,7 @@
     "main.search.collaboration": "Codex Claude \u8c03\u7528 \u534f\u4f5c \u6280\u80fd \u59d4\u6d3e \u7b2c\u4e8c\u610f\u89c1 \u5ba1\u67e5",
     "main.search.collapsedBar": "\u5e03\u5c40 \u5706\u73af \u6a21\u5757 \u8b66\u544a \u72b6\u6001\u680f",
     "main.search.deepseek": "\u4f59\u989d \u9884\u7b97 \u82b1\u8d39 \u4ef7\u683c \u901f\u5ea6 \u9ad8\u5cf0",
-    "main.search.expandedPanel": "\u9762\u677f \u533a\u5757 \u4efb\u52a1 \u884c \u7ffb\u9875 \u989d\u5ea6 \u5706\u73af \u5468\u671f \u82b1\u8d39 \u53bb\u5411 \u6700\u8fd1 \u6309\u94ae",
+    "main.search.expandedPanel": "\u9762\u677f \u533a\u5757 \u4efb\u52a1 \u884c \u7ffb\u9875 \u989d\u5ea6 \u5706\u73af \u5468\u671f \u82b1\u8d39 \u53bb\u5411 \u6700\u8fd1 \u6309\u94ae \u4e0a\u4e0b\u6587\u6c34\u4f4d \u5bf9\u8bdd",
     "main.search.general": "\u767b\u5f55 \u5f00\u673a \u542f\u52a8 Dock \u7a0b\u5e8f\u575e \u56fe\u6807 \u8bed\u8a00 \u9690\u79c1 \u9879\u76ee\u540d\u79f0",
     "main.search.history": "\u8d8b\u52bf \u66f2\u7ebf \u7528\u91cf \u82b1\u8d39 \u4e00\u5468",
     "main.search.local_harness": "\u672c\u5730\u4efb\u52a1 \u7528\u91cf \u8fdb\u5ea6 MCP",

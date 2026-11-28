@@ -107,7 +107,8 @@ struct TaskRowView: View {
     var showsSubagentDots: Bool { options.rowFields.contains(.subagents) && !presentation.subagentDotStates.isEmpty }
 
     var accessibilityText: String {
-        let state = [unread ? L10n.text("common.not_viewed") : nil, status, progressRing?.accessibilityText, turnTime,
+        let state = [unread ? L10n.text("common.not_viewed") : nil, status, presentation.isCompacting ? nil : presentation.contextAccessibilityValue,
+                     progressRing?.accessibilityText, turnTime,
                      showsSubagentDots ? presentation.subagentDotsAccessibility : (subagents > 0 ? subagentText : nil), presentation.delegatedCount > 0 ? presentation.delegatedCountText : nil]
         let model = [modelLabel, effortLabel.map { L10n.text("model.effort_help", $0) }].compactMap { $0 }.joined(separator: " ")
         return activity.provider.displayName + ", " + L10n.text("activity.row_accessibility", name,
@@ -121,9 +122,9 @@ struct TaskRowView: View {
     private var showsRate: Bool { options.shows(.rate) && (rate != nil || activity.claudeCloud == nil) }
     private var showsTime: Bool { options.shows(.turnTime) && turnTime != nil }
     private var showsCost: Bool { options.shows(.cost) && cost != nil }
-    /// A request for the user, a wait for an answer or a failure replaces the
+    /// Attention, failure or context compaction replaces the
     /// readings in a one-line row.
-    private var statusLeads: Bool { attention != nil || phase == .waitingForInput || activity.turnFailed }
+    private var statusLeads: Bool { attention != nil || phase == .waitingForInput || activity.turnFailed || presentation.isCompacting }
 
     @ViewBuilder private func rowContent(measuring: Bool) -> some View {
         HStack(spacing: oneLine ? 8 : 10) {
@@ -173,7 +174,8 @@ struct TaskRowView: View {
         if measuring {
             Color.clear.frame(width: side, height: side)
         } else {
-            TaskStatusIconView(id: activity.id, ring: progressRing, face: face, color: color, animates: !reduceMotion,
+            TaskStatusIconView(id: activity.id, ring: progressRing, face: face, contextFraction: presentation.contextLevel?.fraction,
+                compactingSince: presentation.compactingSince, color: color, animates: !reduceMotion,
                 completionPulseOnly: activity.provider == .codex)
                 .frame(width: full, height: full)
                 .scaleEffect(side / full)

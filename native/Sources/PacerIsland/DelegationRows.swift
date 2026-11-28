@@ -138,7 +138,7 @@ struct DelegationLineView: View {
 
     private var accessibilityText: String {
         let speed = presentation.rateText.map { $0 + " t/s" }
-        return ([AgentProvider.codex.displayName, presentation.title, presentation.progressRing?.accessibilityText, presentation.turnTime, speed]
+        return ([AgentProvider.codex.displayName, presentation.title, presentation.progressRing?.accessibilityText, presentation.contextAccessibilityValue, presentation.turnTime, speed]
             .compactMap { $0 } + presentation.delegationDetail.map { $0.label + " " + $0.value })
             .filter { !$0.isEmpty }.joined(separator: ", ")
     }

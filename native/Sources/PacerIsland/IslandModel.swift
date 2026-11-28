@@ -306,6 +306,7 @@ final class IslandModel: ObservableObject {
             sourceNames: streamStatuses.compactMapValues(\.sourceName), showsDeepSeekTurnCost: showsDeepSeekTurnCost,
             progressRingProviders: progressRingProviders, pageSize: panelOptions.pageSize,
             showsDelegationRows: true)
+        options.showContextLevel = panelOptions.showContextLevel
         options.hiddenTurnCredits = hiddenTurnCredits
         return options
     }
