@@ -33,8 +33,9 @@ internal sealed record CodexDelegationStatus(bool Enabled, bool SkillInstalled, 
 internal sealed record CodexModelChoice(string Slug, string Name, IReadOnlyList<string>? Efforts = null, string? DefaultEffort = null);
 /// Codex task tracking through Pacer's hooks: `off`, `settingUp`, `notInstalled`,
 /// `needsApproval` (Pending of Pacer's hooks still to allow in Codex), `running`,
-/// `notRunning`, `needsCodexUpdate` or `installFailed`.
-internal sealed record CodexHooks(string State, int? Pending = null, bool? OpensSettings = null, int? OptionalPending = null);
+/// `notRunning`, `needsCodexUpdate` or `installFailed`. UpdateAvailable offers the compaction hooks to a
+/// seven-hook plugin; HookCount is how many hooks the installed plugin holds.
+internal sealed record CodexHooks(string State, int? Pending = null, bool? OpensSettings = null, bool UpdateAvailable = false, int? HookCount = null);
 /// A module's account credits as the engine knows them, with what the bill
 /// service reported; drawn the same way in Settings, Overview and the island.
 internal sealed record EngineAccountCredits(string Provider, HarnessAccountCredits Credits, bool Stale,

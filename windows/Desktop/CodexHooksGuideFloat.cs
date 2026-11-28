@@ -19,10 +19,8 @@ internal sealed class CodexHooksGuideFloat : GuideFloatWindow
 {
     /// The plugin's name on Codex's Hooks page (Core's `CodexHookPlugin.displayName`).
     internal const string PluginName = "Codex Pacer";
-    /// Pacer registers this many hooks (Core's `CodexHookEvent.Kind`).
+    /// The picture's total before the engine reports the installed plugin's count (Core's `CodexHookEvent.Kind`).
     internal const int HookCount = 9;
-    private const int CoreHookCount = 7;
-    private readonly bool compactionOnly;
     private static readonly TimeSpan DoneShown = TimeSpan.FromSeconds(8), Lifetime = TimeSpan.FromMinutes(10);
 
     private static CodexHooksGuideFloat? current;
@@ -39,21 +37,20 @@ internal sealed class CodexHooksGuideFloat : GuideFloatWindow
     private string key = "";
 
     /// Shows the guide beside Codex, replacing any other guide.
-    internal static void Open(EngineClient client, UiText ui, ResourceDictionary resources, System.Drawing.Rectangle area, bool compactionOnly = false)
+    internal static void Open(EngineClient client, UiText ui, ResourceDictionary resources, System.Drawing.Rectangle area)
     {
         HarnessGuideFloat.Current?.Close();
         current?.Close();
-        var shown = new CodexHooksGuideFloat(() => client.LatestSnapshot?.CodexHooks, () => client.IsConnectionClosed, ui, resources, area, compactionOnly);
+        var shown = new CodexHooksGuideFloat(() => client.LatestSnapshot?.CodexHooks, () => client.IsConnectionClosed, ui, resources, area);
         shown.Closed += (_, _) => { shown.timer.Stop(); if (current == shown) current = null; };
         current = shown;
         shown.timer.Start();
         shown.Follow();
     }
 
-    internal CodexHooksGuideFloat(Func<CodexHooks?> hooks, Func<bool> disconnected, UiText ui, ResourceDictionary resources, System.Drawing.Rectangle area, bool compactionOnly = false)
+    internal CodexHooksGuideFloat(Func<CodexHooks?> hooks, Func<bool> disconnected, UiText ui, ResourceDictionary resources, System.Drawing.Rectangle area)
         : base(ui, resources, area, "codex_hooks_guide")
     {
-        this.compactionOnly = compactionOnly;
         this.hooks = hooks; this.disconnected = disconnected;
         Header.Text = "Pacer · Codex";
         title = new TextBlock { FontSize = 14.5, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap, Text = ui.Text("codex.hooks.guide.title") };
@@ -94,9 +91,8 @@ internal sealed class CodexHooksGuideFloat : GuideFloatWindow
 
     /// Where the guide stands for the hooks' state: allowed hooks are done; a
     /// state the guide doesn't describe closes it, and Settings says what to do.
-    internal static string Phase(string? state, int? optionalPending = null) => state switch
+    internal static string Phase(string? state) => state switch
     {
-        "needsApproval" or "running" or "notRunning" when optionalPending.HasValue => optionalPending > 0 ? "steps" : "done",
         "running" or "notRunning" => "done",
         "off" or "needsCodexUpdate" or "installFailed" => "gone",
         _ => "steps"
@@ -107,8 +103,7 @@ internal sealed class CodexHooksGuideFloat : GuideFloatWindow
     {
         if (disconnected() || DateTime.UtcNow - openedAt > Lifetime) { Close(); return; }
         var state = hooks();
-        int? optionalPending = compactionOnly ? state?.OptionalPending ?? 0 : null;
-        switch (Phase(state?.State, optionalPending))
+        switch (Phase(state?.State))
         {
             case "gone": Close(); return;
             case "done":
@@ -118,7 +113,9 @@ internal sealed class CodexHooksGuideFloat : GuideFloatWindow
                 break;
             default:
                 doneSince = null;
-                Display("steps:" + (optionalPending ?? (state?.State == "needsApproval" ? state.Pending : null) ?? CoreHookCount));
+                // The installed plugin holds seven hooks, or nine with compaction, as the Mac's picture counts them.
+                int total = state?.HookCount ?? HookCount;
+                Display("steps:" + (state?.State == "needsApproval" && state.Pending is int pending ? pending : total) + ":" + total);
                 break;
         }
     }
@@ -131,7 +128,11 @@ internal sealed class CodexHooksGuideFloat : GuideFloatWindow
             key = state;
             title.Visibility = steps.Visibility = art.Visibility = alternative.Visibility = finished ? Visibility.Collapsed : Visibility.Visible;
             done.Visibility = finished ? Visibility.Visible : Visibility.Collapsed;
-            if (!finished) art.Child = Picture(int.Parse(state["steps:".Length..], System.Globalization.CultureInfo.InvariantCulture));
+            if (!finished)
+            {
+                var counts = state["steps:".Length..].Split(':');
+                art.Child = Picture(int.Parse(counts[0], System.Globalization.CultureInfo.InvariantCulture), int.Parse(counts[1], System.Globalization.CultureInfo.InvariantCulture));
+            }
             if (finished && Presented && done.Children[1] is TextBlock line)
                 UIElementAutomationPeer.FromElement(line)?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
         }
@@ -151,7 +152,7 @@ internal sealed class CodexHooksGuideFloat : GuideFloatWindow
     /// A drawing of Codex's Hooks settings: Hooks in its sidebar, Pacer's plugin
     /// under From Plugins with the hooks waiting for review, and Trust all inside
     /// a ring. Numbers mark the steps. The steps already say what to do.
-    private DecorativeBorder Picture(int pending)
+    private DecorativeBorder Picture(int pending, int total)
     {
         static Border Placeholder(double width)
         {
@@ -199,7 +200,7 @@ internal sealed class CodexHooksGuideFloat : GuideFloatWindow
         plugin.Children.Add(icon);
         var name = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) };
         name.Children.Add(Text(PluginName, 11.5, strong: true));
-        name.Children.Add(Text(ui.Text("codex.hooks.guide.picture.count").Replace("%ld", HookCount.ToString(System.Globalization.CultureInfo.CurrentCulture), StringComparison.Ordinal), 10, brush: "SettingsSecondary"));
+        name.Children.Add(Text(ui.Text("codex.hooks.guide.picture.count").Replace("%ld", total.ToString(System.Globalization.CultureInfo.CurrentCulture), StringComparison.Ordinal), 10, brush: "SettingsSecondary"));
         plugin.Children.Add(name);
         var row = new Border { CornerRadius = new CornerRadius(7), BorderThickness = new Thickness(1), Padding = new Thickness(8, 0, 8, 0), Margin = new Thickness(0, 8, 0, 8), Child = plugin };
         row.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); row.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");

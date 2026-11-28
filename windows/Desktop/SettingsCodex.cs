@@ -18,6 +18,7 @@ internal sealed partial class SettingsWindow
 {
     private CheckBox? codexEnabled, codexEmbedded, codexProgress, codexDurable;
     private CodexCompactionHint? codexCompactionHint;
+    private bool updatingCodexHooks;
     private TextBlock? codexProgressState;
     private Button? codexProgressRetry;
     private FrameworkElement? codexProgressStatus;
@@ -38,7 +39,19 @@ internal sealed partial class SettingsWindow
     private readonly string?[] pendingSourceValidation = [null, null];
     private Task sourceInspection = Task.CompletedTask;
 
-    private CodexCompactionHint CompactionHint() => new(ui, () => OpenCodexHooksGuide(compactionOnly: true));
+    private CodexCompactionHint CompactionHint() => codexCompactionHint = new(ui, UpdateCodexHooks) { IsEnabled = !updatingCodexHooks };
+
+    private async Task UpdateCodexHooks()
+    {
+        if (updatingCodexHooks || codexCompactionHint == null) return;
+        updatingCodexHooks = true; codexCompactionHint.IsEnabled = false;
+        try { await RunStatusAction("codex.monitoring", "update"); }
+        finally
+        {
+            updatingCodexHooks = false;
+            if (codexCompactionHint != null) codexCompactionHint.IsEnabled = true;
+        }
+    }
 
     private void ClearCodex()
     {
@@ -68,7 +81,7 @@ internal sealed partial class SettingsWindow
         codexSections.Children.Add(SectionTitle(ui.Text("main.section.status"), 0));
         var monitoring = new StackPanel();
         monitoring.Children.Add(ModuleStatusRow("codex.monitoring", ui.Text("provider.monitoring"), ui.Text("codex.hooks.info")));
-        codexCompactionHint = CompactionHint(); monitoring.Children.Add(codexCompactionHint);
+        monitoring.Children.Add(CompactionHint());
         codexSections.Children.Add(Card(monitoring,
             ModuleStatusRow("codex.account", ui.Text("provider.account")), ProviderQuotaRow("codex")));
 

@@ -163,6 +163,7 @@ internal sealed partial class SettingsWindow
         editors.RemoveAll(editor => editor.IsDescendantOf(overviewBody));
         foreach (UIElement child in overviewBody.Children) PageAccessibility.Retire(child);
         overviewBody.Children.Clear();
+        codexCompactionHint = null;
         if (update != null && (update != (dismissedUpdate ?? updater?.DismissedBanner) || inlineDownload != null)) overviewBody.Children.Add(UpdateBanner(update));
         else if (CheckFailureBannerShown(update)) overviewBody.Children.Add(CheckFailureBanner());
         if (attention.Count > 0) overviewBody.Children.Add(AttentionCard(attention));

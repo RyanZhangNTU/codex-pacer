@@ -63,11 +63,11 @@ internal sealed partial class SettingsWindow
     }
     /// Opens Codex's settings with the floating guide beside it on Settings' screen;
     /// a Codex that cannot open them takes the guide away again.
-    private void OpenCodexHooksGuide(bool compactionOnly = false)
+    private void OpenCodexHooksGuide()
     {
         if ((demo && guideLinkLauncher == null) || sourceClosed || engine is not { IsConnectionClosed: false } client) return;
         var area = System.Windows.Forms.Screen.FromHandle(new System.Windows.Interop.WindowInteropHelper(this).Handle).WorkingArea;
-        CodexHooksGuideFloat.Open(client, ui, Resources, area, compactionOnly);
+        CodexHooksGuideFloat.Open(client, ui, Resources, area);
         try
         {
             if (guideLinkLauncher != null)

@@ -306,7 +306,7 @@ internal static class ProviderHomeSettingsChecks
     private static async Task CheckCodexHooksGuideFloat(SettingsWindow settings, UiText ui)
     {
         var area = new System.Drawing.Rectangle(100, 80, 1600, 1000);
-        CodexHooks? hooks = new("needsApproval", 3, true);
+        CodexHooks? hooks = new("needsApproval", 3, true, HookCount: 7);
         var shown = new CodexHooksGuideFloat(() => hooks, () => false, ui, settings.Resources, area);
         T Part<T>(string id) where T : FrameworkElement => Descendants(shown).OfType<T>().First(value => AutomationProperties.GetAutomationId(value) == id);
         bool closed = false; shown.Closed += (_, _) => closed = true;
@@ -320,8 +320,13 @@ internal static class ProviderHomeSettingsChecks
                 && AutomationProperties.GetName(Part<StackPanel>("codex_hooks_guide.steps")).Contains(CodexHooksGuideFloat.PluginName, StringComparison.Ordinal),
                 "It names the three clicks, with Pacer's plugin as Codex lists it");
             string pending = ui.Text("codex.hooks.guide.picture.review").Replace("%ld", "3", StringComparison.Ordinal);
-            Check(Descendants(shown).OfType<DecorativeBorder>().Count() == 1 && Descendants(shown).OfType<TextBlock>().Any(value => value.Text == pending),
-                "Its picture shows the hooks still waiting for review");
+            string Total(int count) => ui.Text("codex.hooks.guide.picture.count").Replace("%ld", count.ToString(System.Globalization.CultureInfo.CurrentCulture), StringComparison.Ordinal);
+            Check(Descendants(shown).OfType<DecorativeBorder>().Count() == 1 && Descendants(shown).OfType<TextBlock>().Any(value => value.Text == pending)
+                && Descendants(shown).OfType<TextBlock>().Any(value => value.Text == Total(7)),
+                "Its picture shows the hooks still waiting for review, out of the installed plugin's seven");
+            hooks = new("needsApproval", 9, true, HookCount: 9);
+            shown.Follow(); await Pump();
+            Check(Descendants(shown).OfType<TextBlock>().Any(value => value.Text == Total(9)), "An updated plugin's picture counts nine hooks");
             var bounds = NativeBounds(handle);
             Check(Math.Abs(bounds.Right - area.Right) <= 12 && Math.Abs(bounds.Bottom - area.Bottom) <= 12, "It sits in the corner of Settings' screen");
             hooks = new("running");

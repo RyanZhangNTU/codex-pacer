@@ -214,50 +214,68 @@ internal static class CodexSettingsChecks
         await using var engine = new EngineClient();
         await engine.StartAsync(Environment.ProcessPath!, true, "compactionHints", referenceFixture: true);
         var session = new PreferencesSession(new DesktopPreferences { LastSettingsPane = "overview" }, _ => Task.CompletedTask, _ => true);
-        Uri? opened = null;
-        var window = new SettingsWindow(ui, session, new Startup(), true, dark, engine, guideLinkLauncher: uri => { opened = uri; return true; })
+        int guideLinks = 0;
+        var window = new SettingsWindow(ui, session, new Startup(), true, dark, engine, guideLinkLauncher: _ => { guideLinks++; return true; })
             { ShowActivated = false, ShowInTaskbar = false };
-        Task Publish(string state, int count, bool canOpen = true) => PresentationWait.CommandSnapshotAsync(engine, "setHooks", new
+        Task Publish(object hooks) => PresentationWait.CommandSnapshotAsync(engine, "setHooks", new
         {
             modules = new[] { new EngineModule("codex", "enabled", true, true, Monitoring: new("on", "success", ui.Text("monitoring.on"))) },
-            hooks = new CodexHooks(state, OpensSettings: canOpen, OptionalPending: count)
+            hooks
         });
         TextBlock? Hint() => Descendants(window).OfType<TextBlock>().SingleOrDefault(text => text.IsVisible && AutomationProperties.GetAutomationId(text) == "settings.codex.compaction.hint");
+        Button UpdateButton() => Find<Button>(window, "settings.codex.hooks.update");
+        var available = new { state = "running", updateAvailable = true };
         try
         {
             window.Show();
-            await Publish("running", 2);
             foreach (string pane in new[] { "overview", "codex" })
             {
                 await window.NavigateAsync(pane);
-                await Until(() => Hint()?.Text == ui.Text("codex.hooks.compaction_hint").Replace("%d", "2"), "Optional hooks show on " + pane);
+                foreach (string state in new[] { "running", "notRunning", "needsApproval", "settingUp", "off", "installFailed", "needsCodexUpdate", "notInstalled" })
+                {
+                    await Publish(new { state, updateAvailable = false });
+                    Check(Hint() == null, $"No hook update on {pane} while {state}");
+                }
+                await Publish(new { state = "running" });
+                Check(Hint() == null, "Snapshots without the update flag leave the hint hidden");
+                await Publish(available);
+                await Until(() => Hint()?.Text == ui.Text("codex.hooks.update_hint"), "Hook update text on " + pane);
                 var hint = Hint()!;
-                Check(hint.FontSize == 12 && hint.TextWrapping == TextWrapping.Wrap && Find<Button>(window, "settings.codex.compaction.open").IsVisible, "Quiet wrapping hint and Open Codex");
+                var update = UpdateButton();
+                Check(hint.FontSize == 12 && hint.TextWrapping == TextWrapping.Wrap && update.IsVisible && update.IsEnabled
+                    && Equals(update.Content, ui.Text("codex.hooks.update")), "The hint shows an Update button on " + pane);
                 hint.BringIntoView(); window.UpdateLayout();
                 window.CapturePreview(Path.Combine(output, $"context-hint-{pane}-{language}-{(dark ? "dark" : "light")}.png"));
             }
-            Check(Find<TextBlock>(window, "settings.codex.monitoring").Text == ui.Text("monitoring.on") && CodexHooksGuideFloat.Current == null,
-                "Optional approvals leave monitoring on and wait for a click");
-            Invoke(Find<Button>(window, "settings.codex.compaction.open"));
-            await Until(() => CodexHooksGuideFloat.Current?.IsVisible == true, "Open Codex shows its guide");
-            var guide = CodexHooksGuideFloat.Current!;
-            Check(opened == new Uri("codex://settings") && Descendants(guide).OfType<TextBlock>().Any(text =>
-                text.Text == ui.Text("codex.hooks.guide.picture.review").Replace("%ld", "2")), "The guide opens Codex settings and counts optional hooks");
-            await Publish("notRunning", 1, false);
-            guide.Follow();
-            Check(Hint()?.Text == ui.Text("codex.hooks.compaction_hint").Replace("%d", "1") && !Find<Button>(window, "settings.codex.compaction.open").IsVisible
-                && Descendants(guide).OfType<TextBlock>().Any(text => text.Text == ui.Text("codex.hooks.guide.picture.review_one").Replace("%ld", "1")), "Without a desktop action the pending count still updates");
-            await Publish("running", 0); guide.Follow();
-            Check(Hint() == null && Find<TextBlock>(guide, "codex_hooks_guide.done").IsVisible, "Trust removes the hint and finishes the optional guide");
-            await window.NavigateAsync("overview");
-            foreach (string state in new[] { "needsApproval", "settingUp", "off", "installFailed", "needsCodexUpdate", "notInstalled" })
-            {
-                await Publish(state, 2);
-                Check(Hint() == null, "No optional hint during " + state);
-            }
-            await Publish("running", 2);
+            Check(Find<TextBlock>(window, "settings.codex.monitoring").Text == ui.Text("monitoring.on")
+                && await engine.QueryAsync<int>("inspectHookUpdates") == 0, "Monitoring stays on until the user chooses Update");
             await window.NavigateAsync("general");
-            Check(Hint() == null, "The General page has no optional hook hint");
+            Check(Hint() == null, "General has no hook update");
+            await window.NavigateAsync("codex");
+            Invoke(UpdateButton());
+            await Until(() => !UpdateButton().IsEnabled, "Update is disabled while the command is pending");
+            await window.NavigateAsync("overview");
+            Check(!UpdateButton().IsEnabled, "Switching panes keeps the pending update disabled");
+            await engine.SendAsync("finishHookUpdate", new { reject = false });
+            await Until(() => engine.LatestSnapshot?.CodexHooks is { State: "needsApproval", Pending: 9, OpensSettings: true } && Hint() == null,
+                "The update offer disappears when all nine hooks need approval");
+            Check(await engine.QueryAsync<int>("inspectHookUpdates") == 1 && guideLinks == 0 && CodexHooksGuideFloat.Current == null,
+                "One click sends one update command and leaves the guide closed");
+            await Publish(available);
+            Invoke(UpdateButton());
+            await Until(() => !UpdateButton().IsEnabled, "Overview disables Update while waiting for the engine");
+            await engine.SendAsync("finishHookUpdate", new { reject = true });
+            await Until(() => Find<TextBlock>(window, "settings.issue") is { IsVisible: true } issue
+                && issue.Text == ui.Text("windows.connection.refresh_failed") && UpdateButton().IsEnabled,
+                "A rejected update shows the Settings issue and enables Update again");
+            await window.NavigateAsync("codex");
+            var retry = UpdateButton();
+            Invoke(retry);
+            await Until(() => !retry.IsEnabled, "The user can retry the update");
+            await engine.SendAsync("shutdown");
+            await Until(() => engine.IsConnectionClosed && Hint() == null && retry.IsEnabled
+                && Find<TextBlock>(window, "settings.issue").Text == ui.Text("windows.connection.refresh_failed"),
+                "A closed connection ends the pending update and shows the Settings issue");
         }
         finally { CodexHooksGuideFloat.Current?.Close(); window.AllowClose = true; window.Close(); }
     }
