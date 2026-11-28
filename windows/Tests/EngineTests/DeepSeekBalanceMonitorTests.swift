@@ -229,6 +229,29 @@ final class DeepSeekBalanceMonitorTests: XCTestCase {
         let fresh = await monitor.currentState(); XCTAssertEqual(fresh.balance?.total, 100); XCTAssertNotEqual(fresh.token, signedOut.token)
         await monitor.stop()
     }
+    func testUnresolvedAutomaticBillingReadsThroughTheWebAndBindsHistoryOnceKnown() async {
+        for resolved in [DeepSeekAuthMode.account, .apiKey] {
+            let clock = Clock(start), memory = Memory(), capture = Capture()
+            memory.setMode(nil); memory.setKey("sk-synthetic-first-key-0000")
+            var services = memory.services(clock)
+            services.readWeb = { _ in .init(total: 100, capturedAt: clock.read(), source: .web, sessionFingerprint: String(repeating: "1", count: 64)) }
+            let monitor = DeepSeekBalanceMonitor(services: services, now: { clock.read() }, output: { await capture.append($0) })
+            await monitor.configure(home: home, source: .automatic, enabled: true, recentProvider: nil, context: 1)
+            let unresolved = await monitor.currentState()
+            XCTAssertNil(unresolved.mode); XCTAssertEqual(unresolved.readMode, .account); XCTAssertNil(unresolved.error)
+            let began = await monitor.refreshIfDue(active: true); XCTAssertTrue(began, "Settings promises web sign-in until Harness's billing is known (#308)")
+            await monitor.refreshCompletion?.value
+            var state = await monitor.currentState()
+            XCTAssertEqual(state.balance?.total, 100); XCTAssertNil(state.error); XCTAssertEqual(state.history.source, "web")
+            XCTAssertEqual(memory.counts().reads, 0, "An unknown billing mode never sends the pasted key")
+            memory.setMode(resolved)
+            await monitor.configure(home: home, source: .automatic, enabled: true, recentProvider: nil, context: 2)
+            state = await monitor.currentState()
+            XCTAssertEqual(state.history.samples.count, resolved == .account ? 1 : 0,
+                "Learning the billing mode keeps matching web readings and drops them for an API key")
+            await monitor.stop()
+        }
+    }
     func testAFailedBrowserClearDoesNotAutomaticallyReadTheOldAccountAgain() async {
         let clock = Clock(start), memory = Memory(), capture = Capture()
         memory.setMode(.account)

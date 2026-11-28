@@ -340,6 +340,30 @@ final class DeepSeekIslandTests: XCTestCase {
         await model.shutdown()
     }
 
+    func testUnresolvedAutomaticBillingSignsInAndReadsThroughTheWeb() async throws {
+        // #308: Settings promised web sign-in, yet a successful sign-in never read the balance.
+        let (model, _) = try balanceModel(source: .automatic)
+        var webReads = 0, apiReads = 0
+        model.deepseekBalanceReads.web = {
+            webReads += 1
+            return .init(total: 120, capturedAt: Date(), source: .web, sessionFingerprint: String(repeating: "1", count: 64))
+        }
+        model.deepseekBalanceReads.api = { _ in
+            apiReads += 1
+            return .init(total: 80, capturedAt: Date(), source: .apiKey)
+        }
+        model.receiveDeepSeekUpdate([], statuses: [:], requests: [], usage: .init(provider: "third-party-channel"))
+        XCTAssertNil(model.deepseekBalanceMode, "Harness's billing is still unknown")
+        model.completeDeepSeekSignIn(newSession: true)
+        await waitUntil { model.deepseekBalance?.total == 120 && !model.deepseekRefreshing }
+        XCTAssertGreaterThanOrEqual(webReads, 1)
+        XCTAssertEqual(apiReads, 0, "An unknown billing mode never sends the pasted key")
+        XCTAssertNil(model.deepseekBalanceError)
+        XCTAssertFalse(model.deepseekConnectionNeeded)
+        XCTAssertNil(model.deepseekBalanceMode, "The wallet history stays unbound until Harness's billing is known")
+        await model.shutdown()
+    }
+
     func testBudgetModeFillsInSuggestionsOnceAndKeepsAmountsWhenSwitchedOff() throws {
         let (defaults, _) = try defaults(ProviderModules(codexMode: .disabled, claudeMode: .disabled, deepseekMode: .enabled))
         var settings = DeepSeekBudgetSettings.load(from: defaults)

@@ -6,6 +6,8 @@ public struct DeepSeekBalanceBinding: Equatable, Sendable {
     public let mode: DeepSeekAuthMode?
     public init(source: DeepSeekBalanceSelection, mode: DeepSeekAuthMode?) { self.source = source; self.mode = mode }
     public var historySource: String? { mode.map { $0 == .account ? "web" : "apiKey" } }
+    /// An unresolved automatic binding still reads through web sign-in.
+    public var readMode: DeepSeekAuthMode { mode ?? .account }
     public func restoredHistory(_ history: DeepSeekBalanceHistory) -> DeepSeekBalanceHistory {
         if let expected = historySource, let saved = history.source, expected != saved { return .init() }
         return history

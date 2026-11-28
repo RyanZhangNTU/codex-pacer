@@ -38,7 +38,7 @@ final class DeepSeekScenarioTableTests: XCTestCase {
     }
 
     private struct Mode: Decodable {
-        let detected: String?, source: DeepSeekBalanceSelection, effective: String?, keyEditor: Bool, showDetection: Bool
+        let detected: String?, source: DeepSeekBalanceSelection, effective: String?, read: DeepSeekAuthMode, keyEditor: Bool, showDetection: Bool
         let title: String, detectedKey: String
         let action: DeepSeekConnectionPresentation.Action?, rejectedAction: DeepSeekConnectionPresentation.Action
     }
@@ -58,6 +58,8 @@ final class DeepSeekScenarioTableTests: XCTestCase {
             let detected = DeepSeekAuthMode.detect(home: home)
             XCTAssertEqual(detected?.rawValue, mode.detected)
             XCTAssertEqual(mode.source.mode(detected: detected)?.rawValue, mode.effective)
+            XCTAssertEqual(mode.source.readMode(detected: detected), mode.read, "Unknown billing reads through web sign-in (#308)")
+            XCTAssertEqual(DeepSeekBalanceBinding(source: mode.source, mode: mode.source.mode(detected: detected)).readMode, mode.read)
             for age in table.ages {
                 let balance = DeepSeekBalance(total: 86.4, capturedAt: F.now.addingTimeInterval(-age.age), source: .apiKey)
                 let value = DeepSeekConnectionPresentation(source: mode.source, detected: detected, balance: balance,
@@ -75,5 +77,17 @@ final class DeepSeekScenarioTableTests: XCTestCase {
             XCTAssertFalse(rejected.connected); XCTAssertEqual(rejected.color, .orange); XCTAssertEqual(rejected.action, mode.rejectedAction)
         }
         XCTAssertEqual(checked, 54)
+    }
+
+    func testHarnessProfilesAreDetectedWithAnyLineEnding() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-profile-endings-" + UUID().uuidString)
+        let profile = home.appendingPathComponent("profiles/desktop/cordis.patch.yml")
+        try FileManager.default.createDirectory(at: profile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        for ending in ["\n", "\r\n", "\r"] {
+            let text = ["- id: model", "  config:", "    provider: deepseek-official", "    model: deepseek-flash", ""].joined(separator: ending)
+            try Data(text.utf8).write(to: profile)
+            XCTAssertEqual(DeepSeekAuthMode.detect(home: home), .apiKey, "A profile saved with \(ending.debugDescription) line endings")
+        }
     }
 }

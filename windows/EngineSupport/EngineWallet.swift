@@ -27,7 +27,7 @@ struct EngineWallet: Codable, Equatable {
          reminders: EngineReminderSettings = .init(), connection: DeepSeekBalanceState? = nil, panel: ExpandedPanelOptions = .init(),
          taskTitle: (String) -> String = { _ in L10n.text("deepseek.task_untitled") }) {
         let presentation = DeepSeekDialPresentation(wallet: wallet, at: now, refreshing: connection?.refreshing ?? false,
-            needsConnection: connection.map { $0.error?.needsConnection == true || $0.mode == nil } ?? true,
+            needsConnection: connection.map { $0.error?.needsConnection == true } ?? true,
             apiKey: connection?.mode == .apiKey)
         dial = presentation
         solo = .init(wallet: wallet, at: now, hideProjects: hideProjects, panel: panel, taskTitle: taskTitle)

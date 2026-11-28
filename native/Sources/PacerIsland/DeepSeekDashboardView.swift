@@ -21,7 +21,7 @@ struct DeepSeekDayDial: View {
     private var scale: CGFloat { size / 108 }
     private var presentation: DeepSeekDialPresentation {
         .init(wallet: wallet, at: model.now, refreshing: model.deepseekRefreshing,
-            needsConnection: model.deepseekConnectionNeeded || model.deepseekBalanceMode == nil,
+            needsConnection: model.deepseekConnectionNeeded,
             apiKey: model.deepseekBalanceMode == .apiKey)
     }
     private var connectTitle: String? { presentation.connectTitle }

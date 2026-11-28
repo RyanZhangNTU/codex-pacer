@@ -401,7 +401,7 @@ Cost is estimated locally from tokens and `DeepSeekPricing` (CNY per million tok
 
 ### Balance, history and budgets
 
-- **Source.** `deepseekBalanceSource` is `automatic`, `web` or `apiKey`. Automatic follows the provider of the latest DeepSeek request, else the `provider:` lines of the profiles' `cordis.patch.yml` (`deepseek-account` means web sign-in, the others an API key). Pacer never reads `.credentials.yaml` or Harness's key.
+- **Source.** `deepseekBalanceSource` is `automatic`, `web` or `apiKey`. Automatic follows the provider of the latest DeepSeek request, else the `provider:` lines of the profiles' `cordis.patch.yml` (`deepseek-account` means web sign-in, the others an API key). Until one of them is found, Automatic reads through web sign-in, as Settings says, while the wallet history stays unbound: matching web readings are kept once the account is detected and dropped for an API key. Pacer never reads `.credentials.yaml` or Harness's key.
 - **Web.** Pacer's own `WKWebsiteDataStore`, separate from Claude's. Reads run `GET /api/v0/users/get_user_summary` with the page's own token inside an offscreen same-origin page and return only wallet amounts and the platform's alert line; codes 40002/40003 mean signed out.
 - **API key.** Kept in the login-keychain item "Codex Pacer DeepSeek balance" and sent only to `GET https://api.deepseek.com/user/balance`.
 - **Cadence.** Every 60 s while expanded or a DeepSeek turn runs, 300 s otherwise, about 20 s after a turn ends; failures back off. A sign-in or key problem stops periodic reads. A balance older than 10 minutes is stale.

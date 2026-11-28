@@ -72,6 +72,41 @@ final class EngineDeepSeekConnectionTests: XCTestCase {
         XCTAssertEqual(capture.webRequests().count, 8)
         await runtime.stop()
     }
+    func testAnAutomaticSourceThatHasNotDetectedHarnessBillingSignsInThroughTheWeb() async throws {
+        // #308: Settings promised web sign-in, yet a successful sign-in never read the balance.
+        let now = Date(timeIntervalSince1970: 1_800_000_000), capture = Capture()
+        let services = DeepSeekBalanceServices(readKey: { nil }, saveKey: { _ in false }, removeKey: { true },
+            readAPI: { _ in throw DeepSeekBalanceError.missingKey }, fingerprint: { _, _ in nil }, detect: { _, _ in nil })
+        let runtime = EngineRuntime(demo: true, now: { now }, balanceServices: services, output: { capture.append($0) })
+        func command(_ method: String, _ params: [String: Any] = [:]) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
+        }
+        func reply(_ request: (id: String, context: String), _ value: [String: Any]) throws -> Data {
+            try command("completeDeepSeekWebRead", ["webRequestID": request.id, "balanceContext": request.context, "webReply": value])
+        }
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["deepseek"], "deepseekSettings": ["mode": "balance",
+            "daily": NSNull(), "weekly": NSNull(), "ringPeriod": "day", "speedSource": "local", "showsTurnCost": true, "balanceSource": "automatic"]]))
+        _ = await runtime.receive(try command("setDeepSeekWebHost", ["webAvailable": true]))
+        try await wait { capture.webRequests().count == 1 }
+        var connection = try XCTUnwrap(capture.last()?.deepseekConnection)
+        XCTAssertNil(connection.mode, "Harness's billing is still unknown")
+        XCTAssertEqual(connection.reading.detectedText, L10n.text("deepseek.detected.unknown"))
+        _ = await runtime.receive(try reply(try XCTUnwrap(capture.webRequests().last), ["state": "signedOut"]))
+        try await wait { capture.last()?.wallet?.dial?.connectTitle == L10n.text("deepseek.sign_in") }
+        connection = try XCTUnwrap(capture.last()?.deepseekConnection)
+        _ = await runtime.receive(try command("beginDeepSeekWebSignIn", ["balanceContext": connection.context]))
+        _ = await runtime.receive(try command("deepSeekWebSessionChanged", ["balanceContext": connection.context, "webNewSession": true]))
+        XCTAssertNil(capture.lastError())
+        try await wait { capture.webRequests().count == 2 }
+        _ = await runtime.receive(try reply(try XCTUnwrap(capture.webRequests().last), ["state": "ok", "normal": ["35.60"], "bonus": ["6.40"],
+            "sessionFingerprint": String(repeating: "7", count: 64)]))
+        try await wait { capture.last()?.wallet?.balance == 42 }
+        let snapshot = try XCTUnwrap(capture.last())
+        XCTAssertNil(snapshot.wallet?.dial?.connectTitle)
+        XCTAssertEqual(snapshot.deepseekConnection?.reading.connected, true)
+        XCTAssertNil(snapshot.deepseekConnection?.mode, "The wallet history stays unbound until Harness's billing is known")
+        await runtime.stop()
+    }
     func testRealProtocolKeyEditsKeepSecretsOutOfSnapshotsAndLegacySettingsRetainTheSource() async throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000), memory = KeyMemory(), capture = Capture()
         let fingerprints = DeepSeekHistoryCredential(loadSalt: { Data(repeating: 7, count: 32) }, saveSalt: { _ in })
