@@ -89,6 +89,7 @@ private final class FakeHost: AntigravityLocalHost, @unchecked Sendable {
             let calls: [[String: Any]] = steps.indices.filter { steps[$0].type == "PLANNER_RESPONSE" }.map { i in
                 ["stepIndices": [i, i + 1], "executionId": "call-owner",
                  "chatModel": ["responseModel": "gemini-4-hydrogen-tiered-high", "timeToFirstToken": "1s", "streamingDuration": "2s",
+                               "chatStartMetadata": ["contextWindowMetadata": ["estimatedTokensUsed": String(i * 1000), "maxContextTokens": "512000"]],
                                "usage": ["outputTokens": "100", "thinkingOutputTokens": "40"]]]
             }
             var run = ["runState": "RUN_STATE_" + state]
@@ -724,6 +725,8 @@ final class AntigravityTests: XCTestCase {
         await m.refresh()
         snapshot = await updates.last
         var task = try XCTUnwrap(snapshot.activities.first)
+        XCTAssertEqual(task.contextLevel?.usedTokens, 1000)
+        XCTAssertEqual(task.contextLevel?.capacityTokens, 512000)
         XCTAssertEqual(task.turnID, turn); XCTAssertEqual(task.stage, .tool)
         XCTAssertEqual(task.toolWaitStartedAt, epoch.addingTimeInterval(6))
         XCTAssertEqual(task.modelName, "Gemini 4 Hydrogen"); XCTAssertEqual(task.reasoningEffort, "high")
@@ -735,6 +738,7 @@ final class AntigravityTests: XCTestCase {
         snapshot = await updates.last
         task = try XCTUnwrap(snapshot.activities.first)
         XCTAssertEqual(task.phase, .completed); XCTAssertFalse(task.isHistoricalCompletion)
+        XCTAssertEqual(task.contextLevel?.usedTokens, 3000)
         XCTAssertEqual(task.turnID, turn); XCTAssertEqual(task.responsePerformance?.responseID, "3")
         XCTAssertEqual(task.firstTokenReportedAt, epoch.addingTimeInterval(3))
         app.replaceHarness(.antigravity, with: snapshot)

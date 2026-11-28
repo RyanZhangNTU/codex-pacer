@@ -144,6 +144,7 @@ private final class WorkBuddySessionStore {
     }
 
     struct UsageReading {
+        var levels: [String: TaskContextLevel] = [:]
         var latest: HarnessUsage?
         var turnCredits: [String: Double] = [:]
     }
@@ -405,7 +406,7 @@ private final class WorkBuddySessionStore {
 
     /// Read the latest session's overview and the charges for the bounded set
     /// of turns that the transcript reader could identify.
-    func usage(owner: String, now: Date, latest: String?, requests: [String: String]) -> UsageReading {
+    func usage(owner: String, now: Date, latest: String?, sessions: Set<String>, requests: [String: String]) -> UsageReading {
         guard let db, let latest else { return UsageReading() }
         return withQueryBudget(db) {
             var result = UsageReading()
@@ -421,10 +422,10 @@ private final class WorkBuddySessionStore {
             let copied = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
             guard sqlite3_bind_text(statement, 2, owner, -1, copied) == SQLITE_OK else { return result }
             // Use the session primary key and reuse the statement for each lookup.
-            let sessions = [latest] + requests.keys.filter { $0 != latest }
+            let ordered = [latest] + sessions.subtracting([latest]).sorted()
             guard sqlite3_exec(db, "BEGIN", nil, nil, nil) == SQLITE_OK else { return result }
             defer { sqlite3_exec(db, "ROLLBACK", nil, nil, nil) }
-            for session in sessions {
+            for session in ordered {
                 defer { sqlite3_reset(statement) }
                 guard sqlite3_bind_text(statement, 1, session, -1, copied) == SQLITE_OK else { break }
                 let status = sqlite3_step(statement)
@@ -434,14 +435,14 @@ private final class WorkBuddySessionStore {
                       now.timeIntervalSince(measured) < Self.endingLifetime else { continue }
                 let credits = Self.credits(Self.text(statement, 3, limit: 16_384), request: requests[session], includeTotal: session == latest)
                 result.turnCredits[session] = credits.turn
-                if session == latest {
-                    let used = sqlite3_column_int64(statement, 0), capacity = sqlite3_column_int64(statement, 1)
-                    let context = used > 0 && capacity > 0 && used <= capacity && capacity < 100_000_000
-                        && sqlite3_column_type(statement, 0) == SQLITE_INTEGER && sqlite3_column_type(statement, 1) == SQLITE_INTEGER
-                    if context || credits.total != nil {
-                        result.latest = HarnessUsage(contextUsed: context ? Int(used) : nil, contextCapacity: context ? Int(capacity) : nil,
-                                                     sessionCredits: credits.total, measuredAt: min(measured, now))
-                    }
+                if sqlite3_column_type(statement, 0) == SQLITE_INTEGER, sqlite3_column_type(statement, 1) == SQLITE_INTEGER {
+                    result.levels[session] = TaskContextLevel(used: Int(exactly: sqlite3_column_int64(statement, 0)),
+                        capacity: Int(exactly: sqlite3_column_int64(statement, 1)), at: min(measured, now))
+                }
+                if session == latest, result.levels[session] != nil || credits.total != nil {
+                    let level = result.levels[session]
+                    result.latest = HarnessUsage(contextUsed: level?.usedTokens, contextCapacity: level?.capacityTokens,
+                                                 sessionCredits: credits.total, measuredAt: min(measured, now))
                 }
             }
             return result
@@ -677,7 +678,7 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
         }
         let turns = readTurns(candidates, home: home, now: now)
         let latest = allRows.max { $0.updated < $1.updated }?.id
-        let usage = store.usage(owner: owner, now: now, latest: latest, requests: turns.mapValues(\.id))
+        let usage = store.usage(owner: owner, now: now, latest: latest, sessions: currentIDs, requests: turns.mapValues(\.id))
         observation.usage = usage.latest
         // The week's credits change only when a charge lands; read them at most every five minutes otherwise.
         let charged = usage.latest?.measuredAt
@@ -733,6 +734,7 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
                 if age < 5 { catchUpUntil = max(catchUpUntil ?? .distantPast, row.updated.addingTimeInterval(5)) }
                 continue
             }
+            task.context.measure(usage.levels[row.id])
             observation.activities.append(task)
             if canNavigate, age < WorkBuddySessionStore.endingLifetime, let url = conversationURL(row.id) {
                 observation.conversationURLs[task.id] = url
@@ -770,6 +772,7 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
             var task = SessionActivity.observedSession(provider: id, session: session, stage: .starting, at: changedAt)
             task.applyObservedTurn(state, id: turnID, started: run.started, at: min(now, changedAt), live: live,
                                    model: turn?.model?.displayName, effort: turn?.effort)
+            if let linked, let level = usage.levels[linked.id], level.measuredAt >= run.started { task.context.measure(level) }
             turn?.applyMeasurements(to: &task, turnID: turnID, credits: linked.flatMap { usage.turnCredits[$0.id] }, notBefore: run.started)
             observation.activities.append(task)
             if canNavigate, let url = linked.flatMap({ conversationURL($0.id) }) { observation.conversationURLs[task.id] = url }

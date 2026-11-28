@@ -76,6 +76,7 @@ public actor DeepSeekActivityMonitor {
         guard let home else { return }
         let date = clock(), result = reader.read(home: home, discover: discover, now: clock())
         for line in result.lines { state.consume(line.record, session: line.session, attaching: line.attaching, now: date) }
+        state.measureContext(result.levels)
         var finished = false
         if result.caughtUp { finished = state.finishSettledWaits(now: date) }
         state.setAvailable(result.available, watching: !result.watchURLs.isEmpty)

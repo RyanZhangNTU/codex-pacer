@@ -10,6 +10,7 @@ struct DeepSeekSessionReader {
         let attaching: Bool
     }
     struct Result: Sendable {
+        var levels: [String: TaskContextLevel] = [:]
         var lines: [Line] = []
         var watchURLs: [URL] = []
         var available = false
@@ -21,6 +22,9 @@ struct DeepSeekSessionReader {
         let url: URL
         var offset: UInt64 = 0
         var session: String?
+        var isParent = false
+        var cacheStamp: PlatformFileMetadata?
+        var level: TaskContextLevel?
         var baselineEnd: UInt64
         var modified: Date
     }
@@ -67,6 +71,19 @@ struct DeepSeekSessionReader {
             guard budget > 0 else { result.caughtUp = false; break }
             guard var cursor = cursors[path] else { continue }
             let (lines, read, more) = Self.readFrames(&cursor, budget: budget, files: files)
+            if cursor.isParent, let session = cursor.session {
+                let cache = home.appendingPathComponent("storages/session_projcache/sessions/session-" + session + ".json")
+                let stamp = files.metadata(cache)
+                if cursor.cacheStamp != stamp {
+                    cursor.cacheStamp = stamp
+                    cursor.level = nil
+                    if let stamp, stamp.isRegularFile, stamp.size > 0, stamp.size <= 1 << 20,
+                       let bytes = try? files.read(cache, offset: 0, maximumBytes: Int(stamp.size)), bytes.count == stamp.size {
+                        cursor.level = DeepSeekSessionLog.contextLevel(bytes, at: stamp.modified)
+                    }
+                }
+                result.levels[session] = cursor.level
+            }
             budget -= read
             result.lines += lines; result.caughtUp = result.caughtUp && !more
             cursors[path] = cursor
@@ -104,7 +121,10 @@ struct DeepSeekSessionReader {
             for raw in output.lines[batch.lines] {
                 let truncated = raw.count >= DeepSeekSessionLog.maximumLineBytes
                 guard let record = DeepSeekSessionLog.parse(raw, truncated: truncated, light: attaching) else { continue }
-                if case .header(let header) = record.event { cursor.session = header.session }
+                if case .header(let header) = record.event {
+                    if cursor.session != header.session { cursor.cacheStamp = nil; cursor.level = nil }
+                    cursor.session = header.session; cursor.isParent = header.parent == nil
+                }
                 guard let session = cursor.session else { continue }
                 lines.append(Line(session: session, record: record, attaching: attaching))
             }
