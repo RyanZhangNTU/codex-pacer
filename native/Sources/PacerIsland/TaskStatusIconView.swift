@@ -95,11 +95,12 @@ final class TaskStatusIconNSView: NSView {
         }
         /// The same drawing, perhaps with motion switched.
         func sameDrawing(as other: Input) -> Bool {
-            sameStatus(as: other) && other.contextFraction == contextFraction && other.compactingSince == compactingSince
+            sameStatus(as: other) && other.contextFraction == contextFraction
         }
         func sameStatus(as other: Input) -> Bool {
             other.id == id && other.state == state && other.mode == mode && other.fraction == fraction
-                && other.stale == stale && other.drawingFace == drawingFace && other.color == color && other.completionPulseOnly == completionPulseOnly
+                && other.stale == stale && other.drawingFace == drawingFace && other.compactingSince == compactingSince
+                && other.color == color && other.completionPulseOnly == completionPulseOnly
         }
     }
     /// Whether a window shows its content now; tests replace it.
@@ -147,6 +148,7 @@ final class TaskStatusIconNSView: NSView {
         var start: CFTimeInterval = 0, duration: CFTimeInterval = 0
         var ease = Ease.cubicOut
         var stale = false, full = false, done = false
+        var compactingSince: Date?
         /// The ring was breathing: a request waiting for its background work.
         var breathing = false
         var color: CGColor
@@ -475,22 +477,26 @@ final class TaskStatusIconNSView: NSView {
             }
             return
         }
-        if input.drawingFace == .compacting {
-            // Keep the arc where the press found it, even if a progress report arrives during compaction.
-            let heldState = previous?.state ?? state
-            let held = previous?.displayed(at: now) ?? input.fraction
-            mode = input.mode; dim = previous?.stale ?? input.stale; pendingShown = heldState == .pending
-            targetFraction = pendingShown ? 0 : held
+        if input.drawingFace == .compacting, let since = input.compactingSince {
+            var held = previous ?? Memory(state: state, color: color, seen: now)
+            // The first estimate can arrive in the same update as the press.
+            // Capture that ring once, including across row rebuilds.
+            if held.compactingSince != since {
+                held.compactingSince = since
+                held.state = state; held.to = state == .reported ? input.fraction : 0
+                held.stale = input.stale; held.full = held.to >= 0.9995; held.done = input.mode == .done
+            }
+            mode = input.mode; dim = held.stale; pendingShown = held.state == .pending
+            targetFraction = held.to
             for layer in [container, pending, arcGroup, ghost, track, comet, cometGlow] as [CALayer] { layer.removeAllAnimations() }
             if spinningPeriod != nil { pending.transform = rotation(currentSpinAngle(now)); spinningPeriod = nil }
             container.isHidden = false; container.opacity = 1; fading = false
             track.opacity = pendingShown ? 0 : 1; pending.opacity = pendingShown ? Self.pendingOpacity : 0
             arcGroup.opacity = dim ? Self.staleOpacity : 1; ghost.opacity = 0
             setInk(color, from: nil, animate: false); setFraction(targetFraction)
-            var heldMemory = previous ?? Memory(state: heldState, color: color, seen: now)
-            heldMemory.owner = self; heldMemory.from = targetFraction; heldMemory.to = targetFraction
-            heldMemory.duration = 0; heldMemory.breathing = false; heldMemory.seen = now
-            Self.memories[id] = heldMemory
+            held.owner = self; held.from = held.to; held.duration = 0; held.breathing = false
+            held.color = color; held.seen = now
+            Self.memories[id] = held
             return
         }
         let previousMode = mode
@@ -557,6 +563,7 @@ final class TaskStatusIconNSView: NSView {
             if animate, justCompleted { schedulePulse(at: now + max(0, remaining)) }
             kept.owner = self; kept.seen = now; kept.color = color; kept.stale = dimmed; kept.breathing = mode == .waiting
             kept.done = memory.done
+            kept.compactingSince = nil
             Self.memories[id] = kept
             return
         }

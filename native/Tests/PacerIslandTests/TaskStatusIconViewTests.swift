@@ -421,16 +421,21 @@ final class TaskStatusIconViewTests: XCTestCase {
         }
     }
 
+    private func render(_ view: Ring, scale: Int) throws -> NSBitmapImageRep {
+        let size = Int(Ring.diameter) * scale
+        let context = try XCTUnwrap(CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: size * 4,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.scaleBy(x: CGFloat(scale), y: CGFloat(scale))
+        try XCTUnwrap(view.layer).render(in: context)
+        return NSBitmapImageRep(cgImage: try XCTUnwrap(context.makeImage()))
+    }
+
     func testRenderedHalfFullFacesKeepTheirTopAndBottomTones() throws {
         let view = shown(), id = UUID().uuidString
         let scale = 4, size = Int(Ring.diameter) * scale
         for face in [Ring.Face.working(.tool), .solid(.completed, read: false), .solid(.completed, read: true)] {
             view.update(.init(id: id, state: nil, face: face, contextFraction: 0.5, color: ink, animates: false))
-            let context = try XCTUnwrap(CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: size * 4,
-                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
-            context.scaleBy(x: CGFloat(scale), y: CGFloat(scale))
-            try XCTUnwrap(view.layer).render(in: context)
-            let bitmap = NSBitmapImageRep(cgImage: try XCTUnwrap(context.makeImage()))
+            let bitmap = try render(view, scale: scale)
             // Both samples are inside the circle, clear of the glyph, surface and ring.
             let top = try XCTUnwrap(bitmap.colorAt(x: size / 2, y: 6 * scale)).alphaComponent
             let bottom = try XCTUnwrap(bitmap.colorAt(x: size / 2, y: 22 * scale)).alphaComponent
@@ -440,6 +445,33 @@ final class TaskStatusIconViewTests: XCTestCase {
             case .solid(_, let read):
                 XCTAssertEqual(top, read ? 0.08 : 0.42, accuracy: 0.02); XCTAssertEqual(bottom, read ? 0.21 : 1, accuracy: 0.02)
             default: XCTFail("Unexpected sample face")
+            }
+        }
+    }
+
+    func testCompactionStartingFromAPendingRingUsesTheCurrentEstimate() throws {
+        for state in [TaskProgressRing.State.reported, .pending] {
+            let view = shown()
+            var value = input(UUID().uuidString, .pending)
+            value.face = .working(.thinking); value.contextFraction = 0.9
+            view.update(value)
+            XCTAssertTrue(running(view).contains("pending.spin"))
+
+            value.state = state; value.fraction = state == .reported ? 0.62 : 0
+            value.compactingSince = Date()
+            view.update(value)
+            XCTAssertEqual(view.restingFraction, value.fraction, accuracy: 0.0001)
+            XCTAssertEqual(running(view), [])
+            // At three o'clock the reported arc covers the track. At nine only the track shows.
+            let bitmap = try render(view, scale: 4)
+            let right = try XCTUnwrap(bitmap.colorAt(x: 27 * 4, y: 14 * 4)).alphaComponent
+            let left = try XCTUnwrap(bitmap.colorAt(x: 1 * 4, y: 14 * 4)).alphaComponent
+            if state == .reported {
+                XCTAssertGreaterThan(right, 0.95)
+                XCTAssertEqual(left, 20.0 / 255, accuracy: 0.02)
+            } else {
+                XCTAssertEqual(right, 0.5, accuracy: 0.02)
+                XCTAssertEqual(left, right, accuracy: 0.02)
             }
         }
     }
